@@ -24,13 +24,7 @@ class PRG { public:
 		} else {
 			block v;
 #ifndef ENABLE_RDSEED
-			uint32_t * data = (uint32_t *)(&v);
-			std::random_device rand_div;
-			for (size_t i = 0; i < sizeof(block) / sizeof(uint32_t); ++i)
-				data[i] = rand_div();
-#else
 			unsigned char r[16];
-	
 			int fd = open("/dev/urandom", O_RDONLY);
 			if(fd == -1)
 				error("urandom open fail!\n");
@@ -43,6 +37,18 @@ class PRG { public:
 			}
 			close(fd);
 			v = _mm_loadu_si128(r);
+#else
+			unsigned long long r0, r1;
+			int i = 0;
+			for(; i < 10; ++i)
+				if(_rdseed64_step(&r0) == 1) break;
+			if(i == 10)error("RDSEED FAILURE");
+
+			for(i = 0; i < 10; ++i)
+				if(_rdseed64_step(&r1) == 1) break;
+			if(i == 10)error("RDSEED FAILURE");
+
+			v = makeBlock(r0, r1);
 #endif
 			reseed(&v);
 		}
