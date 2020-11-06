@@ -5,6 +5,10 @@
 #include "emp-tool/utils/utils.h"
 #include "emp-tool/utils/constants.h"
 #include <memory>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <emmintrin.h>
 
 #ifdef ENABLE_RDSEED
 #include <x86intrin.h>
@@ -36,7 +40,7 @@ class PRG { public:
 				filled+=res;
 			}
 			close(fd);
-			v = _mm_loadu_si128(r);
+			v = _mm_loadu_si128((const __m128i *)r);
 #else
 			unsigned long long r0, r1;
 			int i = 0;
