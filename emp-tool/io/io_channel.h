@@ -60,6 +60,28 @@ public:
 
 	bool fs_enabled() const { return fs_send_.has_value(); }
 
+	// Per-direction transcript snapshots, intended for diagnostics
+	// (e.g. dumping a per-protocol wire-bytes hash across a refactor).
+	// Each returns the first 16 B of the SHA-256 over all bytes that
+	// have crossed in that direction since enable_fs. Non-destructive;
+	// the running transcripts continue absorbing after the snapshot.
+	block get_send_digest() {
+		assert(fs_send_.has_value() && "get_send_digest: enable_fs first");
+		char buf[Hash::DIGEST_SIZE];
+		fs_send_->digest(buf, /*reset_after=*/false);
+		block out;
+		std::memcpy(&out, buf, sizeof(block));
+		return out;
+	}
+	block get_recv_digest() {
+		assert(fs_recv_.has_value() && "get_recv_digest: enable_fs first");
+		char buf[Hash::DIGEST_SIZE];
+		fs_recv_->digest(buf, /*reset_after=*/false);
+		block out;
+		std::memcpy(&out, buf, sizeof(block));
+		return out;
+	}
+
 	// Snapshot the running transcripts as one block (first 16 B of a
 	// 32-B SHA-256 digest). Does not reset — call repeatedly across
 	// protocol stages to derive sub-challenges. Asserts FS is on.
