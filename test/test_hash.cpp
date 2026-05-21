@@ -9,7 +9,7 @@
 //   Hash::reset()                             reinit context
 //   Hash::hash_once(out, p, n)                one-shot SHA-256
 //   Hash::hash_for_block(p, n)                first 16 bytes of SHA-256, as block
-//   Hash::KDF(point, id=1)                    KDF for EC points
+//   Hash::KDF(point, id)                      KDF for EC points
 
 #include "emp-tool/emp-tool.h"
 

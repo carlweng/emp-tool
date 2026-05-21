@@ -332,6 +332,18 @@ void Point::from_bin(ECGroup * g, const unsigned char * buf, size_t buf_len) {
 	}
 	int ret = EC_POINT_oct2point(group_->ec_group(), point_, buf, buf_len, group_->bn_ctx());
 	if (ret == 0) error("ECC FROM_BIN");
+	// from_bin is the deserialization entry for externally-supplied bytes,
+	// so validate the decoded point before returning it. oct2point already
+	// rejects off-curve encodings, but assert the on-curve invariant
+	// explicitly so it stays local and survives a backend change. Also
+	// reject the point at infinity, which oct2point accepts: callers expect
+	// a usable group element. On a cofactor-1 curve (P-256, the only curve
+	// wired up) on-curve + non-identity implies prime-order subgroup
+	// membership, so no separate subgroup check is required.
+	if (EC_POINT_is_on_curve(group_->ec_group(), point_, group_->bn_ctx()) != 1)
+		error("Point::from_bin: point not on curve");
+	if (EC_POINT_is_at_infinity(group_->ec_group(), point_))
+		error("Point::from_bin: point at infinity");
 }
 
 Point Point::add(const Point & rhs) const {

@@ -85,7 +85,7 @@ class Hash { public:
 		return _mm_load_si128((__m128i*)&digest[0]);
 	}
 
-	static block KDF(Point &in, uint64_t id = 1) {
+	static block KDF(Point &in, uint64_t id) {
 		size_t len = in.size();
 		in.group()->resize_scratch(len+8);
 		unsigned char * tmp = in.group()->scratch();
