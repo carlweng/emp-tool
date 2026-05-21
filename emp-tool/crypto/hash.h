@@ -84,16 +84,6 @@ class Hash { public:
 		hash_once(digest, data, nbyte);
 		return _mm_load_si128((__m128i*)&digest[0]);
 	}
-
-	static block KDF(Point &in, uint64_t id) {
-		size_t len = in.size();
-		in.group()->resize_scratch(len+8);
-		unsigned char * tmp = in.group()->scratch();
-		in.to_bin(tmp, len);
-		memcpy(tmp+len, &id, 8);
-		block ret = hash_for_block(tmp, len+8);
-		return ret;
-	}
 };
 }
 #endif// HASH_H__

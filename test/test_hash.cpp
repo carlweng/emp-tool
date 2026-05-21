@@ -1,6 +1,6 @@
-// crypto/hash.h — SHA-256 wrapper around OpenSSL EVP plus a fixed-size KDF
-// for elliptic-curve points. Read example() first; the rest is verification +
-// throughput.
+// crypto/hash.h — SHA-256 wrapper around OpenSSL EVP. Read example() first;
+// the rest is verification + throughput. (EC-point KDF moved to crypto/ro.h,
+// covered by test_ro.cpp.)
 //
 // What's in hash.h:
 //   Hash::put(p, n)                           feed n bytes
@@ -9,7 +9,6 @@
 //   Hash::reset()                             reinit context
 //   Hash::hash_once(out, p, n)                one-shot SHA-256
 //   Hash::hash_for_block(p, n)                first 16 bytes of SHA-256, as block
-//   Hash::KDF(point, id)                      KDF for EC points
 
 #include "emp-tool/emp-tool.h"
 

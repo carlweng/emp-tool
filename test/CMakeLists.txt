@@ -34,6 +34,7 @@ add_test_case(test_utils)
 
 # group/EC
 add_test_case(test_ecc)
+add_test_case(test_ro)
 
 # circuits / IO / higher-level — not utils/* but kept here for convenience
 add_test_case_with_run(test_netio)
