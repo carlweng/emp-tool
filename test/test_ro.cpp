@@ -57,14 +57,15 @@ int main() {
 		assert(eq(got, Hash::hash_for_block(m.data(), (int64_t)m.size())));
 	}
 
-	// 2. squeeze_digest equals hash_once over the same M (no-sid ctor here).
+	// 2. squeeze_digest equals hash_once over the same M.
 	{
 		vector<unsigned char> m;
-		mframe(m, T_STR, dom, strlen(dom));
-		mframe(m, T_U64, &id, sizeof(id));
+		mframe(m, T_STR,   dom, strlen(dom));
+		mframe(m, T_BLOCK, &sid, sizeof(block));
+		mframe(m, T_U64,   &id, sizeof(id));
 		unsigned char want[Hash::DIGEST_SIZE], got[Hash::DIGEST_SIZE];
 		Hash::hash_once(want, m.data(), (int64_t)m.size());
-		RO(dom).absorb(id).squeeze_digest(got);
+		RO(dom, sid).absorb(id).squeeze_digest(got);
 		assert(memcmp(want, got, Hash::DIGEST_SIZE) == 0);
 	}
 
@@ -84,26 +85,28 @@ int main() {
 	{
 		const char* label = "CRS g0";
 		vector<unsigned char> m;
-		mframe(m, T_STR, dom, strlen(dom));
-		mframe(m, T_STR, label, strlen(label));
-		block got = RO(dom).absorb(string_view(label)).squeeze_block();
+		mframe(m, T_STR,   dom, strlen(dom));
+		mframe(m, T_BLOCK, &sid, sizeof(block));
+		mframe(m, T_STR,   label, strlen(label));
+		block got = RO(dom, sid).absorb(string_view(label)).squeeze_block();
 		assert(eq(got, Hash::hash_for_block(m.data(), (int64_t)m.size())));
 	}
 
 	// 5. Injective in the call sequence: absorb(block) (type 3) differs from
 	//    absorb(&block, 16) (type 2) of the same 16 bytes.
 	{
-		block a = RO(dom).absorb(x).squeeze_block();
-		block b = RO(dom).absorb(&x, sizeof(block)).squeeze_block();
+		block a = RO(dom, sid).absorb(x).squeeze_block();
+		block b = RO(dom, sid).absorb(&x, sizeof(block)).squeeze_block();
 		assert(!eq(a, b));
 	}
 
-	// 6. sid vs no-sid ctor differ; field boundaries can't be forged.
+	// 6. Different sid → different output; length framing can't be forged.
 	{
-		assert(!eq(RO(dom).squeeze_block(), RO(dom, sid).squeeze_block()));
+		block sid2 = makeBlock(0, 1);
+		assert(!eq(RO(dom, sid).squeeze_block(), RO(dom, sid2).squeeze_block()));
 		// "ab"+"c" vs "a"+"bc": length framing keeps them distinct.
-		block s1 = RO(dom).absorb(string_view("ab")).absorb(string_view("c")).squeeze_block();
-		block s2 = RO(dom).absorb(string_view("a")).absorb(string_view("bc")).squeeze_block();
+		block s1 = RO(dom, sid).absorb(string_view("ab")).absorb(string_view("c")).squeeze_block();
+		block s2 = RO(dom, sid).absorb(string_view("a")).absorb(string_view("bc")).squeeze_block();
 		assert(!eq(s1, s2));
 	}
 

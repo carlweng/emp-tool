@@ -23,6 +23,7 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 #include "emp-tool/crypto/ccrh.h"
 #include "emp-tool/crypto/mitccrh.h"
 #include "emp-tool/crypto/aes.h"
+#include "emp-tool/crypto/session_id.h"
 #include "emp-tool/crypto/f2k.h"
 #include "emp-tool/crypto/ec.h"
 #include "emp-tool/crypto/ro.h"

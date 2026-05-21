@@ -15,8 +15,8 @@ namespace emp {
 
 // Random-oracle helper. Absorb heterogeneous fields, then squeeze a 16-byte
 // block, a 32-byte digest, or a curve Point. Domain separation is the
-// caller's responsibility: construct with a domain string (and optionally a
-// session id), then absorb the per-call inputs.
+// caller's responsibility: construct with a domain string and a session id
+// (mandatory), then absorb the per-call inputs.
 //
 // Encoding. The absorbed message M is a sequence of typed, length-framed
 // fields. Each absorb overload has a fixed 1-based type id; a field of `len`
@@ -31,9 +31,8 @@ namespace emp {
 // a u64 length alone would.)
 class RO {
 public:
-	explicit RO(std::string_view domain) : domain_(domain) {
-		frame(kStr, domain.data(), domain.size());
-	}
+	// sid is mandatory — every RO is session-bound. Pass zero_block
+	// explicitly for the (rare) genuinely session-independent oracle.
 	RO(std::string_view domain, block sid) : domain_(domain) {
 		frame(kStr, domain.data(), domain.size());
 		frame(kBlock, &sid, sizeof(block));
