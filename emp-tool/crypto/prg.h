@@ -60,10 +60,11 @@ class PRG { public:
 	}
 	block from_urand () {
 		block v;
-		uint32_t * data = (uint32_t *)(&v);
+		uint32_t data[sizeof(block) / sizeof(uint32_t)];
 		std::random_device rand_div("/dev/urandom");
 		for (size_t i = 0; i < sizeof(block) / sizeof(uint32_t); ++i)
 			data[i] = rand_div();
+		memcpy(&v, data, sizeof(block));
 		return v;
 	}
 	void reseed(const block* seed, uint64_t id = 0) {

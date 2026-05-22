@@ -21,6 +21,6 @@ jobs:
           -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
           -DEMP_TOOL_NATIVE_ARCH=OFF
       - name: Build
-        run: cmake --build build -j
+        run: cmake --build build -j $(getconf _NPROCESSORS_ONLN)
       - name: Test
         run: ctest --test-dir build --output-on-failure
