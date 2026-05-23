@@ -108,9 +108,7 @@ class TLSIO : public IOChannel { public:
 	size_t recv_ptr = 0;
 	size_t recv_fill = 0;
 
-	uint64_t bytes_sent = 0;
-	uint64_t bytes_recv = 0;
-	uint64_t flushes_count = 0;
+	// Byte counts and flush count live on the IOChannel base.
 
 #ifndef NDEBUG
 	// Debug-only concurrency assertion. TLSIO is not thread-safe (the
@@ -170,11 +168,8 @@ class TLSIO : public IOChannel { public:
 
 	~TLSIO() {
 		flush();
-		if (!quiet) {
-			std::cout << "Data Sent: \t"     << bytes_sent     << "\n";
-			std::cout << "Data Received: \t" << bytes_recv     << "\n";
-			std::cout << "Flushes:\t"        << flushes_count  << "\n";
-		}
+		if (!quiet)
+			std::cout << get_statistics_string();
 		// Two-phase shutdown: first call sends close_notify, returning
 		// 0 means the peer hasn't yet sent its close_notify. A second
 		// call drains it if it's there. We do NOT loop on WANT_*: a
@@ -326,7 +321,6 @@ class TLSIO : public IOChannel { public:
 		// staged. SSL_read goes straight to the socket BIO, no implicit
 		// drain, so this has to be explicit.
 		flush_unlocked();
-		bytes_recv += len;
 		int64_t got = 0;
 		while (got < len) {
 			if (recv_ptr == recv_fill) {
@@ -358,7 +352,6 @@ private:
 	// "write" into WANT_READ, so the loop is required for correctness
 	// even in steady state.
 	void ssl_write_all(const void *data, size_t len) {
-		bytes_sent += len;
 		size_t off = 0;
 		while (off < len) {
 			size_t written = 0;

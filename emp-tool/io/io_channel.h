@@ -6,15 +6,17 @@
 #include "emp-tool/crypto/ec.h"
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <optional>
+#include <string>
 
 namespace emp {
 
 // Polymorphic transport interface. Implementations override send_data_internal
 // / recv_data_internal; everything else (block / point / packed-bool helpers,
-// byte counter, optional Fiat-Shamir transcript) is inherited.
+// byte counters, optional Fiat-Shamir transcript) is inherited.
 //
 // Fiat-Shamir support: enable_fs(send_first) turns on TWO SHA-256
 // transcripts — one absorbing every byte sent (direction self→peer),
@@ -32,9 +34,48 @@ namespace emp {
 
 class IOChannel {
 public:
-	uint64_t counter = 0;
+	uint64_t send_counter = 0;  // bytes sent
+	uint64_t recv_counter = 0;  // bytes received
+
+	// Communication-round counter: number of maximal runs of same-direction
+	// traffic. Each switch between sending and receiving opens a new round,
+	// so back-to-back sends collapse into one (send/send/send == 1) while an
+	// alternating exchange counts every turn (send/recv/send == 3). Useful as
+	// a transport-agnostic proxy for protocol latency, which is dominated by
+	// the number of direction changes rather than total bytes.
+	uint64_t rounds = 0;
+
+	// Number of times the channel drained its outbound buffer to the
+	// transport (see flush()). Maintained by buffering implementations;
+	// stays 0 for transports with nothing to flush.
+	uint64_t flushes_count = 0;
 
 	virtual ~IOChannel() = default;
+
+	// Human-readable one-line-per-field dump of every counter this channel
+	// tracks: bytes sent, bytes received, their total, communication rounds
+	// (direction changes; see `rounds`), and buffer flushes. Intended for
+	// logging / benchmark output, not machine parsing. Reflects this
+	// endpoint's view.
+	std::string get_statistics_string() const {
+		auto with_units = [](uint64_t bytes) {
+			static const char *u[] = {"B", "KiB", "MiB", "GiB", "TiB"};
+			double v = static_cast<double>(bytes);
+			int i = 0;
+			while (v >= 1024.0 && i < 4) { v /= 1024.0; ++i; }
+			char buf[64];
+			std::snprintf(buf, sizeof(buf), "%llu B (%.2f %s)",
+			              static_cast<unsigned long long>(bytes), v, u[i]);
+			return std::string(buf);
+		};
+		std::string s = "Network statistics:\n";
+		s += "  sent:   " + with_units(send_counter) + "\n";
+		s += "  recv:   " + with_units(recv_counter) + "\n";
+		s += "  total:  " + with_units(send_counter + recv_counter) + "\n";
+		s += "  rounds: " + std::to_string(rounds) + "\n";
+		s += "  flushes:" + std::to_string(flushes_count) + "\n";
+		return s;
+	}
 
 	virtual void send_data_internal(const void *data, int64_t nbyte) = 0;
 	virtual void recv_data_internal(void *data, int64_t nbyte) = 0;
@@ -102,12 +143,15 @@ public:
 	}
 
 	void send_data(const void *data, int64_t nbyte) {
-		counter += nbyte;
+		send_counter += nbyte;
+		if (last_dir_ != Dir::SEND) { ++rounds; last_dir_ = Dir::SEND; }
 		if (fs_send_) fs_send_->put(data, nbyte);
 		send_data_internal(data, nbyte);
 	}
 
 	void recv_data(void *data, int64_t nbyte) {
+		recv_counter += nbyte;
+		if (last_dir_ != Dir::RECV) { ++rounds; last_dir_ = Dir::RECV; }
 		recv_data_internal(data, nbyte);
 		if (fs_recv_) fs_recv_->put(data, nbyte);
 	}
@@ -187,6 +231,11 @@ public:
 	}
 
 private:
+	// Last traffic direction, for the `rounds` counter. NONE until the first
+	// send/recv so the opening transfer in either direction opens round 1.
+	enum class Dir { NONE, SEND, RECV };
+	Dir last_dir_ = Dir::NONE;
+
 	// Per-direction FS transcripts. Both nullopt = off (default).
 	// fs_send_ absorbs my outgoing wire bytes, fs_recv_ my incoming
 	// ones. Hash is non-copyable but std::optional only requires

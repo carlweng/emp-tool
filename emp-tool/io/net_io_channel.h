@@ -50,10 +50,7 @@ class NetIO : public IOChannel { public:
 	size_t recv_ptr = 0;            // next byte to deliver to the caller
 	size_t recv_fill = 0;           // bytes available in recv_buf
 
-	// Telemetry.
-	uint64_t bytes_sent = 0;
-	uint64_t bytes_recv = 0;
-	uint64_t flushes_count = 0;
+	// Byte counts and flush count live on the IOChannel base.
 
 #ifndef NDEBUG
 	// Debug-only concurrency assertion. NetIO is not thread-safe (the
@@ -103,11 +100,8 @@ class NetIO : public IOChannel { public:
 
 	~NetIO() {
 		flush();
-		if (!quiet) {
-			std::cout << "Data Sent: \t"     << bytes_sent     << "\n";
-			std::cout << "Data Received: \t" << bytes_recv     << "\n";
-			std::cout << "Flushes:\t"        << flushes_count  << "\n";
-		}
+		if (!quiet)
+			std::cout << get_statistics_string();
 		if (stream) fclose(stream);   // closes the underlying fd
 		delete[] stream_buf;
 		delete[] send_buf;
@@ -182,7 +176,6 @@ class NetIO : public IOChannel { public:
 		// any send-then-recv pattern would deadlock with our bytes still
 		// staged. Raw ::read() bypasses stdio, so this has to be explicit.
 		flush_unlocked();
-		bytes_recv += len;
 		int64_t got = 0;
 		while (got < len) {
 			if (recv_ptr == recv_fill) {
@@ -214,7 +207,6 @@ private:
 	}
 
 	void send_raw(const void *data, size_t len) {
-		bytes_sent += len;
 		size_t sent = 0;
 		while (sent < len) {
 			size_t res = fwrite((const char *)data + sent, 1, len - sent, stream);

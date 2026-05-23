@@ -60,7 +60,7 @@ public:
             std::fprintf(stderr, "TraceIO: short write to .send\n");
             std::abort();
         }
-        // Bypass under_->send_data so under_'s `counter` doesn't
+        // Bypass under_->send_data so under_'s `send_counter` doesn't
         // double-count — we (the wrapping IOChannel) own the counter.
         under_->send_data_internal(data, nbyte);
     }
