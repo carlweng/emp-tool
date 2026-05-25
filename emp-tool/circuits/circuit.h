@@ -29,6 +29,7 @@
 #include "emp-tool/circuits/aes_128_ctr.h"
 #include "emp-tool/circuits/sha3_circuit.h"
 #include "emp-tool/circuits/sha3_256.h"
+#include "emp-tool/circuits/sha256_circuit.h"
 
 namespace emp {
 
@@ -42,6 +43,7 @@ using AES_Calculator         = AES_Calculator_T<block>;
 using AES_128_CTR_Calculator = AES_128_CTR_Calculator_T<block>;
 using Keccak_F_Calculator    = Keccak_F_Calculator_T<block>;
 using SHA3_256_Calculator    = SHA3_256_Calculator_T<block>;
+using SHA256_Calculator      = SHA256_Calculator_T<block>;
 
 // Fixed-width integer aliases.
 using UInt8  = UInt8_T<block>;
@@ -74,6 +76,7 @@ extern template class AES_Calculator_T<block>;
 extern template class AES_128_CTR_Calculator_T<block>;
 extern template class Keccak_F_Calculator_T<block>;
 extern template class SHA3_256_Calculator_T<block>;
+extern template class SHA256_Calculator_T<block>;
 
 }  // namespace emp
 #endif  // EMP_CIRCUIT_H__

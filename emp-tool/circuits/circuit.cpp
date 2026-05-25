@@ -28,5 +28,6 @@ template class AES_Calculator_T<block>;
 template class AES_128_CTR_Calculator_T<block>;
 template class Keccak_F_Calculator_T<block>;
 template class SHA3_256_Calculator_T<block>;
+template class SHA256_Calculator_T<block>;
 
 }  // namespace emp
