@@ -4,6 +4,9 @@
 //   - reports AND-gate count to verify the 6400-AND budget
 
 #include "emp-tool/emp-tool.h"
+
+// emp-tool defines no default wire; bind the circuit types to this backend.
+EMP_USE_CIRCUIT_TYPES_ALL(block);
 #include "emp-tool/circuits/aes_circuit.h"
 #include <cstdio>
 #include <cstdlib>

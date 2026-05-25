@@ -19,6 +19,9 @@
 // is sidestepped by reference implementations that cast through unsigned).
 
 #include "emp-tool/emp-tool.h"
+
+// emp-tool defines no default wire; bind the circuit types to this backend.
+EMP_USE_CIRCUIT_TYPES_ALL(block);
 #include <climits>
 #include <cstdint>
 #include <iostream>

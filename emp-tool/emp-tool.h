@@ -34,9 +34,16 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 #include "emp-tool/execution/half_gate.h"
 #include "emp-tool/execution/privacy_free.h"
 
-// circuits/circuit.h aggregates all emp-tool/circuits/*.h headers, exposes
-// the block-typed default aliases (Bit, BitVec, UnsignedInt, …, UInt64,
-// Int64, AES_*, SHA3_*), and declares `extern template` for the common
-// instantiations. The matching `template class …;` definitions live in
-// circuits/circuit.cpp so each TU only links to the symbols.
+// circuits/circuit.h aggregates all emp-tool/circuits/*.h headers as
+// backend-independent `<Wire>` templates and the EMP_USE_CIRCUIT_TYPES binding
+// macro. It bakes in NO concrete wire type and defines NO aliases: the wire is
+// a property of the backend, so the friendly names (Bit, UInt32, …) are bound
+// where the backend is chosen. At that site write one statement (the macros
+// open namespace emp themselves):
+//
+//     EMP_USE_CIRCUIT_TYPES_ALL(block);                  // the whole set
+//     EMP_USE_CIRCUIT_TYPES(block, Bit, UInt32);         // just these
+//
+// or, for the standard block batteries-included set plus the extern-template
+// build speedup, `#include "emp-tool/circuits/circuit_block.h"`.
 #include "emp-tool/circuits/circuit.h"

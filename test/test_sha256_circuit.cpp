@@ -5,6 +5,9 @@
 //   - reports the AND-gate count per compression block
 
 #include "emp-tool/emp-tool.h"
+
+// emp-tool defines no default wire; bind the circuit types to this backend.
+EMP_USE_CIRCUIT_TYPES_ALL(block);
 #include "emp-tool/circuits/sha256_circuit.h"
 #include <openssl/evp.h>
 #include <cstdint>
