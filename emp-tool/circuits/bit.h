@@ -9,7 +9,12 @@ namespace emp {
 
 template<typename Wire>
 class Bit_T: public Sortable<Wire, Bit_T<Wire>> { public:
-	Wire bit;
+	// Default member initializer: every Bit_T starts with a defined `bit`,
+	// even before a ctor/backend writes the real wire. The value ctors and
+	// `feed` overwrite it (the optimizer elides the dead zero-store), so this
+	// is free at runtime; it keeps GCC's -Wmaybe-uninitialized from firing
+	// when a value ctor sets `bit` only through the opaque backend->feed call.
+	Wire bit{};
 
 	Bit_T() {}
 	// `party` has NO default: PUBLIC means "everyone holds this value",
