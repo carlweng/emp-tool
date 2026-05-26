@@ -37,6 +37,9 @@ namespace emp {
 class NetIO : public IOChannel { public:
 	int sock = -1;
 	bool is_server, quiet;
+	// Endpoint info retained so a duplex sibling can be spawned (make_sibling).
+	std::string addr_;              // peer address (empty when this is a server)
+	int port_ = -1;
 
 	// Send-side state (stdio "wb" stream + app-level coalescing buffer).
 	FILE *stream = nullptr;
@@ -80,8 +83,19 @@ class NetIO : public IOChannel { public:
 			throw std::runtime_error("Invalid port number!");
 
 		is_server = (address == nullptr);
+		addr_ = address ? address : "";
+		port_ = port;
 		init_from_sock(is_server ? tcp::server_listen(port) : tcp::client_connect(address, port));
 		if (!quiet) std::cout << "connected\n";
+	}
+
+	// Open a second channel to the same peer, on the same role and port. Safe
+	// to call once this connection is established: server_listen closes its
+	// listening socket after accept (and sets SO_REUSEADDR), so the port is
+	// free to listen on again; the peer calls make_sibling() symmetrically and
+	// the two reconnect. Caller owns the returned NetIO.
+	NetIO *make_sibling() const {
+		return new NetIO(is_server ? nullptr : addr_.c_str(), port_, /*quiet=*/true);
 	}
 
 	// Wrap an already-connected socket fd, for callers that run their
