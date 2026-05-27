@@ -21,6 +21,7 @@ class MITCCRH { public:
 	void setS(block sin) {
 		this->start_point = sin;
 		this->gid = 0;
+		this->key_used = BatchSize;  // drop pre-scheduled keys; next hash re-keys under the new S
 	}
 
 	void renew_ks(uint64_t gid) {

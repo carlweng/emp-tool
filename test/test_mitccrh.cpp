@@ -215,6 +215,7 @@ static void bench(double sec) {
 	print_vec("hash<4,1>", bench_hash<4, 1>(sec), 4);
 	print_vec("hash<4,4>", bench_hash<4, 4>(sec), 16);
 	print_vec("hash<8,1>", bench_hash<8, 1>(sec), 8);
+	print_vec("hash<8,2>", bench_hash<8, 2>(sec), 16);
 	print_vec("hash<8,4>", bench_hash<8, 4>(sec), 32);
 	print_vec("hash<8,8>", bench_hash<8, 8>(sec), 64);
 
@@ -223,6 +224,7 @@ static void bench(double sec) {
 	print_vec("hash_cir<2,1>", bench_hash_cir<2, 1>(sec), 2);
 	print_vec("hash_cir<2,2>", bench_hash_cir<2, 2>(sec), 4);
 	print_vec("hash_cir<8,1>", bench_hash_cir<8, 1>(sec), 8);
+	print_vec("hash_cir<8,2>", bench_hash_cir<8, 2>(sec), 16);
 }
 
 int main(int argc, char **argv) {
