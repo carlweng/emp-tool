@@ -1,7 +1,7 @@
 #ifndef EMP_NUMERIC_KERNELS_H__
 #define EMP_NUMERIC_KERNELS_H__
 #include "emp-tool/circuits/bit.h"
-#include <cstring>
+#include <algorithm>
 #include <vector>
 
 // Bit-array-level arithmetic kernels shared by UnsignedInt_T and SignedInt_T.
@@ -82,7 +82,7 @@ inline void mul_full(Bit_T<Wire>* dest, const Bit_T<Wire>* op1,
 		add_full<Wire>(sum.data() + i, nullptr,
 		               sum.data() + i, tmp.data(), nullptr, size - i);
 	}
-	std::memcpy(dest, sum.data(), sizeof(Bit_T<Wire>) * size);
+	std::copy(sum.begin(), sum.begin() + size, dest);
 }
 
 // dest[i] <- cond ? tsrc[i] : fsrc[i].
@@ -129,7 +129,7 @@ inline void div_full(Bit_T<Wire>* vquot, Bit_T<Wire>* vrem,
 	std::vector<Bit_T<Wire>> rem(size);
 	std::vector<Bit_T<Wire>> quot(size);
 	Bit_T<Wire> b;
-	std::memcpy(rem.data(), op1, size * sizeof(Bit_T<Wire>));
+	std::copy(op1, op1 + size, rem.begin());
 	overflow[0] = Bit_T<Wire>(false, PUBLIC);
 	for (int i = 1; i < size; ++i)
 		overflow[i] = overflow[i - 1] | op2[size - i];
@@ -139,8 +139,8 @@ inline void div_full(Bit_T<Wire>* vquot, Bit_T<Wire>* vrem,
 		if_then_else<Wire>(rem.data() + i, rem.data() + i, tmp.data(), size - i, b);
 		quot[i] = !b;
 	}
-	if (vrem)  std::memcpy(vrem,  rem.data(),  size * sizeof(Bit_T<Wire>));
-	if (vquot) std::memcpy(vquot, quot.data(), size * sizeof(Bit_T<Wire>));
+	if (vrem)  std::copy(rem.begin(),  rem.begin()  + size, vrem);
+	if (vquot) std::copy(quot.begin(), quot.begin() + size, vquot);
 }
 
 }  // namespace emp
