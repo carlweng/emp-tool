@@ -139,6 +139,26 @@ static bool check_random_data_unaligned() {
 	return true;
 }
 
+static bool check_random_data_unaligned_counter() {
+	block seed = makeBlock(789, 101112);
+	alignas(16) uint8_t aligned[320];
+	uint8_t unaligned_storage[336];
+	for (int len : {1, 7, 15, 16, 17, 31, 32, 33, 63, 64,
+	                127, 128, 129, 255, 256, 257}) {
+		PRG a(&seed), b(&seed);
+		uint8_t *unaligned = unaligned_storage + 1;
+		a.random_data(aligned, len);
+		b.random_data_unaligned(unaligned, len);
+		if (memcmp(aligned, unaligned, len) != 0) return false;
+
+		block next_a, next_b;
+		a.random_block(&next_a, 1);
+		b.random_block(&next_b, 1);
+		if (!blocks_eq(next_a, next_b)) return false;
+	}
+	return true;
+}
+
 static bool check_random_bool_is_0_or_1() {
 	PRG p;
 	for (int len : {1, 7, 32, 128, 1023, 4096}) {
@@ -184,6 +204,7 @@ static bool run_correctness() {
 		{"counter continuity (bulk = singles)", check_counter_continuity},
 		{"random_data == random_block (16B)",   check_random_data_matches_block},
 		{"random_data_unaligned vs aligned ref", check_random_data_unaligned},
+		{"random_data_unaligned counter",       check_random_data_unaligned_counter},
 		{"random_bool ∈ {0,1}",                 check_random_bool_is_0_or_1},
 		{"random_bool mean ~ 0.5",              check_random_bool_distribution},
 		{"UniformRandomBitGenerator interface", check_uniform_engine},

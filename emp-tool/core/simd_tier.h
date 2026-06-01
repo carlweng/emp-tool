@@ -224,8 +224,8 @@ namespace emp {
 // aesenc / aesenclast use x86-compatible "key-after" semantics —
 // vaeseq_u8 with a zero key, then XOR the real key. This breaks
 // AESE/AESMC fusion (the natural NEON pattern XORs the key BEFORE
-// the round), so the abstraction is heavier than a hand-rolled NEON
-// loop would be.
+// the round), so aes_tiles_src uses a NEON-native loop directly on
+// aarch64 hot paths.
 template<int N> struct AesLane;
 
 template<>

@@ -13,10 +13,9 @@ class CCRH: public PRP { public:
 	}
 
 	block H(block in) {
-		block t;
-		t = in = sigma(in);
-		permute_block(&t, 1);
-		return t ^ in;
+		alignas(16) block t = sigma(in);
+		detail::ParaEncXorInput_impl<1,1>(&t, &t, &aes);
+		return t;
 	}
 
 	// NOTE: the body is fully unrolled by the compiler for small n. For
@@ -26,15 +25,13 @@ class CCRH: public PRP { public:
 	// below.
 	//
 	// H(x) = AES_K(σ(x)) ⊕ σ(x) (Davies–Meyer over σ). Compute σ(in)
-	// once into `pt`, AES it into `out` out-of-place, then XOR pt back
-	// — one σ pass instead of two and `out` is touched twice (AES write
-	// + XOR-back), not three times (σ write + AES read/write + XOR).
+	// once into `pt`, then use the AES helper that stores AES(pt) ^ pt
+	// directly into `out` with one σ pass and one output write.
 	template<int n>
 	void H(block out[n], block in[n]) {
 		block pt[n];
 		for (int i = 0; i < n; ++i) pt[i] = sigma(in[i]);
-		ParaEnc<1, n>(out, pt, &aes);
-		xorBlocksTo_arr(out, pt, n);
+		detail::ParaEncXorInput_impl<1,n>(out, pt, &aes);
 	}
 
 	void Hn(block*out, block* in, int64_t length, block * scratch = nullptr) {
@@ -46,10 +43,9 @@ class CCRH: public PRP { public:
 		}
 
 		for (int64_t i = 0; i < length; ++i)
-			scratch[i] = out[i] = sigma(in[i]);
+			scratch[i] = sigma(in[i]);
 
-		permute_block(scratch, length);
-		xorBlocksTo_arr(out, scratch, length);
+		detail::ParaEncXorInput_runtime_impl(out, scratch, &aes, 1, length);
 
 		if(del) {
 			delete[] scratch;

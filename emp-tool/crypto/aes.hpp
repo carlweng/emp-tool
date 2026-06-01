@@ -27,8 +27,36 @@ inline void aes_tiles_src(Source&& src, Store&& store, const AES_KEY *kk) {
 	typename L::vec_t rk[11];
 	for (int r = 0; r < 11; ++r)
 		rk[r] = L::broadcast(kk->rd_key[r]);
+#if defined(__x86_64__) && EMP_HAS_VAES512
+	if constexpr (L::N == 4 && n_tiles > 1 && n_tiles <= 4) {
+		typename L::vec_t pt[n_tiles];
+		typename L::vec_t x[n_tiles];
+		for (int t = 0; t < n_tiles; ++t) {
+			pt[t] = src(t);
+			x[t] = L::xorv(pt[t], rk[0]);
+		}
+		for (int r = 1; r < 10; ++r) {
+			for (int t = 0; t < n_tiles; ++t)
+				x[t] = L::aesenc(x[t], rk[r]);
+		}
+		for (int t = 0; t < n_tiles; ++t)
+			store(t, L::aesenclast(x[t], rk[10]), pt[t]);
+		return;
+	}
+#endif
 	for (int t = 0; t < n_tiles; ++t) {
 		auto pt = src(t);
+#if defined(__aarch64__)
+		if constexpr (L::N == 1) {
+			uint8x16_t x = vreinterpretq_u8_m128i(pt);
+			for (int r = 0; r < 9; ++r)
+				x = vaesmcq_u8(vaeseq_u8(x, vreinterpretq_u8_m128i(rk[r])));
+			x = vaeseq_u8(x, vreinterpretq_u8_m128i(rk[9]));
+			auto out = _mm_xor_si128(vreinterpretq_m128i_u8(x), rk[10]);
+			store(t, out, pt);
+			continue;
+		}
+#endif
 		auto x = L::xorv(pt, rk[0]);
 		for (int r = 1; r < 10; ++r)
 			x = L::aesenc(x, rk[r]);
@@ -60,6 +88,19 @@ EMP_AES_TARGET_ATTR
 inline void aes_tiles(block *dst, const block *src, const AES_KEY *kk) {
 	aes_tiles_src<L, n_tiles>(dst,
 		[src](int t) -> typename L::vec_t { return L::load(src + (size_t)t * L::N); },
+		kk);
+}
+
+// Memory-source sibling of aes_tiles: writes AES(src) ^ src. Used by
+// Davies-Meyer / CRH callers that already have plaintext blocks in memory.
+template <class L, int n_tiles>
+EMP_AES_TARGET_ATTR
+inline void aes_tiles_xor_input(block *dst, const block *src, const AES_KEY *kk) {
+	aes_tiles_src<L, n_tiles>(
+		[src](int t) -> typename L::vec_t { return L::load(src + (size_t)t * L::N); },
+		[dst](int t, typename L::vec_t x, typename L::vec_t pt) {
+			L::store(dst + (size_t)t * L::N, L::xorv(x, pt));
+		},
 		kk);
 }
 
@@ -127,6 +168,22 @@ static inline void ks_rounds(AES_KEY* keys, block con, block con3, block mask, i
 	}
 }
 
+struct AesMemPlainTile {
+	template<class L, int n_tiles>
+	EMP_AES_TARGET_ATTR
+	static void apply(block *dst, const block *src, const AES_KEY *kk) {
+		aes_tiles<L, n_tiles>(dst, src, kk);
+	}
+};
+
+struct AesMemXorInputTile {
+	template<class L, int n_tiles>
+	EMP_AES_TARGET_ATTR
+	static void apply(block *dst, const block *src, const AES_KEY *kk) {
+		aes_tiles_xor_input<L, n_tiles>(dst, src, kk);
+	}
+};
+
 // Per-key tile decomposition: split numEncs into {AesLane<4>,
 // AesLane<2>, AesLane<1>} chunks at compile time, picking the widest
 // available tier per slot. Each tile runs the fully-unrolled
@@ -134,11 +191,11 @@ static inline void ks_rounds(AES_KEY* keys, block con, block con3, block mask, i
 // stay in SIMD registers (sweet spot K*N <= 16).
 //
 // On aarch64 only AesLane<1> exists, so the VAES guards compile out
-// and the body collapses to a single aes_tiles<AesLane<1>, numEncs>
+// and the body collapses to a single AesLane<1> memory-input tile op
 // call per key.
-template<int numKeys, int numEncs>
+template<class MemTile, int numKeys, int numEncs>
 EMP_AES_TARGET_ATTR
-static inline void ParaEnc_impl(block *dst, const block *src, const AES_KEY *keys) {
+static inline void ParaEnc_mem_tiles_impl(block *dst, const block *src, const AES_KEY *keys) {
 #if EMP_HAS_VAES512
 	constexpr int W4 = 4, N4 = numEncs / 4;
 #else
@@ -156,31 +213,58 @@ static inline void ParaEnc_impl(block *dst, const block *src, const AES_KEY *key
 		const block * const ps = src + k * (size_t)numEncs;
 		const AES_KEY * const kk = keys + k;
 #if EMP_HAS_VAES512
-		if constexpr (N4 > 0) aes_tiles<AesLane<4>, N4>(pd, ps, kk);
+		if constexpr (N4 > 0) MemTile::template apply<AesLane<4>, N4>(pd, ps, kk);
 #endif
 #if EMP_HAS_VAES256
-		if constexpr (N2 > 0) aes_tiles<AesLane<2>, N2>(pd + N4 * W4, ps + N4 * W4, kk);
+		if constexpr (N2 > 0) MemTile::template apply<AesLane<2>, N2>(pd + N4 * W4, ps + N4 * W4, kk);
 #endif
-		if constexpr (N1 > 0) aes_tiles<AesLane<1>, N1>(pd + N4 * W4 + N2 * W2, ps + N4 * W4 + N2 * W2, kk);
+		if constexpr (N1 > 0) MemTile::template apply<AesLane<1>, N1>(pd + N4 * W4 + N2 * W2, ps + N4 * W4 + N2 * W2, kk);
 	}
 }
 
-// Runtime dispatcher: tile each per-key stream into compile-time tiles
-// {8, 4, 2, 1} so each tile still goes through the unrolled
-// ParaEnc_impl. Cross-key ILP is not exploited (would require an
-// interleaved layout); hot callers that know (K, N) at compile time
-// should use ParaEnc<K, N> directly.
+template<int numKeys, int numEncs>
 EMP_AES_TARGET_ATTR
-inline void ParaEnc_runtime_impl(block *dst, const block *src, const AES_KEY *keys, int64_t K, int64_t N) {
+static inline void ParaEnc_impl(block *dst, const block *src, const AES_KEY *keys) {
+	ParaEnc_mem_tiles_impl<AesMemPlainTile, numKeys, numEncs>(dst, src, keys);
+}
+
+// Same layout/tiling as ParaEnc_impl, but stores AES(src) ^ src.
+template<int numKeys, int numEncs>
+EMP_AES_TARGET_ATTR
+static inline void ParaEncXorInput_impl(block *dst, const block *src, const AES_KEY *keys) {
+	ParaEnc_mem_tiles_impl<AesMemXorInputTile, numKeys, numEncs>(dst, src, keys);
+}
+
+// Runtime dispatcher: tile each per-key stream into compile-time tiles
+// ({16, 8, 4, 2, 1} on VAES512; otherwise {8, 4, 2, 1}) so each tile
+// still goes through the unrolled memory-input tile op. Cross-key ILP is not
+// exploited (would require an interleaved layout); hot callers that know
+// (K, N) at compile time should use ParaEnc<K, N> directly.
+template<class MemTile>
+EMP_AES_TARGET_ATTR
+inline void ParaEnc_mem_tiles_runtime_impl(block *dst, const block *src, const AES_KEY *keys, int64_t K, int64_t N) {
 	for (int64_t k = 0; k < K; ++k) {
 		block *pd = dst + k * N;
 		const block *ps = src + k * N;
 		int64_t n = N;
-		while (n >= 8) { ParaEnc_impl<1, 8>(pd, ps, keys + k); pd += 8; ps += 8; n -= 8; }
-		if (n >= 4)    { ParaEnc_impl<1, 4>(pd, ps, keys + k); pd += 4; ps += 4; n -= 4; }
-		if (n >= 2)    { ParaEnc_impl<1, 2>(pd, ps, keys + k); pd += 2; ps += 2; n -= 2; }
-		if (n >= 1)      ParaEnc_impl<1, 1>(pd, ps, keys + k);
+#if EMP_HAS_VAES512
+		while (n >= 16) { ParaEnc_mem_tiles_impl<MemTile, 1, 16>(pd, ps, keys + k); pd += 16; ps += 16; n -= 16; }
+#endif
+		while (n >= 8) { ParaEnc_mem_tiles_impl<MemTile, 1, 8>(pd, ps, keys + k); pd += 8; ps += 8; n -= 8; }
+		if (n >= 4)    { ParaEnc_mem_tiles_impl<MemTile, 1, 4>(pd, ps, keys + k); pd += 4; ps += 4; n -= 4; }
+		if (n >= 2)    { ParaEnc_mem_tiles_impl<MemTile, 1, 2>(pd, ps, keys + k); pd += 2; ps += 2; n -= 2; }
+		if (n >= 1)      ParaEnc_mem_tiles_impl<MemTile, 1, 1>(pd, ps, keys + k);
 	}
+}
+
+EMP_AES_TARGET_ATTR
+inline void ParaEnc_runtime_impl(block *dst, const block *src, const AES_KEY *keys, int64_t K, int64_t N) {
+	ParaEnc_mem_tiles_runtime_impl<AesMemPlainTile>(dst, src, keys, K, N);
+}
+
+EMP_AES_TARGET_ATTR
+inline void ParaEncXorInput_runtime_impl(block *dst, const block *src, const AES_KEY *keys, int64_t K, int64_t N) {
+	ParaEnc_mem_tiles_runtime_impl<AesMemXorInputTile>(dst, src, keys, K, N);
 }
 
 // AES-CTR fill: dst[i] = AES_K(counter + i) for i in [0, W). Plaintext

@@ -127,6 +127,58 @@ static bool check_hash_cir() {
 	return ok;
 }
 
+template <int K, int H>
+static bool check_out_of_place() {
+	const block S = makeBlock(0x9999ULL, 0xaaaaULL);
+	const uint64_t gid0 = 42;
+	MITCCRH<8> in_place, out_place;
+	in_place.setS(S); out_place.setS(S);
+	in_place.gid = out_place.gid = gid0;
+	in_place.key_used = out_place.key_used = 8;
+
+	block in[K * H];
+	PRG().random_block(in, K * H);
+	block saved[K * H], via_in_place[K * H], via_out_place[K * H];
+	memcpy(saved, in, sizeof(in));
+	memcpy(via_in_place, in, sizeof(in));
+
+	in_place.template hash<K, H>(via_in_place);
+	out_place.template hash<K, H>(via_out_place, in);
+
+	bool ok = memcmp(via_in_place, via_out_place, sizeof(in)) == 0 &&
+	          memcmp(in, saved, sizeof(in)) == 0;
+	ostringstream os;
+	os << "  [hash<" << K << "," << H << "> out-of-place = in-place]";
+	cout << left << setw(46) << os.str() << (ok ? "OK" : "FAIL") << "\n";
+	return ok;
+}
+
+template <int K, int H>
+static bool check_hash_cir_out_of_place() {
+	const block S = makeBlock(0xbbbbULL, 0xccccULL);
+	const uint64_t gid0 = 77;
+	MITCCRH<8> in_place, out_place;
+	in_place.setS(S); out_place.setS(S);
+	in_place.gid = out_place.gid = gid0;
+	in_place.key_used = out_place.key_used = 8;
+
+	block in[K * H];
+	PRG().random_block(in, K * H);
+	block saved[K * H], via_in_place[K * H], via_out_place[K * H];
+	memcpy(saved, in, sizeof(in));
+	memcpy(via_in_place, in, sizeof(in));
+
+	in_place.template hash_cir<K, H>(via_in_place);
+	out_place.template hash_cir<K, H>(via_out_place, in);
+
+	bool ok = memcmp(via_in_place, via_out_place, sizeof(in)) == 0 &&
+	          memcmp(in, saved, sizeof(in)) == 0;
+	ostringstream os;
+	os << "  [hash_cir<" << K << "," << H << "> out-of-place = in-place]";
+	cout << left << setw(46) << os.str() << (ok ? "OK" : "FAIL") << "\n";
+	return ok;
+}
+
 static bool check_setS_resets_gid() {
 	MITCCRH<8> mit;
 	mit.setS(makeBlock(1, 2));
@@ -150,6 +202,10 @@ static bool run_correctness() {
 	ok &= check_hash_cir<2, 1>();
 	ok &= check_hash_cir<2, 2>();
 	ok &= check_hash_cir<8, 1>();
+	ok &= check_out_of_place<1, 1>();
+	ok &= check_out_of_place<8, 4>();
+	ok &= check_hash_cir_out_of_place<2, 1>();
+	ok &= check_hash_cir_out_of_place<8, 1>();
 	return ok;
 }
 

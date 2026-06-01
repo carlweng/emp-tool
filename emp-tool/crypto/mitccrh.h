@@ -58,9 +58,10 @@ class MITCCRH { public:
 		hash<K, H>(blks);
 	}
 
-	// Out-of-place: out[i] = in[i] ^ AES(sigma(in[i])). out and in must not
-	// overlap. Lets the caller skip materializing an in-place scratch buffer
-	// when the natural output already lives in a distinct location.
+	// Out-of-place: out[i] = sigma(in[i]) ^ AES(sigma(in[i])). out and in
+	// must not overlap. Lets the caller skip materializing an in-place
+	// scratch buffer when the natural output already lives in a distinct
+	// location.
 	template<int K, int H>
 	void hash_cir(block * __restrict__ out, const block * __restrict__ in) {
 		block tmp[K*H];
@@ -75,32 +76,21 @@ class MITCCRH { public:
 		static_assert(BatchSize % K == 0, "MITCCRH: K must divide BatchSize");
 		if(key_used == BatchSize) renew_ks();
 
-		block tmp[K*H];
-		for(int i = 0; i < K*H; ++i)
-			tmp[i] = blks[i];
-
-		ParaEnc<K,H>(tmp, scheduled_key+key_used);
+		detail::ParaEncXorInput_impl<K,H>(blks, blks, scheduled_key+key_used);
 		key_used += K;
-
-		for(int i = 0; i < K*H; ++i)
-			blks[i] = blks[i] ^ tmp[i];
 	}
 
 	// Out-of-place: out[i] = in[i] ^ AES(in[i]). out and in must not overlap.
-	// Feeds `in` directly through the two-pointer ParaEnc into `out` — skips
-	// the K*H-block stack copy and the second XOR-fold pass that the
-	// one-pointer form needs.
+	// Feeds `in` directly through the two-pointer Davies-Meyer AES helper,
+	// so neither form needs a stack copy or a second XOR-fold pass.
 	template<int K, int H>
 	void hash(block * __restrict__ out, const block * __restrict__ in) {
 		static_assert(K <= BatchSize, "MITCCRH: K must not exceed BatchSize");
 		static_assert(BatchSize % K == 0, "MITCCRH: K must divide BatchSize");
 		if(key_used == BatchSize) renew_ks();
 
-		ParaEnc<K,H>(out, in, scheduled_key+key_used);
+		detail::ParaEncXorInput_impl<K,H>(out, in, scheduled_key+key_used);
 		key_used += K;
-
-		for(int i = 0; i < K*H; ++i)
-			out[i] = out[i] ^ in[i];
 	}
 
 };

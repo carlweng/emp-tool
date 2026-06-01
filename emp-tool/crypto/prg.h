@@ -120,53 +120,56 @@ class PRG { public:
 		}
 	}
 
-    void random_data_unaligned(void *data, int64_t nbytes) {
-        if (nbytes <= 0) return;
-        // Small-buffer fast path. Anything that fits in two blocks is
-        // filled with one random_block draw and copied — no alignment
-        // dance. This also covers every case where std::align below
-        // could fail (failure requires nbytes <= 30, since the worst
-        // alignment skew is 15 bytes and the aligned region needs 16).
-        if (nbytes <= (int64_t)(2 * sizeof(block))) {
-            block tmp[2];
-            random_block(tmp, 2);
-            memcpy(data, tmp, nbytes);
-            return;
-        }
+	void random_data_unaligned(void *data, int64_t nbytes) {
+		if (nbytes <= 0) return;
+		// Small-buffer fast path. Anything that fits in two blocks is
+		// filled with the minimum number of whole AES blocks and copied
+		// without an alignment dance. This also covers every case where
+		// std::align below could fail (failure requires nbytes <= 30,
+		// since the worst alignment skew is 15 bytes and the aligned
+		// region needs 16).
+		if (nbytes <= (int64_t)(2 * sizeof(block))) {
+			block tmp[2];
+			random_block(tmp,
+			             (nbytes + (int64_t)sizeof(block) - 1) /
+			             (int64_t)sizeof(block));
+			memcpy(data, tmp, nbytes);
+			return;
+		}
 
-        // Aligned bulk path. nbytes > 32 here, so std::align is
-        // guaranteed to succeed.
-        size_t size = nbytes;
-        void *aligned_data = data;
-        std::align(sizeof(block), sizeof(block), aligned_data, size);
-        // round down to a whole number of blocks
-        size = sizeof(block) * (size / sizeof(block));
-        int64_t chopped = nbytes - size;
+		// Aligned bulk path. nbytes > 32 here, so std::align is
+		// guaranteed to succeed.
+		size_t size = nbytes;
+		void *aligned_data = data;
+		std::align(sizeof(block), sizeof(block), aligned_data, size);
+		// round down to a whole number of blocks
+		size = sizeof(block) * (size / sizeof(block));
+		int64_t chopped = nbytes - size;
 
-        // temporarily fill the bulk of the buffer with random data
-        random_data(aligned_data, nbytes - chopped);
+		// temporarily fill the bulk of the buffer with random data
+		random_data(aligned_data, nbytes - chopped);
 
-        // move the random data to the start of the buffer
-        // (using memmove, not memcpy, because of memory overlap)
-        memmove(data, aligned_data, nbytes - chopped);
+		// move the random data to the start of the buffer
+		// (using memmove, not memcpy, because of memory overlap)
+		memmove(data, aligned_data, nbytes - chopped);
 
-        int64_t remaining_bytes = chopped;
-        char* end = (char*)data + nbytes;
+		int64_t remaining_bytes = chopped;
+		char* end = (char*)data + nbytes;
 
-        // there can be 0-2 blocks leftover
-        // eg: <- 8 bytes -> <- N blocks -> <- 15 bytes ->
-        //     in the above case, the N blocks are filled by random_data,
-        //     leaving 23 bytes leftover, which requires 2 blocks to fill,
-        //     of which we must ignore 9 bytes to avoid writing past the
-        //     end of the buffer (`void *data`).
-        while (remaining_bytes > 0) {
-            block tmp;
-            random_block(&tmp, 1);
-            int64_t bytes_to_copy = std::min(remaining_bytes, (int64_t)sizeof(block));
-            memcpy(end - remaining_bytes, &tmp, bytes_to_copy);
-            remaining_bytes -= bytes_to_copy;
-        }
-    }
+		// there can be 0-2 blocks leftover
+		// eg: <- 8 bytes -> <- N blocks -> <- 15 bytes ->
+		//     in the above case, the N blocks are filled by random_data,
+		//     leaving 23 bytes leftover, which requires 2 blocks to fill,
+		//     of which we must ignore 9 bytes to avoid writing past the
+		//     end of the buffer (`void *data`).
+		while (remaining_bytes > 0) {
+			block tmp;
+			random_block(&tmp, 1);
+			int64_t bytes_to_copy = std::min(remaining_bytes, (int64_t)sizeof(block));
+			memcpy(end - remaining_bytes, &tmp, bytes_to_copy);
+			remaining_bytes -= bytes_to_copy;
+		}
+	}
 
 	void random_block(block * data, int64_t nblocks=1) {
 		// Caller must pass block-aligned `data` (16 bytes). random_data and
