@@ -1,11 +1,15 @@
 #ifndef EMP_FRONTEND_H__
 #define EMP_FRONTEND_H__
 
-// Umbrella for the protocol-neutral circuit frontend: record ordinary emp-tool
-// circuit code into a BooleanProgram, annotate it with stats, and run/compile
-// it through a protocol-specific Executor. Opt-in (NOT pulled by emp-tool.h):
-// it binds RecWire-typed circuit aliases, which would otherwise collide with a
-// protocol's own bare aliases (e.g. ag2pc's Bit = Bit_T<AG2PCWire>).
+// Umbrella for the protocol-neutral circuit frontend. A circuit is a PURE,
+// wire-generic function — typed EMP arguments in, an EMP value out, no I/O
+// inside. frontend::run(body, args...) calls it live; frontend::compile<...>(body)
+// records it once (with stats) and frontend::run(circuit, args...) replays it
+// through whatever Backend is installed. See docs/frontend.md.
+//
+// Opt-in (NOT pulled by emp-tool.h). The suffixed `*_rec` aliases below are an
+// INTERNAL detail of recording (the wire a body is traced on); user code passes
+// ordinary live values and need not name them.
 
 #include "emp-tool/frontend/boolean_program.h"
 #include "emp-tool/frontend/record_backend.h"
@@ -18,10 +22,10 @@
 #include "emp-tool/circuits/circuit.h"
 #include "emp-tool/circuits/circuit_types.h"
 
-// Convenience aliases bound to RecWire, suffixed with _rec so they never clash
-// with a protocol's bare Bit/Integer aliases in the same translation unit.
-// Write bodies as `Bit_rec`, `UInt32_rec`, … (or `Bit_T<emp::frontend::RecWire>`
-// directly). The macro injects these into namespace emp.
+// Internal recording aliases bound to RecWire, suffixed with _rec so they never
+// clash with a protocol's bare Bit/Integer aliases in the same translation unit.
+// These are the wire a body is traced on during compile(); ordinary user code
+// does not name them (it passes live values and gets a live value back).
 EMP_USE_CIRCUIT_TYPES_AS(emp::frontend::RecWire, _rec,
 	Bit, BitVec, UnsignedInt, SignedInt, Float,
 	UInt8, UInt16, UInt32, UInt64, Int8, Int16, Int32, Int64)

@@ -108,16 +108,21 @@ struct LayoutStats {
 
 inline LayoutStats layout_pass(const BooleanProgram& p, const LivenessStats& live) {
 	LayoutStats s;
+	// Output wires are roots: they must survive to output assembly, so they are
+	// never freed — even if an internal gate also read them earlier (e.g. a body
+	// that returns one of its inputs which a dead sub-expression also used).
+	std::vector<char> is_output(p.num_wire, 0);
+	for (int w : p.outputs)
+		if (w >= 0 && w < p.num_wire) is_output[w] = 1;
 	s.frees.assign(p.num_gate(), {});
 	for (int w = 0; w < p.num_wire; ++w)
-		if (live.last_use[w] >= 0) s.frees[live.last_use[w]].push_back(w);
+		if (live.last_use[w] >= 0 && !is_output[w]) s.frees[live.last_use[w]].push_back(w);
 
-	// Output-rooted DCE: mark wires reachable backward from output ports.
+	// Output-rooted DCE: mark wires reachable backward from the output wires.
 	std::vector<char> reach(p.num_wire, 0);
 	std::vector<int> stack;
-	for (const auto& op : p.outputs)
-		for (int w : op.wire_ids)
-			if (w >= 0 && !reach[w]) { reach[w] = 1; stack.push_back(w); }
+	for (int w : p.outputs)
+		if (w >= 0 && !reach[w]) { reach[w] = 1; stack.push_back(w); }
 	while (!stack.empty()) {
 		int w = stack.back(); stack.pop_back();
 		int pg = live.first_def[w];

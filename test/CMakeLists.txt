@@ -21,6 +21,20 @@ function(add_test_case_with_run name)
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 endfunction()
 
+# Same as add_test_case but compiles just this binary as C++20 (e.g. for
+# template-lambda circuit bodies). The library stays C++17; cxx_std_17 there is
+# a floor, so CMake resolves this one target to C++20 with no wider effect.
+function(add_test_case_cxx20 name)
+    add_executable(${name} ${name}.cpp)
+    target_link_libraries(${name} PRIVATE emp-tool::emp-tool)
+    target_compile_features(${name} PRIVATE cxx_std_20)
+    set_target_properties(${name} PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
+    add_test(NAME ${name}
+             COMMAND ${name}
+             WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
+endfunction()
+
 # utils/* tests
 add_test_case(test_aes)
 add_test_case(test_block)
@@ -54,3 +68,4 @@ add_test_case(test_sha3_circuit)
 add_test_case(test_sha3_256)
 add_test_case(test_sha256_circuit)
 add_test_case(test_circuit_types)
+add_test_case_cxx20(test_frontend)   # C++20: also demonstrates template-lambda bodies

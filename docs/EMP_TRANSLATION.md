@@ -8,6 +8,10 @@ backed by a `Backend` from `emp-tool/execution/`.
 If you read only one section, read **§1 The hard rule** and **§4
 Translation patterns**. The rest is type detail.
 
+This doc covers *writing* the circuit logic. To *run* it as a reusable
+function — call it live, or compile it once and replay it through any
+backend — see [frontend.md](frontend.md).
+
 ---
 
 ## 0. Mental model in three sentences

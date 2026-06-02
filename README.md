@@ -97,6 +97,7 @@ emp-tool/
 ├── io/           IOChannel, NetIO, TLSIO, TraceIO
 ├── execution/    Backend interface, ClearBackend, HalfGate*, PrivacyFree*
 ├── circuits/     Bit, BitVec, UnsignedInt, SignedInt, Float (all templated on Wire), BristolFormat/Fashion
+├── frontend/     run / compile / replay pure circuit functions through any backend (emp::frontend)
 └── third_party/  ThreadPool, sse2neon
 ```
 
@@ -237,6 +238,33 @@ finalize_clear_backend();
 
 To dump the executed circuit as a Bristol-format file, pass a filename
 to `setup_clear_backend("circuit.txt")`.
+
+### Circuit frontend: run and compile
+
+Write a **pure circuit function** (inputs are arguments, the output is the
+return value — no `feed`/`reveal` inside) and run it through the installed
+backend: call it directly, or **compile it once into a reusable circuit**
+(carrying size/depth stats) and replay it with fresh inputs. I/O stays in
+direct mode, around the circuit. Add `#include <emp-tool/frontend/frontend.h>`
+(opt-in).
+
+```cpp
+setup_clear_backend();                           // any backend (here: cleartext)
+auto add = [](auto a, auto b){ return a + b; };
+
+UInt32 x(32, 7, PUBLIC), y(32, 5, PUBLIC);       // inputs: direct mode
+UInt32 z = frontend::run(add, x, y);             // run as a function -> 12
+
+auto circ = frontend::compile<UInt32, UInt32>(add);  // pre-built once (+ stats)
+UInt32 r1 = frontend::run(circ, x, y);                               // replay ...
+UInt32 r2 = frontend::run(circ, UInt32(32,100,PUBLIC), UInt32(32,23,PUBLIC)); // ... reused
+// inspect: circ.circuit.count.num_and, circ.circuit.schedule.levels.depth, ...
+```
+
+Outputs are live wires, so results chain into more circuit code and are
+revealed whenever. The same `compile` / `run` drive any backend — the
+cleartext one above, or a protocol such as AG2PC. See
+[docs/frontend.md](docs/frontend.md).
 
 ### Pre-built circuits (Bristol format)
 

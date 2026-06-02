@@ -1,18 +1,19 @@
 #ifndef EMP_FRONTEND_RECORD_BACKEND_H__
 #define EMP_FRONTEND_RECORD_BACKEND_H__
 
-// A protocol-neutral Backend that records ordinary emp-tool circuit code into a
-// BooleanProgram instead of evaluating it. Install it as the global `backend`,
-// run a body of Bit/Integer code once, and read out `prog`. Recording is
-// value-free for shape: the body's feed values only seed input-port fed_bits;
-// the gate graph is independent of them, so every party records an identical
-// program. reveal() is intercepted as an output port and writes a placeholder
-// (the real cleartext comes from the protocol backend at run time).
+// A protocol-neutral Backend that records a PURE circuit function into a
+// BooleanProgram instead of evaluating it. A circuit takes its inputs as
+// arguments and returns its output — there is no I/O inside it: secret feed()
+// and reveal() are rejected (do I/O in direct mode, around the circuit).
+// Public-constant feeds are allowed (they fold to CONST gates). The gate shape
+// is value-free with respect to the arguments, so all parties record an
+// identical program — provided public feeds are literal / agreed constants
+// (they bake in as CONST gates and must not be per-party runtime values).
 
 #include "emp-tool/execution/backend.h"
+#include "emp-tool/core/utils.h"            // error()
 #include "emp-tool/frontend/boolean_program.h"
 #include <cstddef>
-#include <utility>
 
 namespace emp {
 namespace frontend {
@@ -48,21 +49,16 @@ public:
 		static_cast<RecWire*>(out)->id = cache;
 	}
 
+	// A circuit's inputs are its arguments, not values fed inside it. Only
+	// public constants may be fed (they fold to CONST gates above). A secret /
+	// party-owned feed inside the body would bake those bits into the circuit,
+	// so it is rejected — pass such inputs as arguments instead.
 	void feed(void* out, int from_party, const bool* in, size_t n) override {
-		if (from_party == PUBLIC) {                 // public feed == constants
-			for (size_t i = 0; i < n; ++i)
-				public_label(static_cast<RecWire*>(out) + i, in[i]);
-			return;
-		}
-		InputPort p;
-		p.kind  = InputPort::Kind::Fed;
-		p.owner = from_party;
-		p.base  = next_id_;
-		p.n     = (int)n;
-		p.fed_bits.assign(in, in + n);   // owner's real bits; dummies elsewhere
+		if (from_party != PUBLIC)
+			error("frontend: a circuit takes secret inputs as ARGUMENTS, not via "
+			      "feed() inside the body (do that in direct mode, around the circuit)");
 		for (size_t i = 0; i < n; ++i)
-			(static_cast<RecWire*>(out) + i)->id = alloc_();
-		prog.inputs.push_back(std::move(p));
+			public_label(static_cast<RecWire*>(out) + i, in[i]);
 	}
 
 	void and_gate(void* out, const void* l, const void* r) override {
@@ -82,29 +78,22 @@ public:
 		static_cast<RecWire*>(out)->id = o;
 	}
 
-	// reveal at record time: register an output port; write a deterministic
-	// placeholder so the body keeps running. The body's return value is
-	// therefore meaningless under recording — callers read the executor's
-	// decoded Outputs instead.
-	void reveal(bool* out, int to_party, const void* in, size_t n) override {
-		OutputPort p;
-		p.kind     = OutputPort::Kind::Revealed;
-		p.to_party = to_party;
-		p.wire_ids.resize(n);
-		for (size_t i = 0; i < n; ++i) {
-			p.wire_ids[i] = id_(static_cast<const RecWire*>(in) + i);
-			out[i] = false;
-		}
-		prog.outputs.push_back(std::move(p));
+	// A circuit's output is its return value, not something revealed inside it.
+	// Revealing inside would (a) bake a record-time placeholder into any host
+	// branch on the result and (b) decode at a fixed party — so it is rejected.
+	// Reveal the returned value in direct mode, outside the circuit.
+	void reveal(bool* /*out*/, int /*to_party*/, const void* /*in*/, size_t /*n*/) override {
+		error("frontend: a circuit RETURNS its output; reveal it in direct mode, "
+		      "outside the circuit (reveal() inside the body is not allowed)");
 	}
 
-	// Mark wires as live outputs to hand back (revealed/chained outside the run
-	// call) rather than decoded inside. Used by frontend::keep().
-	void add_wire_output(const int *ids, size_t n) {
-		OutputPort p;
-		p.kind = OutputPort::Kind::Wire;
-		p.wire_ids.assign(ids, ids + n);
-		prog.outputs.push_back(std::move(p));
+	// Allocate `n` wires as an input-argument port (bound to a live value at
+	// run time). Returns the base wire id. Used by the compile() path.
+	int external_input(int n) {
+		int base = next_id_;
+		for (int i = 0; i < n; ++i) alloc_();
+		prog.inputs.push_back(InputPort{base, n});
+		return base;
 	}
 
 	uint64_t num_and() override { return prog.num_and; }

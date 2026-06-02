@@ -1,18 +1,19 @@
 #ifndef EMP_FRONTEND_BOOLEAN_PROGRAM_H__
 #define EMP_FRONTEND_BOOLEAN_PROGRAM_H__
 
-// Protocol-neutral Boolean circuit IR captured from ordinary emp-tool circuit
-// code. A RecordBackend (record_backend.h) drives the global Backend interface
-// and emits one of these; the analysis passes (passes.h) annotate it; any
-// protocol backend lowers it to its own representation and runs it. Nothing
-// here knows about labels, MACs, triples, or any specific protocol.
+// Protocol-neutral Boolean circuit IR captured from a PURE circuit function:
+// inputs are the function's arguments, the output is its return value. There is
+// no I/O inside the circuit — no secret feed, no reveal (those are the caller's
+// job, in direct mode, around the circuit). A RecordBackend (record_backend.h)
+// drives the global Backend interface and emits one of these; the analysis
+// passes (passes.h) annotate it; any protocol backend replays it. Nothing here
+// knows about labels, MACs, triples, or any specific protocol.
 //
 // Wire ids are dense [0, num_wire), assigned in emission order: a wire is
-// created either by an input port or by the gate that outputs it. There are no
-// create/destroy markers — liveness is derived by a pass (see passes.h), which
-// is exact for the bounded circuits this layer captures.
+// created either by an input-argument port or by the gate that outputs it.
+// There are no create/destroy markers — liveness is derived by a pass (see
+// passes.h), which is exact for the bounded circuits this layer captures.
 
-#include "emp-tool/core/constants.h"   // PUBLIC / ALICE / BOB
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -36,28 +37,13 @@ struct Gate {
 	bool is_linear() const { return op == Op::XOR  || op == Op::NOT; }
 };
 
-// One secret input feed (or one parameter, later). Wires [base, base+n) carry
-// the fed bits. `fed_bits` are the values this party passed at record time —
-// real for ports it owns, dummy otherwise; an executor uses the owner's bits
-// (BoundInputs may override). External (deferred) marks a boundary wire bound
-// to ambient protocol state instead of fed from cleartext.
+// One circuit argument. Wires [base, base+n) are its bits, bound to a live
+// input value at run time (the caller passes the EMP object). Ownership /
+// authentication lives in that live value, not here — a circuit is wire-typed,
+// not party-typed.
 struct InputPort {
-	enum class Kind { Fed, External };
-	Kind kind  = Kind::Fed;
-	int  owner = PUBLIC;
-	int  base  = 0;
-	int  n     = 0;
-	std::vector<bool> fed_bits;   // size n for Fed; empty for External
-};
-
-// One reveal() call (or one returned wire bundle, later). Revealed decodes to
-// cleartext at `to_party`; Wire (deferred) hands the live wires back to the
-// caller without revealing.
-struct OutputPort {
-	enum class Kind { Revealed, Wire };
-	Kind kind      = Kind::Revealed;
-	int  to_party  = PUBLIC;       // Revealed only
-	std::vector<int> wire_ids;     // wire ids revealed/returned, in order
+	int base = 0;
+	int n    = 0;
 };
 
 // AND-depth scheduling metadata (filled by schedule_pass). Populated now for
@@ -73,16 +59,14 @@ struct BooleanProgram {
 	int         num_and    = 0;    // count of AND gates
 	std::size_t wire_bytes = 0;    // sizeof(RecWire) at record time, for sanity checks
 
-	std::vector<Gate>       gates;     // topological (emission) order
-	std::vector<InputPort>  inputs;    // Fed ports in feed() order
-	std::vector<OutputPort> outputs;   // Revealed ports in reveal() order
+	std::vector<Gate>      gates;    // topological (emission) order
+	std::vector<InputPort> inputs;   // one per circuit argument, in order
+	std::vector<int>       outputs;  // wire ids of the return value (flattened)
 
 	int total_input_bits() const {
-		int n = 0; for (const auto& p : inputs)  n += p.n; return n;
+		int n = 0; for (const auto& p : inputs) n += p.n; return n;
 	}
-	int total_output_bits() const {
-		int n = 0; for (const auto& p : outputs) n += (int)p.wire_ids.size(); return n;
-	}
+	int total_output_bits() const { return (int)outputs.size(); }
 	int num_gate() const { return (int)gates.size(); }
 };
 

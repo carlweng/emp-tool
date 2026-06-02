@@ -25,6 +25,7 @@ self-contained and assumes you've read this index.
 |---|---|
 | Modify a circuit primitive header (`Bit_T`, `BitVec_T`, `UnsignedInt_T`, `SignedInt_T`, `Float_T`) | [docs/circuits.md](docs/circuits.md) + [docs/numeric_semantics.md](docs/numeric_semantics.md) |
 | Write or modify a `Backend` subclass (gate dispatch, garbling) | [docs/backend.md](docs/backend.md) |
+| Run / compile / replay a pure circuit function through a backend (`frontend::run` / `compile`) | [docs/frontend.md](docs/frontend.md) |
 | Write protocol code that uses NetIO (sends, recvs, multi-thread, flush) | [docs/io_channel.md](docs/io_channel.md) |
 | Investigate a NetIO deadlock | [docs/io_channel.md](docs/io_channel.md) |
 | Translate ordinary C++ / Python to an EMP secure circuit | [docs/EMP_TRANSLATION.md](docs/EMP_TRANSLATION.md) |

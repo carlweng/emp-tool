@@ -5,7 +5,9 @@ Conventions for the protocol backends — `ClearBackend`, `HalfGate*`,
 writing a new `Backend` subclass or modifying gate-dispatch internals.
 
 For circuit-side primitive conventions, read
-[circuits.md](circuits.md).
+[circuits.md](circuits.md). A new `Backend` automatically works with the
+[frontend](frontend.md) — live `run`, `compile`, and replay, for every circuit
+type — with no frontend changes; that's the payoff of this seam.
 
 ## Global backend pointer
 
