@@ -22,7 +22,7 @@ include(CheckCSourceRuns)
 # ---------------------------------------------------------------------
 option(EMP_TOOL_BUILD_TESTS       "Build emp-tool tests"               ${PROJECT_IS_TOP_LEVEL})
 option(EMP_TOOL_INSTALL           "Generate install / export rules"    ${PROJECT_IS_TOP_LEVEL})
-option(EMP_TOOL_NATIVE_ARCH       "Build for the host CPU (-march=native) so VAES, VPCLMULQDQ, AVX-512 etc. are used when available. Default ON for performance; turn OFF to produce a portable binary that runs on any AES-NI + PCLMUL + SSSE3 CPU." ON)
+option(EMP_TOOL_NATIVE_ARCH       "Build for the host CPU (-march=native) so compile-time SIMD tiers such as VAES, VPCLMULQDQ, and AVX-512 are enabled when available. Default ON for performance; turn OFF to produce a portable binary that runs on any AES-NI + PCLMUL + SSSE3 CPU." ON)
 option(EMP_TOOL_THREADING         "Use thread-local protocol/circuit execution pointers" OFF)
 
 # ---------------------------------------------------------------------
@@ -91,10 +91,12 @@ target_compile_options(emp-tool PRIVATE
 # unless made PUBLIC.
 target_compile_options(emp-tool PUBLIC -Wno-ignored-attributes)
 
-# Architecture floor. Per-function CPU dispatch (VAES / VPCLMULQDQ etc.) is
-# handled in source via __attribute__((target(...))). Set EMP_TOOL_NATIVE_ARCH
-# to bake -march=native into the build for benchmarks; do NOT ship binaries
-# with that on — they will SIGILL on older CPUs.
+# Architecture floor. SIMD tiers (VAES / VPCLMULQDQ / AVX-512 etc.) are
+# selected at compile time from compiler feature macros; source-level
+# target(...) attributes only make those selected implementations legal to
+# compile. Set EMP_TOOL_NATIVE_ARCH to bake -march=native into the build for
+# benchmarks or build-on-target deployments; do NOT ship those binaries to
+# older CPUs, since they may SIGILL.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64|arm64)")
     target_compile_options(emp-tool PUBLIC -march=armv8-a+crypto+crc)
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "(x86_64|AMD64|i.86)")

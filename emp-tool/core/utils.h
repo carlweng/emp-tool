@@ -2,6 +2,7 @@
 #define EMP_UTILS_H__
 #include <string>
 #include "emp-tool/core/block.h"
+#include "emp-tool/core/simd_tier.h"
 #include <sstream>
 #include <cstddef>//https://gcc.gnu.org/gcc-4.9/porting_to.html
 #include <cstring>

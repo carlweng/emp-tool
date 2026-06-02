@@ -1,0 +1,2 @@
+1. update readme
+2. thinking about circuit that instantiated with block

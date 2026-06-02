@@ -17,7 +17,7 @@ inline void parse_party_and_port(const char *const * arg, int * party, int * por
 }
 
 static inline uint32_t bytes_to_bits32(const void *in) {
-#if defined(__AVX2__)
+#if EMP_HAS_AVX2
     __m256i v = _mm256_loadu_si256((const __m256i *)in);
     v = _mm256_cmpeq_epi8(v, _mm256_setzero_si256());
     return ~(uint32_t)_mm256_movemask_epi8(v);
@@ -34,7 +34,7 @@ static inline uint32_t bytes_to_bits32(const void *in) {
 }
 
 static inline void bits32_to_bytes(uint32_t bits, void *out) {
-#if defined(__AVX2__)
+#if EMP_HAS_AVX2
     __m256i v = _mm256_set1_epi32((int)bits);
     const __m256i shuf = _mm256_setr_epi8(
         0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,1,
@@ -106,4 +106,3 @@ inline block bool_to_block(const bool *data) {
 	bools_to_bits(&r, data, 128);
 	return r;
 }
-
