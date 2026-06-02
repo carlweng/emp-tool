@@ -33,8 +33,9 @@ instead.
   `BitVec`. Conversion between signed and unsigned is an explicit
   `.as_signed()` / `.as_unsigned()` bit-cast (no gates).
 
-- Sortable / If / sort dispatch goes through the template-template
-  mixin `Sortable<Wire, T>` where `T` is `template<typename> class T`.
+- Sortable / If / sort dispatch goes through the CRTP mixin
+  `Sortable<Wire, Self>`, where `Self` is the concrete derived type (e.g.
+  `Sortable<Wire, UnsignedInt_T<Wire, N>>`).
   Derived classes supply `geq` / `equal` / `select`; the mixin provides
   `>=`, `<=`, `<`, `>`, `==`, `!=`, `If`. Don't add `operator==` on
   `BitVec_T` itself — it would collide with the mixin's operator==
@@ -48,6 +49,44 @@ instead.
   consume them. Sign semantics live one level up: signed division is
   unsigned div with pre/post `cond_neg`, signed comparison is
   sign-extended subtraction, etc.
+
+## Circuit-value interface (`CircuitValue`)
+
+Every circuit value (`Bit_T`, `BitVec_T`, `UnsignedInt_T`, `SignedInt_T`,
+`Float_T`) inherits the empty marker base `CircuitValue`
+([circuit_value.h](../emp-tool/circuits/circuit_value.h)) and provides a
+small uniform interface that generic code (notably the
+[frontend](frontend.md) record/replay layer) uses to flatten, rebuild,
+and mux any value without per-type external traits:
+
+- `using wire_type = Wire;` — `Sortable` supplies it for `Bit_T` and
+  `Float_T`; `BitVec_T` has no `Sortable` base so it declares its own. The
+  integer types inherit it from *both* `BitVec_T` and `Sortable`, so they
+  re-declare `using wire_type = Wire;` to resolve the otherwise-ambiguous
+  lookup.
+- `template<class NW> using rebind = Self<NW…>;` — "same shape, different
+  wire" (compile-time only; moves no data). Each type names its own
+  shape (`UnsignedInt_T<NW,N>`, `Float_T<NW>`, …); `BitVec_T` provides
+  the default and the integer types override it.
+- `int pack_size() const` / `void pack(Wire*) const` /
+  `void unpack(const Wire*, int n)` — flatten to / rebuild from a wire
+  array. `BitVec_T` implements these over `bits`; the integer types
+  inherit them.
+- `Self select(const Bit_T<Wire>& cond, const Self& alt) const` —
+  `cond ? alt : *this`. Already present on every type (also the basis of
+  the `If/Then/Else` builder).
+- Generic free helpers `wire_t<T>`, `rebind_t<T,NW>`, `pack_wires(v)`,
+  `assemble<T>(w,n)` live alongside the base.
+
+`CircuitValue` is **non-virtual on purpose**: a vtable would add a vptr to
+every `Bit_T` (2–4× its size) and break `Bit_T<block>` trivial-copyability
+and the `memcpy` fast paths — and we never dynamically dispatch (all use
+is templated on a concrete type). Instead the base declares the methods as
+**templated defaults whose bodies `static_assert`-fail** (deferred via a
+dependent trait): a type that implements a method hides the default, while
+a type that forgets one gets a clear "must implement …" error at the use
+site. Adding a new circuit type = give it these members; no central trait
+list to edit.
 
 ## Bit / byte ordering
 

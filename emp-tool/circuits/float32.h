@@ -15,13 +15,19 @@
 namespace emp {
 
 template<typename Wire>
-class Float_T: public Sortable<Wire, Float_T<Wire>> { public:
+class Float_T: public Sortable<Wire, Float_T<Wire>>, public CircuitValue { public:
 	static const int FLOAT_LEN = 32;
 	static const int BIAS = 127;
 	static const int SGNFC_LEN = 23;
 	static const int EXPNT_LEN = 8;
 
 	std::array<Bit_T<Wire>,32> value;
+
+	// Circuit-value interface (see circuit_value.h): 32 wires.
+	template<typename NW> using rebind = Float_T<NW>;
+	int  pack_size() const { return 32; }
+	void pack(Wire* out) const { for (int i = 0; i < 32; ++i) out[i] = value[i].bit; }
+	void unpack(const Wire* in, int /*n*/) { for (int i = 0; i < 32; ++i) value[i].bit = in[i]; }
 	
 	Float_T(Float_T && in):
 		value(std::move(in.value)) {

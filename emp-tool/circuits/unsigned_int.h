@@ -31,6 +31,13 @@ class UnsignedInt_T : public BitVec_T<Wire>,
 	using BitVec_T<Wire>::bits;
 	using BitVec_T<Wire>::size;
 
+	// Circuit-value interface: pack/unpack/pack_size inherited from BitVec_T;
+	// override `rebind` so generic code names UnsignedInt, not the base BitVec.
+	// wire_type is declared by both BitVec_T and Sortable bases — re-declare it
+	// here to resolve the otherwise-ambiguous lookup.
+	using wire_type = Wire;
+	template<typename NW> using rebind = UnsignedInt_T<NW, N>;
+
 	UnsignedInt_T() {
 		if constexpr (N > 0) bits.resize(N);
 	}

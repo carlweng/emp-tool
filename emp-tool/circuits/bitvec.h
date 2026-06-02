@@ -4,6 +4,7 @@
 #include <memory>
 #include <type_traits>
 #include "emp-tool/circuits/bit.h"
+#include "emp-tool/circuits/circuit_value.h"
 #include "emp-tool/core/utils.h"
 #include "emp-tool/core/block.h"
 #include <vector>
@@ -19,7 +20,7 @@ namespace emp {
 //
 // Bit ordering is LSB-first: bits[0] is bit 0, bits[size()-1] is the MSB.
 template<typename Wire>
-class BitVec_T { public:
+class BitVec_T : public CircuitValue { public:
 	std::vector<Bit_T<Wire>> bits;
 
 	BitVec_T() = default;
@@ -45,6 +46,22 @@ class BitVec_T { public:
 	BitVec_T(size_t width, const void* data, int party);
 
 	size_t size() const { return bits.size(); }
+
+	// Circuit-value interface (see circuit_value.h): one wire per bit, LSB
+	// first. Integer subclasses inherit pack/unpack/pack_size and override
+	// `rebind` to name their own shape. (BitVec_T has no Sortable base, so it
+	// declares wire_type here; the integer subclasses, which inherit both this
+	// and Sortable, re-declare it to resolve the duplicate base alias.)
+	using wire_type = Wire;
+	template<typename NW> using rebind = BitVec_T<NW>;
+	int  pack_size() const { return (int)bits.size(); }
+	void pack(Wire* out) const {
+		for (size_t i = 0; i < bits.size(); ++i) out[i] = bits[i].bit;
+	}
+	void unpack(const Wire* in, int n) {
+		bits.resize(n);
+		for (int i = 0; i < n; ++i) bits[i].bit = in[i];
+	}
 
 	Bit_T<Wire>&       operator[](size_t i)       { return bits[i]; }
 	const Bit_T<Wire>& operator[](size_t i) const { return bits[i]; }

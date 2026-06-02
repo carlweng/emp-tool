@@ -5,10 +5,11 @@
 #include "emp-tool/execution/backend.h"
 #include "emp-tool/core/utils.h"
 #include "emp-tool/circuits/sortable.h"
+#include "emp-tool/circuits/circuit_value.h"
 namespace emp {
 
 template<typename Wire>
-class Bit_T: public Sortable<Wire, Bit_T<Wire>> { public:
+class Bit_T: public Sortable<Wire, Bit_T<Wire>>, public CircuitValue { public:
 	// Default member initializer: every Bit_T starts with a defined `bit`,
 	// even before a ctor/backend writes the real wire. The value ctors and
 	// `feed` overwrite it (the optimizer elides the dead zero-store), so this
@@ -38,6 +39,12 @@ class Bit_T: public Sortable<Wire, Bit_T<Wire>> { public:
 	Bit_T select(const Bit_T<Wire> & select, const Bit_T & new_v) const;
 	Bit_T operator ^(const Bit_T& rhs) const;
 	Bit_T operator ^=(const Bit_T& rhs);
+
+	// Circuit-value interface (see circuit_value.h): one wire.
+	template<typename NW> using rebind = Bit_T<NW>;
+	int  pack_size() const { return 1; }
+	void pack(Wire* out) const { out[0] = bit; }
+	void unpack(const Wire* in, int /*n*/) { bit = in[0]; }
 
 	//batcher
 	template<typename... Args>
