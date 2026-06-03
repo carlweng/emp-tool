@@ -33,6 +33,103 @@ namespace frontend {
 // wire_t / rebind_t / pack_wires / assemble come from circuits/circuit_value.h
 // (the generic accessors over any circuit value's pack/unpack interface).
 
+// ---- The pure-circuit calling contract (one place, C++17, no concepts) ------
+//
+// A frontend body must be CALLABLE WITH PRVALUE CIRCUIT-VALUE ARGUMENTS AND
+// RETURN A CIRCUIT VALUE BY VALUE. circuit_fn_traits<F, Args...> evaluates that
+// contract for a body F invoked with the (caller-declared) argument types
+// Args...; `value_return` is the decayed result type, and the individual flags
+// drive precise diagnostics at every entry point (run / compile / compile-with-
+// samples). Reused by emp-ag2pc (via frontend::run) so the contract is defined
+// exactly once.
+
+template <typename T>
+inline constexpr bool is_circuit_value_v =
+    std::is_base_of<emp::CircuitValue, std::decay_t<T>>::value;
+
+template <typename F, typename... Args>
+class circuit_fn_traits {
+	template <typename A> using val = std::decay_t<A>;   // the prvalue arg type
+
+	// Raw return type, but only formed when the body is actually callable with
+	// the prvalue args (so a non-callable body doesn't hard-error here).
+	template <typename G, bool = std::is_invocable_v<G &, val<Args>...>>
+	struct ret_ { using type = void; };
+	template <typename G>
+	struct ret_<G, true> {
+		using type = decltype(std::declval<G &>()(std::declval<val<Args>>()...));
+	};
+
+public:
+	using raw_return   = typename ret_<F>::type;
+	using value_return = std::decay_t<raw_return>;
+
+	// Every argument is a circuit value (empty pack ⇒ true).
+	static constexpr bool args_are_circuit = (true && ... && is_circuit_value_v<Args>);
+	// Callable as F& with prvalue args — a non-const lvalue-ref parameter (which
+	// a prvalue cannot bind to) makes this false, rejecting mutating bodies.
+	static constexpr bool callable        = std::is_invocable_v<F &, val<Args>...>;
+	static constexpr bool returns_ref     = std::is_reference<raw_return>::value;
+	static constexpr bool returns_void    = std::is_void<raw_return>::value;
+	static constexpr bool returns_circuit = !returns_void && is_circuit_value_v<raw_return>;
+
+	static constexpr bool ok = args_are_circuit && callable && !returns_ref &&
+	                           !returns_void && returns_circuit;
+};
+
+// circuit_contract<Tr> is the contract's single diagnostic site. The entry
+// points instantiate it IN THEIR BODY (`(void)sizeof(circuit_contract<Tr>)`) so a
+// violating body emits exactly the precise message(s) below, once. It is
+// deliberately NOT named in the signature: a static_assert failure during
+// return-type substitution would also make the overload non-viable, adding a
+// spurious "no matching function". The entry points pair this with
+// `if constexpr (Tr::ok)` so nothing downstream (record_typed_ / std::apply /
+// pack_wires) instantiates after the contract has spoken. The trait emits the
+// diagnostic; the `if constexpr` prevents the noise. (`::type` is provided on
+// both specializations only so the type stays usable; the entry points read
+// `Tr::value_return` directly for their return type.)
+template <typename Tr, bool Ok = Tr::ok>
+struct circuit_contract {                       // Ok: contract holds
+	using type = typename Tr::value_return;
+};
+template <typename Tr>
+struct circuit_contract<Tr, false> {            // the only place asserts live
+	static_assert(Tr::args_are_circuit,
+	    "frontend circuit: every argument must be a circuit value "
+	    "(Bit / Integer / Float / ...)");
+	static_assert(Tr::callable,
+	    "frontend circuit: body is not callable with prvalue circuit-value "
+	    "arguments (a non-const lvalue-reference parameter is rejected — take "
+	    "arguments by value)");
+	static_assert(!Tr::returns_ref,
+	    "frontend circuit must RETURN BY VALUE: the output is a fresh circuit "
+	    "value, not a reference (a returned reference dangles)");
+	static_assert(!Tr::returns_void,
+	    "frontend circuit must return a circuit value, not void");
+	static_assert(Tr::returns_circuit,
+	    "frontend circuit must return a circuit value (Bit / Integer / Float / "
+	    "...), not a plain value");
+	using type = typename Tr::value_return;     // safe: value_return is void when
+	                                            // the body isn't callable, never ill-formed
+};
+
+// A compiled circuit (defined just below). Forward-declared so live run() can
+// route run(circuit, …) to the replay overload by TYPE (is_typed_circuit) rather
+// than by callability — that way a contract-violating body still selects live
+// run() and reaches its contract diagnostic instead of a bare "no matching
+// function".
+template <typename RetRec> struct TypedCircuit;
+template <typename T> struct is_typed_circuit : std::false_type {};
+template <typename R> struct is_typed_circuit<TypedCircuit<R>> : std::true_type {};
+template <typename T>
+inline constexpr bool is_typed_circuit_v = is_typed_circuit<std::decay_t<T>>::value;
+
+// Complete stand-in for live run()'s return type when the contract fails (the
+// real return would be the body's value_return, which is void for a non-callable
+// body — `auto z = run(bad_body, …)` would then add a spurious "incomplete type
+// void"). Returning this tag keeps the contract static_assert the only error.
+struct invalid_circuit_fn {};
+
 // LIVE run: invoke a generic, wire-typed body against the installed backend and
 // return its typed result. Inputs/outputs are ordinary EMP objects, so circuits
 // chain (feed one run's result into the next) and you reveal outside the call.
@@ -40,19 +137,26 @@ namespace frontend {
 //   auto z = frontend::run([](auto a, auto b){ return a + b; }, x, y);
 //   auto w = frontend::run([](auto a){ return a + a; }, z);   // chains on z
 //
-// Arguments are passed by VALUE: a circuit reads inputs and returns an output,
-// it does not mutate inputs. This matches compiled replay and rejects bodies
-// taking a non-const lvalue reference in both paths. The body must be generic
-// over the wire (a generic / template lambda, or a templated functor) so the
-// same code also records under RecWire in compile().
+// Contract (circuit_fn_traits): arguments are circuit values passed BY VALUE
+// (prvalue copies — the body cannot mutate them); the body returns a circuit
+// value BY VALUE. A body taking a non-const lvalue reference, returning a
+// reference, returning void, or returning a non-circuit value is rejected with
+// one precise message (via circuit_contract, the return type). The overload is
+// selected whenever the first argument is NOT a compiled circuit, so those bad
+// bodies reach the diagnostic rather than SFINAE'ing to "no matching function".
 template <typename F, typename... Args,
-          typename = std::enable_if_t<std::is_invocable_v<F &, std::decay_t<Args>...>>>
-auto run(F &&body, Args &&...args)
-    -> std::decay_t<decltype(std::declval<F &>()(std::declval<std::decay_t<Args>>()...))> {
-	// Return type is decayed to a value: a circuit returns an EMP value, never a
-	// reference (a by-reference return would dangle, pointing at the argument
-	// copies that live only inside this call).
-	return body(static_cast<std::decay_t<Args>>(args)...);
+          typename Tr = circuit_fn_traits<F, Args...>,
+          typename = std::enable_if_t<!is_typed_circuit_v<F>>>
+std::conditional_t<Tr::ok, typename Tr::value_return, invalid_circuit_fn>
+run(F &&body, Args &&...args) {
+	// Instantiate the contract trait HERE (in the body, not the signature) so a
+	// violation emits exactly one diagnostic — naming it in the return type would
+	// also make the overload non-viable, adding a spurious "no matching function".
+	(void)sizeof(circuit_contract<Tr>);   // instantiate the contract: emits its diagnostic
+	if constexpr (Tr::ok)
+		return body(static_cast<std::decay_t<Args>>(args)...);
+	else
+		return {};   // invalid_circuit_fn{} — unreachable; contract already asserted
 }
 
 // Build a Circuit (program + stats) from a finished recording.
@@ -93,24 +197,21 @@ inline RecT make_external(int n) {
 // returned value's wires as the output, and package the Circuit.
 template <typename Ret, typename F, typename MakeInputs>
 inline TypedCircuit<Ret> record_typed_(F &&body, MakeInputs make_inputs) {
-	static_assert(std::is_base_of<emp::CircuitValue, Ret>::value,
-	              "frontend::compile: a circuit must RETURN an EMP circuit value "
-	              "(Bit / Integer / Float / …), not a plain value");
+	// Contract (circuit_fn_traits: Ret is a circuit value, args circuit-valued,
+	// returned by value) is enforced at the compile() entry points, so this
+	// internal helper trusts Ret. The `if constexpr` below keeps a stray
+	// non-circuit Ret from emitting a second cryptic pack_wires diagnostic.
 	Backend *saved = backend;
 	RecordBackend rec;
 	backend = &rec;
 
 	auto rec_inputs = make_inputs();
 	// Pass the recorded inputs to the body as rvalues (value semantics): a
-	// circuit's arguments are values, not mutable references. A body that takes
-	// a non-const lvalue reference (and would mutate its input) fails to bind
-	// here and is rejected at compile time — matching the SFINAE in compile().
+	// circuit's arguments are values, not mutable references.
 	Ret rec_result =
 	    std::apply([&](auto &&...ins) { return body(std::move(ins)...); }, rec_inputs);
 
-	// The circuit's output IS the returned value's wires. Guard the capture with
-	// `if constexpr` so a non-CircuitValue return surfaces ONLY the static_assert
-	// above, not a second (cryptic) pack_wires error.
+	// The circuit's output IS the returned value's wires.
 	if constexpr (std::is_base_of<emp::CircuitValue, Ret>::value) {
 		auto ow = pack_wires(rec_result);   // std::vector<RecWire>
 		rec.prog.outputs.clear();
@@ -134,34 +235,64 @@ inline TypedCircuit<Ret> record_typed_(F &&body, MakeInputs make_inputs) {
 // The body must not feed secret inputs or reveal inside (RecordBackend rejects
 // both); pass secrets as arguments and reveal the returned value outside.
 
-// The body is invoked with rvalue (value-semantics) arguments — see
-// record_typed_ — so a body taking a non-const lvalue reference is rejected.
+// Both compile paths record the body once against RecWire-shaped arguments and
+// enforce the SAME contract as live run(), against those recorded argument shapes.
 
-// Input types as template arguments.
+// rebind_t<T, W> for a circuit value; a harmless circuit-value placeholder
+// (Bit_T<W>) otherwise. Used so circuit_fn_traits stays well-formed even when an
+// input type/value is NOT a circuit value — letting the precise "input must be a
+// circuit value" assertion fire instead of a `rebind_t<int, …>` substitution
+// failure ("int has no member rebind").
+template <typename T, typename W, bool = is_circuit_value_v<T>>
+struct rebind_safe { using type = rebind_t<T, W>; };
+template <typename T, typename W>
+struct rebind_safe<T, W, false> { using type = Bit_T<W>; };
+template <typename T, typename W> using rebind_safe_t = typename rebind_safe<T, W>::type;
+
+// Input types as template arguments. The body is checked against
+// rebind_t<Ins, RecWire> argument shapes.
 template <typename... Ins, typename F,
-          typename Ret = std::decay_t<decltype(std::declval<F &>()(
-              std::declval<rebind_t<Ins, RecWire>>()...))>,
-          typename = std::enable_if_t<(sizeof...(Ins) > 0) && !std::is_void<Ret>::value>>
-TypedCircuit<Ret> compile(F &&body) {
-	return record_typed_<Ret>(std::forward<F>(body), [] {
-		return std::tuple<rebind_t<Ins, RecWire>...>{
-		    make_external<rebind_t<Ins, RecWire>>(rebind_t<Ins, RecWire>{}.pack_size())...};
-	});
+          typename Tr = circuit_fn_traits<F, rebind_safe_t<Ins, RecWire>...>,
+          typename = std::enable_if_t<(sizeof...(Ins) > 0)>>
+TypedCircuit<typename Tr::value_return> compile(F &&body) {
+	// Validate the input TYPES up front (before anything depends on a real
+	// rebind_t<Ins, RecWire>), so a non-circuit Ins gets this message, not a
+	// substitution failure. Then instantiate the contract trait in the body to
+	// emit the body's diagnostics as a single error.
+	static_assert((true && ... && is_circuit_value_v<Ins>),
+	              "frontend::compile: each input TYPE must be a circuit value "
+	              "(UInt32 / Bit / Float / ...)");
+	(void)sizeof(circuit_contract<Tr>);   // instantiate the contract: emits its diagnostic
+	if constexpr (Tr::ok && (true && ... && is_circuit_value_v<Ins>)) {
+		return record_typed_<typename Tr::value_return>(std::forward<F>(body), [] {
+			return std::tuple<rebind_t<Ins, RecWire>...>{
+			    make_external<rebind_t<Ins, RecWire>>(rebind_t<Ins, RecWire>{}.pack_size())...};
+		});
+	} else {
+		return {};   // unreachable: a static_assert above already failed
+	}
 }
 
-// Sample values fix the shapes.
+// Sample values fix the shapes. The body is checked against
+// rebind_t<Samples, RecWire> argument shapes.
 template <typename F, typename... Samples,
-          typename Ret = std::decay_t<decltype(std::declval<F &>()(
-              std::declval<rebind_t<Samples, RecWire>>()...))>,
-          typename = std::enable_if_t<!std::is_void<Ret>::value>>
-TypedCircuit<Ret> compile(F &&body, const Samples &...samples) {
+          typename Tr = circuit_fn_traits<F, rebind_safe_t<Samples, RecWire>...>>
+TypedCircuit<typename Tr::value_return> compile(F &&body, const Samples &...samples) {
 	static_assert(sizeof...(Samples) > 0,
 	              "frontend::compile: a circuit needs at least one input argument "
 	              "(construct constants directly rather than compiling a zero-input circuit)");
-	return record_typed_<Ret>(std::forward<F>(body), [&] {
-		return std::tuple<rebind_t<Samples, RecWire>...>{
-		    make_external<rebind_t<Samples, RecWire>>(samples.pack_size())...};
-	});
+	static_assert((true && ... && is_circuit_value_v<Samples>),
+	              "frontend::compile: each input SAMPLE must be a circuit value "
+	              "(UInt32 / Bit / Float / ...)");
+	(void)sizeof(circuit_contract<Tr>);   // instantiate the contract: emits its diagnostic
+	if constexpr (Tr::ok && (true && ... && is_circuit_value_v<Samples>)) {
+		return record_typed_<typename Tr::value_return>(std::forward<F>(body), [&] {
+			return std::tuple<rebind_t<Samples, RecWire>...>{
+			    make_external<rebind_t<Samples, RecWire>>(samples.pack_size())...};
+		});
+	} else {
+		return {};   // unreachable: a static_assert above already failed
+	}
 }
 
 // Replay a compiled circuit with live EMP inputs, returning the typed result (an

@@ -30,8 +30,17 @@ it does **no I/O of its own**:
   inside; any public value that may differ across parties or runs must be an
   **argument**, not fed inside.
 
-`compile` **enforces** this: a non-public `feed` or any `reveal` in the body is
-a hard error (`RecordBackend` rejects them).
+**The calling contract** (one place, `circuit_fn_traits` in `executor.h`): a body
+must be **callable with prvalue circuit-value arguments** and **return a circuit
+value by value**. Arguments are passed as value copies, so a body cannot mutate
+them (a non-`const` lvalue-reference parameter is rejected), and the same body
+records and replays identically. Returning a **reference** (it would dangle into
+the argument copies), returning **void**, returning a **non-circuit** value, or
+taking a non-circuit argument are all compile-time errors with a precise message
+— in `run`, `compile<Ins...>`, and `compile(body, samples)` alike.
+
+`compile`/`run` also **enforce** the no-I/O rule: a non-public `feed` or any
+`reveal` in the body is a hard error (`RecordBackend` rejects them).
 
 Why: `compile` traces *one* execution of the body with placeholder values, so
 any **host** control flow that depended on a runtime value would be frozen into
