@@ -4,14 +4,13 @@
 //   - reports AND-gate count to verify the 6400-AND budget
 
 #include "emp-tool/emp-tool.h"
-
-// emp-tool defines no default wire; bind the circuit types to this backend.
-EMP_USE_CIRCUIT_TYPES_ALL(block);
 #include "emp-tool/circuits/aes_circuit.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
+// Use the standard block-wire circuit aliases in this test translation unit.
+using namespace emp::block_types;
 using namespace emp;
 
 static const unsigned char AES_SBOX_TABLE[256] = {

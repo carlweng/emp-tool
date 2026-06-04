@@ -4,9 +4,9 @@
 // Backend-independent umbrella for emp-tool/circuits/*. Pulls in every circuit
 // primitive as a `<Wire>` template — it bakes in NO concrete wire type. Choose
 // a wire and bind the friendly aliases (Bit, UInt32, …) where you select the
-// backend, via EMP_USE_CIRCUIT_TYPES from circuit_types.h. emp-tool's own
-// block-wire binding lives in circuit_block.h (included by default through
-// emp-tool.h unless EMP_NO_DEFAULT_WIRE is defined).
+// backend. The standard block-wire binding lives in block_types.h under the
+// nested namespace emp::block_types; custom backends can use
+// EMP_CIRCUIT_TYPES from circuit_types.h in their own namespace.
 
 #include "emp-tool/circuits/sortable.h"
 #include "emp-tool/circuits/bit.h"

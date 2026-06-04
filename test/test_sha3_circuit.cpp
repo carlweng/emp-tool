@@ -8,9 +8,6 @@
 //     38400 ANDs / SHA3-256 of any input <= 1080 bits)
 
 #include "emp-tool/emp-tool.h"
-
-// emp-tool defines no default wire; bind the circuit types to this backend.
-EMP_USE_CIRCUIT_TYPES_ALL(block);
 #include "emp-tool/circuits/sha3_circuit.h"
 #include <openssl/evp.h>
 #include <cstdint>
@@ -18,6 +15,8 @@ EMP_USE_CIRCUIT_TYPES_ALL(block);
 #include <cstdlib>
 #include <cstring>
 
+// Use the standard block-wire circuit aliases in this test translation unit.
+using namespace emp::block_types;
 using namespace emp;
 
 // --- Plain-C Keccak-f[1600] reference --------------------------------------

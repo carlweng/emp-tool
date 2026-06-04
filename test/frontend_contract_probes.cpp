@@ -20,7 +20,9 @@
 //   7  run + void return                             -> must return a circuit value, not void
 #include "emp-tool/emp-tool.h"
 #include "emp-tool/frontend/frontend.h"
-EMP_USE_CIRCUIT_TYPES_ALL(block)
+
+// Use the standard block-wire circuit aliases in this test translation unit.
+using namespace emp::block_types;
 using namespace emp;
 
 // A genuinely WIRE-GENERIC functor (templated operator(), not a class pinned to

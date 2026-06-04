@@ -76,10 +76,11 @@ report that the program cannot be translated as-written**.
 | pointers / references to host data| not represented; only the *value* matters |
 
 The class definitions in `emp-tool/circuits/*.h` are templated on a
-`Wire` type; the aliases in `emp-tool/emp-tool.h` (`Bit`, `BitVec`,
-`UnsignedInt`, `SignedInt`, `Float`) all instantiate at `block` (the
-default 128-bit garbled-circuit wire). Use the aliases. Only reach
-for `Bit_T<MyWire>` etc. if you are also writing a custom `Backend`.
+`Wire` type; the standard `block`-wire aliases (`Bit`, `BitVec`,
+`UnsignedInt`, `SignedInt`, `Float`) live in `emp::block_types` after
+including `emp-tool/emp-tool.h`. Use those aliases in application or test
+`.cpp` files. Only reach for `Bit_T<MyWire>` etc. if you are also writing
+a custom `Backend` or protocol-specific wire binding.
 
 ### 2.1. Width is mandatory
 
@@ -406,6 +407,7 @@ UB-avoidance dance will produce extra gates for no reason.
 ```cpp
 #include "emp-tool/emp-tool.h"
 using namespace emp;
+using namespace emp::block_types;
 
 int main() {
     setup_clear_backend();              // optionally: setup_clear_backend("circuit.txt");
@@ -551,6 +553,7 @@ def f(alice_xs, bob_y):
 ```cpp
 #include "emp-tool/emp-tool.h"
 using namespace emp;
+using namespace emp::block_types;
 
 constexpr size_t N = 16;                       // public
 constexpr int W = 32;                          // x and y are int32

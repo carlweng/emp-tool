@@ -1,10 +1,9 @@
 #include "emp-tool/emp-tool.h"
-
-// emp-tool defines no default wire; bind the circuit types to this backend.
-EMP_USE_CIRCUIT_TYPES_ALL(block);
 #include <iostream>
 #include <iomanip>
 
+// Use the standard block-wire circuit aliases in this test translation unit.
+using namespace emp::block_types;
 using namespace std;
 using namespace emp;
 
@@ -45,11 +44,11 @@ int hash_in_circuit(){
 
 
   // now to do the same thing in circuit
-  emp::AES_128_CTR_Calculator aes_128_ctr_calculator = emp::AES_128_CTR_Calculator();
-  emp::BitVec input_integer = emp::BitVec(2000 * 8, input, emp::PUBLIC);
-  emp::BitVec output_integer = emp::BitVec(2000 * 8, input, emp::PUBLIC);
-  emp::BitVec iv_integer = emp::BitVec(128, &iv, emp::PUBLIC);
-  emp::BitVec key_integer = emp::BitVec(128, &key, emp::PUBLIC);
+  AES_128_CTR_Calculator aes_128_ctr_calculator;
+  BitVec input_integer(2000 * 8, input, emp::PUBLIC);
+  BitVec output_integer(2000 * 8, input, emp::PUBLIC);
+  BitVec iv_integer(128, &iv, emp::PUBLIC);
+  BitVec key_integer(128, &key, emp::PUBLIC);
 
   aes_128_ctr_calculator.aes_128_ctr(key_integer.bits.data(),
                                      iv_integer.bits.data(),

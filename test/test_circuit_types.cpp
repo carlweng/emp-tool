@@ -1,23 +1,27 @@
-// Test for circuits/circuit_types.h — the EMP_USE_CIRCUIT_TYPES binding macro.
+// Test for circuits/circuit_types.h — the EMP_CIRCUIT_TYPES_ALL binding macro.
 //
-// emp-tool defines no aliases by default; each consumer binds the circuit
-// templates to its backend's wire at the point it chooses the backend. This
-// test shows binding a subset, and a second suffixed binding so two wires can
-// coexist without name clashes.
+// emp-tool defines no bare circuit aliases in namespace emp by default; each
+// consumer binds the circuit templates to its backend's wire at the point it
+// chooses the backend. This test shows binding the standard set, and a second
+// suffixed binding so two wires can coexist without name clashes.
 
 #include "emp-tool/emp-tool.h"
 #include <cstdint>
 #include <cstdio>
 #include <vector>
 
+namespace emp {
+
 // This program's backend (ClearBackend / HalfGate) uses the `block` wire, so
-// bind the subset we use to it (each macro opens namespace emp itself).
-EMP_USE_CIRCUIT_TYPES(block, Bit, BitVec, UInt32, SHA256_Calculator);
+// bind the standard set in the namespace where we want the names.
+EMP_CIRCUIT_TYPES_ALL(block)
 
 // A suffixed set: same wire here, but in a real multi-backend build this would
 // be a different wire (e.g. an authenticated-GC two-block label). Distinct
 // names (Bit_g, UInt32_g) so both bindings can live in one TU.
-EMP_USE_CIRCUIT_TYPES_AS(block, _g, Bit, UInt32);
+EMP_CIRCUIT_TYPES_ALL_AS(block, _g)
+
+}  // namespace emp
 
 using namespace emp;
 

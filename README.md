@@ -81,11 +81,20 @@ add_subdirectory(third_party/emp-tool)
 target_link_libraries(my-app PRIVATE emp-tool::emp-tool)
 ```
 
-A single header pulls everything in:
+A single header pulls in the substrate (core / crypto / IO / backends /
+wire-templated circuit classes):
 
 ```cpp
 #include <emp-tool/emp-tool.h>
 using namespace emp;
+```
+
+Circuit aliases are explicit because downstream protocol libraries bind their
+own wire types. `emp-tool.h` makes the standard `block` wire aliases available
+under `emp::block_types`; applications opt into that nested namespace:
+
+```cpp
+using namespace emp::block_types;  // in .cpp files
 ```
 
 ## Layout
@@ -101,9 +110,9 @@ emp-tool/
 └── third_party/  ThreadPool, sse2neon
 ```
 
-`circuits/` is templated on the wire type; `emp-tool.h` provides the
-default aliases (`Bit`, `BitVec`, `UnsignedInt`, `SignedInt`, `Float`)
-all over `block`, so most consumers never have to think about it.
+`circuits/` is templated on the wire type; `emp::block_types` provides the
+standard aliases (`Bit`, `BitVec`, `UnsignedInt`, `SignedInt`, `Float`)
+all over `block`, so most application code only needs one explicit opt-in.
 
 The numeric layer makes signedness explicit: `UnsignedInt` wraps mod
 2^N matching `uint{N}_t`, `SignedInt` is two's-complement matching
@@ -222,6 +231,8 @@ The simplest backend evaluates `Bit` / `BitVec` / `UnsignedInt` /
 Bristol-style file of the circuit it executed):
 
 ```cpp
+using namespace emp::block_types;
+
 setup_clear_backend();                           // installs ClearBackend
 
 SignedInt a(32, 7,  PUBLIC);
@@ -246,9 +257,13 @@ return value — no `feed`/`reveal` inside) and run it through the installed
 backend: call it directly, or **compile it once into a reusable circuit**
 (carrying size/depth stats) and replay it with fresh inputs. I/O stays in
 direct mode, around the circuit. Add `#include <emp-tool/frontend/frontend.h>`
-(opt-in).
+for the frontend API and opt into `emp::block_types` for the standard block
+aliases.
 
 ```cpp
+#include <emp-tool/frontend/frontend.h>
+using namespace emp::block_types;
+
 setup_clear_backend();                           // any backend (here: cleartext)
 auto add = [](auto a, auto b){ return a + b; };
 
@@ -269,6 +284,8 @@ cleartext one above, or a protocol such as AG2PC. See
 ### Pre-built circuits (Bristol format)
 
 ```cpp
+using namespace emp::block_types;
+
 BristolFashion aes("emp-tool/circuits/files/bristol_fashion/aes_128.txt");
 
 Bit input[256];                                  // 2 × 128-bit input groups
@@ -285,8 +302,9 @@ is the unified-input form used by most circuits in
 
 If you implement your own backend with a non-`block` wire (e.g. an
 arithmetic share, a long bytestring), instantiate the circuit templates
-on it directly. Skip `<emp-tool/emp-tool.h>` (which would pull in the
-default `block` aliases) and include only what you need:
+on it directly, or bind aliases in your own namespace. `emp-tool.h` defines
+no bare aliases in `emp`, so protocol libraries can include it safely; just
+don't opt into `emp::block_types` unless you explicitly want the block binding.
 
 ```cpp
 #include <emp-tool/execution/backend.h>
@@ -307,8 +325,7 @@ using MySignedInt   = SignedInt_T<MyWire>;
 ```
 
 The class definitions in `circuits/` carry no `block` of their own; the
-only place emp-tool commits to `block` as the wire is the alias block at
-the bottom of `emp-tool/emp-tool.h`.
+standard `block` commitment lives only in `emp::block_types`.
 
 ## Tests
 
@@ -319,7 +336,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 Each test file under `test/` doubles as a tutorial for the
-corresponding header — see `CLAUDE.md` for the file conventions
+corresponding header — see `docs/test_conventions.md` for the file conventions
 (`example()` / `run_correctness()` / `bench(double sec)` per file).
 
 ### Wire-byte equivalence (test mode)

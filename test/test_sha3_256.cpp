@@ -1,9 +1,8 @@
 #include "emp-tool/emp-tool.h"
-
-// emp-tool defines no default wire; bind the circuit types to this backend.
-EMP_USE_CIRCUIT_TYPES_ALL(block);
 #include <iostream>
 
+// Use the standard block-wire circuit aliases in this test translation unit.
+using namespace emp::block_types;
 using namespace std;
 using namespace emp;
 
@@ -18,12 +17,12 @@ int hash_in_circuit(){
   }
   emp::sha3_256(output_bytes, input, 2000);
 
-  emp::BitVec integers[2000];
+  BitVec integers[2000];
   for (int64_t i = 0; i < 2000; ++i) {
     integers[i] = BitVec(8, (uint64_t)(i % 200), emp::PUBLIC);
   }
 
-  emp::BitVec output(10, (uint32_t)32, emp::PUBLIC);
+  BitVec output(10, (uint32_t)32, emp::PUBLIC);
 
   SHA3_256_Calculator sha3_256_calculator;
   sha3_256_calculator.sha3_256(&output, integers, 2000);

@@ -11,8 +11,10 @@
 // throughout and add one Float line at the end just to show it isn't UInt-only.
 #include "emp-tool/emp-tool.h"
 #include "emp-tool/frontend/frontend.h"
-EMP_USE_CIRCUIT_TYPES_ALL(block)
 #include <cstdio>
+
+// Use the standard block-wire circuit aliases in this test translation unit.
+using namespace emp::block_types;
 using namespace std;
 using namespace emp;
 using namespace emp::frontend;

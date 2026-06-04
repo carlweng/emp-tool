@@ -12,9 +12,11 @@ half-gate / privacy-free), IO channels (`NetIO`, `TLSIO`), and
 crypto utilities (AES, hash, PRG, group ops) that the higher-level
 emp-ot, emp-sh2pc, emp-ag2pc, emp-agmpc protocols build on.
 
-Standard users include `emp-tool/emp-tool.h` for the `block`-typed
-default aliases. Custom-wire users include the templated headers
-under `emp-tool/circuits/` and spell out their own aliases.
+Standard users include `emp-tool/emp-tool.h` for the substrate and opt
+into `emp::block_types` when they want the `block`-typed aliases.
+`emp-tool.h` intentionally defines no bare circuit aliases in `emp`, so
+downstream protocol libraries can include it safely and bind their own
+wire types.
 
 ## When to read what
 
@@ -30,33 +32,8 @@ self-contained and assumes you've read this index.
 | Investigate a NetIO deadlock | [docs/io_channel.md](docs/io_channel.md) |
 | Translate ordinary C++ / Python to an EMP secure circuit | [docs/EMP_TRANSLATION.md](docs/EMP_TRANSLATION.md) |
 | Write or modify a `test/test_*.cpp` file | [docs/test_conventions.md](docs/test_conventions.md) |
+| Add or modify public API length/count parameters, or choose `random_data` vs `random_data_unaligned` | [docs/api_conventions.md](docs/api_conventions.md) |
 | Verify wire-byte equivalence after a refactor / optimization (deterministic PRG, `TraceIO`) | [docs/test_mode.md](docs/test_mode.md) |
 | Verify or debug a numeric corner case (wrap, division, shifts, resize) | [docs/numeric_semantics.md](docs/numeric_semantics.md) |
 | Convert between byte buffers and `BitVec` / `Bit[]`, or debug an endianness mismatch | [docs/circuits.md § Bit / byte ordering](docs/circuits.md) |
 | Add a new file-scope `block` / `__m128i` / non-`constexpr`-initialized global, or debug a "constant is silently zero in some binaries" bug | [docs/static_init.md](docs/static_init.md) |
-
-## Top-level rules (apply to all work)
-
-These are short enough to live here so you don't have to load them
-from a subdoc.
-
-- When a benchmark looks too good to be true (e.g. < 1 cy/op for a
-  multi-instruction primitive), suspect the compiler hoisted the call.
-  Chain output to input.
-- `random_data` (in PRG) requires 16-byte-aligned destinations and
-  asserts. Use `random_data_unaligned` for stack ints, small structs,
-  and any other call site that isn't naturally aligned.
-- Buffer-length and count parameters on emp-tool's public API use
-  `int64_t`, not `int` or `size_t`. `int` overflows at 2^31 elements;
-  unsigned `size_t` underflows silently in `len -= batch` style loops
-  that decrement to zero. `int64_t` avoids both. New emp-tool APIs
-  that take a "number of bytes / blocks / bools / points" parameter
-  follow this convention. Internal counters and indices in the bodies
-  match (`int64_t i = 0; i < len; ++i`). Template non-type parameters
-  (`int N`, `int K` etc.) stay as `int` since they're compile-time
-  bounded small constants.
-- New file-scope `block`/`__m128i` constants use `inline constexpr`
-  with `makeBlock(...)` or aggregate-init — never `inline const`,
-  `static const`, or other dynamic-init forms. Same rule for other
-  types whose initializer would run at program start. See
-  [docs/static_init.md](docs/static_init.md) for why.

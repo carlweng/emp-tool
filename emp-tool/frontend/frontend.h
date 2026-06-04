@@ -18,16 +18,16 @@
 #include "emp-tool/frontend/executor.h"
 
 // Backend-independent circuit templates (Bit_T<Wire>, UnsignedInt_T<Wire,N>, …)
-// plus the EMP_USE_CIRCUIT_TYPES_* binding macros.
+// plus the EMP_CIRCUIT_TYPES_* binding macros.
 #include "emp-tool/circuits/circuit.h"
 #include "emp-tool/circuits/circuit_types.h"
 
 // Internal recording aliases bound to RecWire, suffixed with _rec so they never
-// clash with a protocol's bare Bit/Integer aliases in the same translation unit.
+// clash with a protocol's bare Bit/integer aliases in the same translation unit.
 // These are the wire a body is traced on during compile(); ordinary user code
 // does not name them (it passes live values and gets a live value back).
-EMP_USE_CIRCUIT_TYPES_AS(emp::frontend::RecWire, _rec,
-	Bit, BitVec, UnsignedInt, SignedInt, Float,
-	UInt8, UInt16, UInt32, UInt64, Int8, Int16, Int32, Int64)
+namespace emp {
+EMP_CIRCUIT_TYPES_ALL_AS(emp::frontend::RecWire, _rec)
+}  // namespace emp
 
 #endif  // EMP_FRONTEND_H__

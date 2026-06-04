@@ -16,14 +16,13 @@
 //   as_signed()                               bit-cast to SignedInt
 
 #include "emp-tool/emp-tool.h"
-
-// emp-tool defines no default wire; bind the circuit types to this backend.
-EMP_USE_CIRCUIT_TYPES_ALL(block);
 #include <climits>
 #include <cstdint>
 #include <iostream>
 #include <vector>
 
+// Use the standard block-wire circuit aliases in this test translation unit.
+using namespace emp::block_types;
 using namespace emp;
 using std::cout;
 

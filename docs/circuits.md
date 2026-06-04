@@ -1,10 +1,10 @@
 # Circuit class layer (`emp-tool/circuits/`)
 
 Conventions for the user-facing circuit primitives — `Bit_T`,
-`BitVec_T`, `UnsignedInt_T`, `SignedInt_T`, `Float_T` — and their
-default-aliased forms `Bit` / `BitVec` / `UnsignedInt` / `SignedInt` /
-`Float`. Read this when modifying any header under `emp-tool/circuits/`
-or adding a new circuit primitive.
+`BitVec_T`, `UnsignedInt_T`, `SignedInt_T`, `Float_T` — and the explicit
+wire-binding aliases such as `emp::block_types::Bit`. Read this when
+modifying any header under `emp-tool/circuits/` or adding a new circuit
+primitive.
 
 For numeric semantics (wrap, division, shifts, resize), read
 [numeric_semantics.md](numeric_semantics.md). For protocol code that
@@ -19,10 +19,13 @@ instead.
   (`Wire bit;` in `Bit_T`, `vector<Bit_T<Wire>> bits;` in `BitVec_T`)
   — required for the gate-rate budget; do not introduce indirection.
 
-- The `block`-typed default aliases (`Bit`, `BitVec`, `UnsignedInt`,
+- The standard `block`-typed aliases (`Bit`, `BitVec`, `UnsignedInt`,
   `SignedInt`, `Float`, plus the AES/SHA3 calculator aliases) live
-  only in `emp-tool/emp-tool.h`. Custom-wire users include the
-  templated headers directly and spell out their own aliases.
+  under `emp::block_types`. `emp-tool.h` makes that namespace available
+  but intentionally defines no bare circuit aliases in `emp`, so
+  downstream protocol libraries can include it as a substrate and bind
+  their own wire types. Custom-wire users include the templated headers
+  directly and spell out their own aliases or provide their own namespace.
 
 ## Inheritance and operator dispatch
 

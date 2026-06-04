@@ -34,16 +34,14 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 #include "emp-tool/execution/half_gate.h"
 #include "emp-tool/execution/privacy_free.h"
 
-// circuits/circuit.h aggregates all emp-tool/circuits/*.h headers as
-// backend-independent `<Wire>` templates and the EMP_USE_CIRCUIT_TYPES binding
-// macro. It bakes in NO concrete wire type and defines NO aliases: the wire is
-// a property of the backend, so the friendly names (Bit, UInt32, …) are bound
-// where the backend is chosen. At that site write one statement (the macros
-// open namespace emp themselves):
+// block_types.h aggregates the backend-independent circuit templates and makes
+// the standard block-wire aliases available under emp::block_types. It defines
+// NO bare aliases in namespace emp: downstream protocol libraries can include
+// emp-tool.h safely and bind their own wire types. Normal block-wire
+// applications opt in explicitly:
 //
-//     EMP_USE_CIRCUIT_TYPES_ALL(block);                  // the whole set
-//     EMP_USE_CIRCUIT_TYPES(block, Bit, UInt32);         // just these
+//     using namespace emp::block_types;                  // in .cpp files
 //
-// or, for the standard block batteries-included set plus the extern-template
-// build speedup, `#include "emp-tool/circuits/circuit_block.h"`.
-#include "emp-tool/circuits/circuit.h"
+// Custom backend/protocol code can bind its own wire with EMP_CIRCUIT_TYPES*
+// inside a protocol-specific namespace.
+#include "emp-tool/circuits/block_types.h"

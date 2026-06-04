@@ -13,8 +13,9 @@
 // Replaying a compiled circuit issues plain backend->public_label/and/xor/not
 // calls through whatever Backend is installed, so the layer is protocol-neutral
 // (ClearBackend, AG2PC, …) and the result is a live EMP object you reveal/chain
-// OUTSIDE the call. (Direct, no-frontend code — write `Integer x(...); x.reveal()`
-// — remains the way to do I/O; the frontend only transforms inputs to outputs.)
+// OUTSIDE the call. (Direct, no-frontend code — write
+// `UInt32 x(...); x.reveal()` — remains the way to do I/O; the frontend only
+// transforms inputs to outputs.)
 
 #include "emp-tool/execution/backend.h"
 #include "emp-tool/circuits/bit.h"          // pulls circuit_value.h (wire_t / rebind_t / …)
@@ -96,7 +97,7 @@ template <typename Tr>
 struct circuit_contract<Tr, false> {            // the only place asserts live
 	static_assert(Tr::args_are_circuit,
 	    "frontend circuit: every argument must be a circuit value "
-	    "(Bit / Integer / Float / ...)");
+	    "(Bit / UnsignedInt / SignedInt / Float / ...)");
 	static_assert(Tr::callable,
 	    "frontend circuit: body is not callable with prvalue circuit-value "
 	    "arguments (a non-const lvalue-reference parameter is rejected — take "
@@ -107,8 +108,8 @@ struct circuit_contract<Tr, false> {            // the only place asserts live
 	static_assert(!Tr::returns_void,
 	    "frontend circuit must return a circuit value, not void");
 	static_assert(Tr::returns_circuit,
-	    "frontend circuit must return a circuit value (Bit / Integer / Float / "
-	    "...), not a plain value");
+	    "frontend circuit must return a circuit value (Bit / UnsignedInt / "
+	    "SignedInt / Float / ...), not a plain value");
 	using type = typename Tr::value_return;     // safe: value_return is void when
 	                                            // the body isn't callable, never ill-formed
 };
@@ -231,7 +232,7 @@ inline TypedCircuit<Ret> record_typed_(F &&body, MakeInputs make_inputs) {
 //                                     types / Bit / Float).
 //   compile(body, a, b)             — sample values; only their shape is read
 //                                     (handy when you already hold inputs, or
-//                                     for runtime-width Integers).
+//                                     for runtime-width integer values).
 // The body must not feed secret inputs or reveal inside (RecordBackend rejects
 // both); pass secrets as arguments and reveal the returned value outside.
 

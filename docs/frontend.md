@@ -1,7 +1,8 @@
 # Circuit frontend (`emp-tool/frontend/`)
 
 A small, optional layer for **running a pure circuit function through any
-backend**. You write the function in ordinary `Bit` / `Integer` code; the
+backend**. You write the function in ordinary circuit-value code (`Bit`,
+`UInt32`, `SignedInt`, `Float`, etc. after choosing a wire binding); the
 frontend lets you call it directly, or compile it once into a reusable
 circuit object (with size/depth stats) and replay it — all through the same
 global `Backend`, so the identical code drives `ClearBackend`, AG2PC, or any
@@ -24,7 +25,7 @@ it does **no I/O of its own**:
 
 - **No secret `feed` inside** — pass secret/party inputs as arguments.
 - **No `reveal` inside** — reveal the returned value *outside*, in direct mode.
-- **Literal public constants inside are fine** — `Integer iv(32, 0x6a09e667,
+- **Literal public constants inside are fine** — `UInt32 iv(0x6a09e667,
   PUBLIC)` folds to constant gates. But a public feed *bakes its value* into the
   circuit, so only literals / values all parties agree on at compile time belong
   inside; any public value that may differ across parties or runs must be an
@@ -39,8 +40,10 @@ the argument copies), returning **void**, returning a **non-circuit** value, or
 taking a non-circuit argument are all compile-time errors with a precise message
 — in `run`, `compile<Ins...>`, and `compile(body, samples)` alike.
 
-`compile`/`run` also **enforce** the no-I/O rule: a non-public `feed` or any
-`reveal` in the body is a hard error (`RecordBackend` rejects them).
+`compile` also **enforces** the no-I/O rule: a non-public `feed` or any
+`reveal` in the body is a hard error (`RecordBackend` rejects them). Live
+`run(body, args...)` calls the body directly, so it relies on the same caller
+discipline as ordinary direct-mode circuit code.
 
 Why: `compile` traces *one* execution of the body with placeholder values, so
 any **host** control flow that depended on a runtime value would be frozen into
@@ -50,11 +53,17 @@ on input or revealed values. (Branching on a **public scalar** — a width, a lo
 bound, `party` — is fine; it shapes the circuit identically every run.)
 
 So I/O stays the caller's job, done in **direct mode** around the circuit:
-build the input `Integer`s, run the circuit, reveal the returned `Integer`s.
+build the input circuit values, run the circuit, reveal the returned circuit
+values.
 
 ## Running a circuit
 
 ```cpp
+#include "emp-tool/emp-tool.h"
+#include "emp-tool/frontend/frontend.h"
+using namespace emp;
+using namespace emp::block_types;
+
 setup_clear_backend("");                            // or setup_ag2pc(...)
 auto add = [](auto a, auto b){ return a + b; };
 
@@ -68,8 +77,9 @@ bool   r  = z2[0].reveal<bool>(PUBLIC);             // reveal outside, direct mo
 - **live** — `run(body, args…)` invokes the body and returns its typed result.
 - **compiled** — `compile(...)` records once into a circuit; `run(circuit, …)`
   replays it. Both return live EMP values, so circuits **chain** (one result
-  feeds the next) and you reveal at the end. (Plain `Integer x(...); x.reveal()`
-  is *direct mode* — that's how you do I/O; it is not "the frontend".)
+  feeds the next) and you reveal at the end. (Plain
+  `UInt32 x(...); x.reveal()` is *direct mode* — that's how you do I/O; it is
+  not "the frontend".)
 
 ## Bodies must be wire-generic
 
@@ -89,7 +99,7 @@ A body pinned to a concrete wire (`[](UInt32 a, …)` with `UInt32 =
 - `compile<UInt32, UInt32>(body)` — input **types** as template args; the width
   comes from the type (fixed-width types / `Bit` / `Float`). No dummy values.
 - `compile(body, a, b)` — sample **values**; only their shape is read (handy
-  when you already hold inputs, or for runtime-width Integers).
+  when you already hold inputs, or for runtime-width integer values).
 
 Both capture the body's returned value as the circuit output. `compile` records
 via an internal `RecordBackend`, restoring the previous global `backend` on the
@@ -120,12 +130,13 @@ literals/agreed constants, not per-party runtime values).
 ## Typed I/O and `rebind`
 
 A compiled body records on `RecWire` but replays on the live wire, so the
-returned `Integer` must be rebuilt over the live wire. The IR/gates are
+returned circuit value must be rebuilt over the live wire. The IR/gates are
 **wire-free** and reused as-is; only the input/output *wrappers* are wire-typed.
 `rebind` is the compile-time map "same shape, different wire"
 (`UnsignedInt_T<RecWire,32> → UnsignedInt_T<W,32>`); it moves no data — the wires
 are carried by `pack`/`unpack`. It exists solely to hand back the exact
-`Integer`/`Bit`/`Float` type rather than an anonymous wire bundle. See
+`UnsignedInt`/`SignedInt`/`Bit`/`Float` type rather than an anonymous wire
+bundle. See
 [circuits.md § Circuit-value interface](circuits.md).
 
 ## What's inside (internals)
