@@ -35,7 +35,10 @@
             "name":   "native",
             "displayName": "Release + -march=native (benchmarks only)",
             "inherits": "release",
-            "cacheVariables": { "EMP_TOOL_NATIVE_ARCH": "ON" }
+            "cacheVariables": {
+                "EMP_TOOL_NATIVE_ARCH": "ON",
+                "EMP_TOOL_BUILD_BENCHMARKS": "ON"
+            }
         },
 
         {

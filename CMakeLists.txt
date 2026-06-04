@@ -21,6 +21,7 @@ include(CheckCSourceRuns)
 # Options
 # ---------------------------------------------------------------------
 option(EMP_TOOL_BUILD_TESTS       "Build emp-tool tests"               ${PROJECT_IS_TOP_LEVEL})
+option(EMP_TOOL_BUILD_BENCHMARKS  "Build emp-tool benchmarks"          OFF)
 option(EMP_TOOL_INSTALL           "Generate install / export rules"    ${PROJECT_IS_TOP_LEVEL})
 option(EMP_TOOL_NATIVE_ARCH       "Build for the host CPU (-march=native) so compile-time SIMD tiers such as VAES, VPCLMULQDQ, and AVX-512 are enabled when available. Default ON for performance; turn OFF to produce a portable binary that runs on any AES-NI + PCLMUL + SSSE3 CPU." ON)
 option(EMP_TOOL_THREADING         "Use thread-local protocol/circuit execution pointers" OFF)
@@ -174,4 +175,8 @@ export(TARGETS emp-tool
 if(EMP_TOOL_BUILD_TESTS)
     include(CTest)
     add_subdirectory(test)
+endif()
+
+if(EMP_TOOL_BUILD_BENCHMARKS)
+    add_subdirectory(bench)
 endif()

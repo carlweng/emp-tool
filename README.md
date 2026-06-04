@@ -55,6 +55,7 @@ binary that runs on any AES-NI + PCLMUL + SSE4.2 (x86_64) or
 |---|---|---|
 | `EMP_TOOL_NATIVE_ARCH` | `ON` | Build with `-march=native`. Best performance, host-CPU-locked binary. Set `OFF` for portable binaries. |
 | `EMP_TOOL_BUILD_TESTS` | `ON` when top-level | Build the test suite under `test/`. |
+| `EMP_TOOL_BUILD_BENCHMARKS` | `OFF` | Build throughput benchmarks under `bench/`; not registered with `ctest`. |
 | `EMP_TOOL_INSTALL` | `ON` when top-level | Generate install + export rules. |
 | `EMP_TOOL_THREADING` | `OFF` | Make the global `Backend* backend` pointer thread-local. Required if multiple threads run circuits concurrently against different backends. |
 
@@ -337,7 +338,19 @@ ctest --test-dir build --output-on-failure
 
 Each test file under `test/` doubles as a tutorial for the
 corresponding header — see `docs/test_conventions.md` for the file conventions
-(`example()` / `run_correctness()` / `bench(double sec)` per file).
+(`example()` / `run_correctness()` per file).
+
+### Benchmarks
+
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DEMP_TOOL_BUILD_BENCHMARKS=ON
+cmake --build build -j
+./build/bench/bench_aes 0.3
+./run ./build/bench/bench_netio
+```
+
+Benchmarks are separate from `ctest` and live under `bench/`; see
+`docs/benchmark_conventions.md`.
 
 ### Wire-byte equivalence (test mode)
 

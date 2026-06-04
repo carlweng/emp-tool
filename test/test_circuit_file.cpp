@@ -187,16 +187,8 @@ void run_correctness() {
 	if (!all) error("circuit_file: malformed input not rejected");
 }
 
-void bench(double /*sec*/) {
-	// No perf surface — parser is only called at protocol setup. The
-	// hardening adds a handful of comparisons per gate, dwarfed by I/O.
-}
-
-int main(int argc, char **argv) {
-	double sec = (argc > 1) ? atof(argv[1]) : 0.2;
-	(void)sec;
+int main() {
 	example();
 	run_correctness();
-	bench(sec);
 	return 0;
 }

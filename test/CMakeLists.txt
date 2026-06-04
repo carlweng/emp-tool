@@ -1,5 +1,6 @@
 # Test cases — one file per crypto/core/io/group header (see docs/test_conventions.md).
-# Each test file is a tutorial: example() / run_correctness() / bench(sec).
+# Tests are fast examples + correctness/regression checks; throughput lives in
+# ../bench and is not registered with ctest.
 
 function(add_test_case name)
     add_executable(${name} ${name}.cpp)
@@ -58,7 +59,6 @@ add_test_case(test_bitvec)
 add_test_case(test_uint)
 add_test_case(test_int)
 add_test_case(test_float)
-add_test_case_with_run(test_garble)
 add_test_case(test_gen_circuit)
 add_test_case(test_circuit_file)
 add_test_case(test_halfgate)

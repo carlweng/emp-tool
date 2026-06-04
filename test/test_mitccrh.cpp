@@ -1,6 +1,6 @@
 // crypto/mitccrh.h — Multi-Instance Tweakable CCRH (Guo–Katz–Wang–Yang 2019).
 // A batched key schedule + AES-encrypt-then-XOR-input construction used by
-// half-gates garbling. Read example() first; the rest is verification + throughput.
+// half-gates garbling. Read example() first; the rest is verification.
 //
 // What's in mitccrh.h:
 //   MITCCRH<BatchSize>                       AES_KEY scheduled_key[B], gid, start_point
@@ -209,89 +209,12 @@ static bool run_correctness() {
 	return ok;
 }
 
-// ---------- throughput bench ----------
-
-template <typename Fn>
-static double run_for(double seconds, Fn &&fn, void *clob) {
-	for (int i = 0; i < 32; ++i) {
-		fn();
-		asm volatile("" : "+m"(*(char *)clob) : : "memory");
-	}
-	int64_t iters = 64;
-	while (true) {
-		auto a = clk::now();
-		for (int64_t i = 0; i < iters; ++i) {
-			fn();
-			asm volatile("" : "+m"(*(char *)clob) : : "memory");
-		}
-		double el = chrono::duration<double>(clk::now() - a).count();
-		if (el >= seconds) return double(iters) / el;
-		iters *= 2;
-	}
-}
-
-static void print_vec(const string &lbl, double calls, int blocks_per_call) {
-	double GiBps = calls * (double)blocks_per_call * 16.0 / (1024.0 * 1024.0 * 1024.0);
-	double cy_per_blk = 3e9 / (calls * blocks_per_call);
-	cout << "  " << left << setw(36) << lbl
-	     << fixed << setprecision(2)
-	     << right << setw(8) << GiBps << " GiB/s "
-	     << setw(7) << cy_per_blk << " cy/blk @3GHz\n";
-}
-
-template <int K, int H>
-static double bench_hash(double sec) {
-	static_assert(K <= 8 && 8 % K == 0, "MITCCRH<8> requires K | 8");
-	MITCCRH<8> mit;
-	mit.setS(makeBlock(1, 2));
-	mit.renew_ks(uint64_t{0});
-	block buf[K * H];
-	PRG().random_block(buf, K * H);
-	return run_for(sec, [&]() { mit.template hash<K, H>(buf); }, &buf[0]);
-}
-
-template <int K, int H>
-static double bench_hash_cir(double sec) {
-	static_assert(K <= 8 && 8 % K == 0, "MITCCRH<8> requires K | 8");
-	MITCCRH<8> mit;
-	mit.setS(makeBlock(1, 2));
-	mit.renew_ks(uint64_t{0});
-	block buf[K * H];
-	PRG().random_block(buf, K * H);
-	return run_for(sec, [&]() { mit.template hash_cir<K, H>(buf); }, &buf[0]);
-}
-
-static void bench(double sec) {
-	cout << "=== MITCCRH<8>::hash<K, H>  (renew_ks amortized over B/K = 8/K calls) ===\n";
-	print_vec("hash<1,1>", bench_hash<1, 1>(sec), 1);
-	print_vec("hash<1,4>", bench_hash<1, 4>(sec), 4);
-	print_vec("hash<1,8>", bench_hash<1, 8>(sec), 8);
-	print_vec("hash<2,1>", bench_hash<2, 1>(sec), 2);
-	print_vec("hash<2,4>", bench_hash<2, 4>(sec), 8);
-	print_vec("hash<4,1>", bench_hash<4, 1>(sec), 4);
-	print_vec("hash<4,4>", bench_hash<4, 4>(sec), 16);
-	print_vec("hash<8,1>", bench_hash<8, 1>(sec), 8);
-	print_vec("hash<8,2>", bench_hash<8, 2>(sec), 16);
-	print_vec("hash<8,4>", bench_hash<8, 4>(sec), 32);
-	print_vec("hash<8,8>", bench_hash<8, 8>(sec), 64);
-
-	cout << "\n=== MITCCRH<8>::hash_cir<K, H>  (sigma + hash) ===\n";
-	print_vec("hash_cir<1,1>", bench_hash_cir<1, 1>(sec), 1);
-	print_vec("hash_cir<2,1>", bench_hash_cir<2, 1>(sec), 2);
-	print_vec("hash_cir<2,2>", bench_hash_cir<2, 2>(sec), 4);
-	print_vec("hash_cir<8,1>", bench_hash_cir<8, 1>(sec), 8);
-	print_vec("hash_cir<8,2>", bench_hash_cir<8, 2>(sec), 16);
-}
-
-int main(int argc, char **argv) {
-	double sec = (argc >= 2) ? atof(argv[1]) : 0.2;
+int main(int /*argc*/, char ** /*argv*/) {
 	example();
 	cout << "\n";
 	if (!run_correctness()) {
 		cerr << "CORRECTNESS FAILURE\n";
 		return 1;
 	}
-	cout << "\n";
-	bench(sec);
 	return 0;
 }

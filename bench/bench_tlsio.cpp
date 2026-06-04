@@ -9,12 +9,11 @@
 //   flush()                            drain outbound coalescing buffer
 //   sync()                             1-byte ping/pong handshake
 //
-// Same flush contract and thread-safety rules as NetIO. The test
-// mirrors test_netio.cpp's correctness + send-only regression suite,
-// exercising the same paths against TLSIO.
+// Same flush contract and thread-safety rules as NetIO. This benchmark runs
+// the TLSIO loopback throughput sweep with the same PKI setup as the test.
 //
 // Cert material is laid out the way a real mTLS deployment would be —
-// five distinct files with five distinct roles, so the test reads as a
+// five distinct files with five distinct roles, so the benchmark reads as a
 // tutorial for what each TLSConfig path actually is:
 //
 //   ca_cert.pem        VK_CA — the trust anchor both sides verify against
@@ -198,106 +197,29 @@ static TLSConfig make_cfg(int party) {
 }
 
 // -------------------------------------------------------------------------
-// run_correctness(): byte stream round-trip at unaligned offsets, then bool
-// packing round-trip at unaligned bool offsets. Same shape as test_netio.
+// bench(): loopback throughput sweep. Same shape as test_netio's bench.
+// Expect TLS overhead to drop to a few % at 16+ KiB messages and be more
+// pronounced on small messages (per-record AEAD).
 // -------------------------------------------------------------------------
-static void run_correctness(TLSIO *io, int party) {
-	{
-		int length = NETWORK_STAGING_BUFFER_SIZE / 5 + 100;
-		char *data  = new char[length];
-		char *data2 = new char[length];
-		PRG prg(&zero_block);
-		for (int i = 0; i < 1000; ++i) {
-			if (party == ALICE) {
-				prg.random_data_unaligned(data, length);
-				io->send_data(data, length);
-				io->send_data(data, length);
-				io->recv_data(data2, length);
-				assert(memcmp(data, data2, length) == 0);
-			} else {
-				prg.random_data_unaligned(data2, length);
-				io->recv_data(data, length);
-				io->recv_data(data, length);
-				io->send_data(data2, length);
-				assert(memcmp(data, data2, length) == 0);
-			}
-		}
-		io->flush();
-		delete[] data;
-		delete[] data2;
-	}
-
-	{
-		PRG prg(&zero_block);
-		bool *data  = new bool[1024 * 1024];
-		bool *data2 = new bool[1024 * 1024];
-		prg.random_bool(data, 1024 * 1024);
+static void bench(TLSIO *io, int party) {
+	if (party == ALICE) cout << "--- TLSIO bench ---\n";
+	for (long long length = 2; length <= 8192 * 16; length *= 2) {
+		long long times = 1024 * 1024 * 128 / length;
+		block *data = new block[length];
 		if (party == ALICE) {
-			io->send_bool(data, 1024 * 1024);
-			io->send_bool(data + 7, 1024 * 1024 - 7);
+			auto start = clock_start();
+			for (long long i = 0; i < times; ++i)
+				io->send_block(data, length);
+			double interval = time_from(start);
+			cout << "TLSIO loopback size " << length << " :\t"
+			     << (length * times * 128) / (interval + 0.0) * 1e6 * 1e-9
+			     << " Gbps\n";
 		} else {
-			io->recv_bool(data2, 1024 * 1024);
-			assert(memcmp(data2, data, 1024 * 1024) == 0);
-			memset(data2, 0, 1024 * 1024);
-			io->recv_bool(data2 + 7, 1024 * 1024 - 7);
-			assert(memcmp(data2 + 7, data + 7, 1024 * 1024 - 7) == 0);
+			for (long long i = 0; i < times; ++i)
+				io->recv_block(data, length);
 		}
 		delete[] data;
-		delete[] data2;
 	}
-	io->flush();
-
-	if (party == ALICE) cout << "TLSIO correctness: OK\n";
-}
-
-// -------------------------------------------------------------------------
-// run_send_only_regression(): mirrors test_netio's check that an IO doing
-// only sends across a step still delivers its tail bytes via (a) explicit
-// flush and (b) destructor. Under TLS, (b) additionally exercises the
-// two-phase SSL_shutdown drain — a regression that closes the fd before
-// flushing the staged record would manifest the same way as on NetIO:
-// BOB's recv hits EOF / "error: net_recv_data".
-// -------------------------------------------------------------------------
-static void run_send_only_regression(int port, int party) {
-	constexpr int N = 4096;
-	char *data  = new char[N];
-	char *data2 = new char[N];
-	PRG prg(&zero_block);
-	prg.random_data_unaligned(data, N);
-	const TLSConfig cfg = make_cfg(party);
-
-	{
-		TLSIO io(party == ALICE ? nullptr : "127.0.0.1", port + 1, cfg, true);
-		if (party == ALICE) {
-			io.send_data(data, N);
-			io.flush();
-			char ack = 0;
-			io.recv_data(&ack, 1);
-			assert(ack == 1);
-		} else {
-			io.recv_data(data2, N);
-			assert(memcmp(data, data2, N) == 0);
-			char ack = 1;
-			io.send_data(&ack, 1);
-			io.flush();
-		}
-	}
-
-	{
-		TLSIO *io = new TLSIO(party == ALICE ? nullptr : "127.0.0.1", port + 2, cfg, true);
-		if (party == ALICE) {
-			io->send_data(data, N);
-			delete io;                  // must flush + SSL_shutdown
-		} else {
-			io->recv_data(data2, N);
-			assert(memcmp(data, data2, N) == 0);
-			delete io;
-		}
-	}
-
-	delete[] data;
-	delete[] data2;
-	if (party == ALICE) cout << "TLSIO send-only regression: OK\n";
 }
 
 int main(int argc, char **argv) {
@@ -315,7 +237,6 @@ int main(int argc, char **argv) {
 	const TLSConfig cfg = make_cfg(party);
 
 	TLSIO *io = new TLSIO(party == ALICE ? nullptr : "127.0.0.1", port, cfg, true);
-	run_correctness(io, party);
-	run_send_only_regression(port, party);
+	bench(io, party);
 	delete io;
 }

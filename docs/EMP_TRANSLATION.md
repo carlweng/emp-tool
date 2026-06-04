@@ -465,7 +465,7 @@ delete backend; backend = nullptr;
 ```
 
 You're now responsible for the OT-driven `feed` / `reveal` surrounding
-the circuit. `test/test_garble.cpp` is the closest in-tree example. Most
+the circuit. `bench/bench_garble.cpp` is the closest in-tree example. Most
 users do **not** want this path — the higher-level libraries above
 already handle it.
 

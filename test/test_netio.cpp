@@ -9,8 +9,8 @@
 //   flush()                            drain outbound only (no peer coupling)
 //   sync()                             1-byte ping/pong handshake
 //
-// Test functions below are templated on the IO type so the same
-// correctness + regression + bench checks run via run_suite.
+// Test functions below are templated on the IO type so correctness and
+// regression checks can be reused by IO implementations.
 
 #include <cassert>
 #include <cstring>
@@ -151,34 +151,7 @@ static void run_send_only_regression(int port, int party, const char *tag) {
 	if (party == ALICE) cout << tag << " send-only regression: OK\n";
 }
 
-// -------------------------------------------------------------------------
-// bench(): loopback throughput sweep. Sender measures Gbps; receiver only
-// drains. The sweep starts below the staging size to expose small-message
-// per-call overhead and runs out to multi-MiB to show bulk steady state.
-// -------------------------------------------------------------------------
-template <typename IO>
-static void bench(IO *io, int party, const char *tag) {
-	if (party == ALICE) cout << "--- " << tag << " bench ---\n";
-	for (long long length = 2; length <= 8192 * 16; length *= 2) {
-		long long times = 1024 * 1024 * 128 / length;
-		block *data = new block[length];
-		if (party == ALICE) {
-			auto start = clock_start();
-			for (long long i = 0; i < times; ++i)
-				io->send_block(data, length);
-			double interval = time_from(start);
-			cout << tag << " loopback size " << length << " :\t"
-			     << (length * times * 128) / (interval + 0.0) * 1e6 * 1e-9
-			     << " Gbps\n";
-		} else {
-			for (long long i = 0; i < times; ++i)
-				io->recv_block(data, length);
-		}
-		delete[] data;
-	}
-}
-
-// Run the full suite (correctness + regression + bench) on one IO type,
+// Run the full correctness/regression suite on one IO type,
 // using a contiguous block of three ports starting at port_base:
 // port_base+0 = main channel, +1 / +2 = regression channels.
 template <typename IO>
@@ -186,7 +159,6 @@ static void run_suite(int port_base, int party, const char *tag) {
 	IO *io = new IO(party == ALICE ? nullptr : "127.0.0.1", port_base, true);
 	run_correctness(io, party, tag);
 	run_send_only_regression<IO>(port_base, party, tag);
-	bench(io, party, tag);
 	delete io;
 }
 

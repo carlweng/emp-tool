@@ -1,6 +1,5 @@
 // crypto/aes.h — AES-128 ECB primitives used as the bottom crypto layer of
-// emp's PRG/PRP/CCRH chain. Read example() first; the rest is verification +
-// throughput.
+// emp's PRG/PRP/CCRH chain. Read example() first; the rest is verification.
 //
 // What's in aes.h:
 //   AES_KEY                                         11-round-key schedule
@@ -289,129 +288,12 @@ static bool run_correctness() {
 	return ok;
 }
 
-// ---------- throughput bench ----------
-
-template <typename Fn>
-static double run_for(double seconds, Fn &&fn, void *clob) {
-	for (int i = 0; i < 32; ++i) {
-		fn();
-		asm volatile("" : "+m"(*(char *)clob) : : "memory");
-	}
-	int64_t iters = 64;
-	while (true) {
-		auto a = clk::now();
-		for (int64_t i = 0; i < iters; ++i) {
-			fn();
-			asm volatile("" : "+m"(*(char *)clob) : : "memory");
-		}
-		double el = chrono::duration<double>(clk::now() - a).count();
-		if (el >= seconds) return double(iters) / el;
-		iters *= 2;
-	}
-}
-
-static void print_op(const string &lbl, double calls) {
-	double Mops = calls / 1e6;
-	cout << "  " << left << setw(36) << lbl
-	     << fixed << setprecision(2)
-	     << right << setw(8) << Mops << " Mops  "
-	     << setw(7) << (3e9 / calls) << " cy/op @3GHz\n";
-}
-
-static void print_vec(const string &lbl, double calls, int blocks_per_call) {
-	double GiBps = calls * (double)blocks_per_call * 16.0 / (1024.0 * 1024.0 * 1024.0);
-	double cy_per_blk = 3e9 / (calls * blocks_per_call);
-	cout << "  " << left << setw(36) << lbl
-	     << fixed << setprecision(2)
-	     << right << setw(8) << GiBps << " GiB/s "
-	     << setw(7) << cy_per_blk << " cy/blk @3GHz\n";
-}
-
-template <int K, int N>
-static double bench_paraenc_template(double sec) {
-	alignas(16) block keys[K];
-	PRG().random_block(keys, K);
-	alignas(16) AES_KEY skeys[K];
-	AES_opt_key_schedule<K>(keys, skeys);
-	alignas(16) block buf[K * N];
-	PRG().random_block(buf, K * N);
-	return run_for(sec, [&]() { ParaEnc<K, N>(buf, skeys); }, &buf[0]);
-}
-
-static double bench_paraenc_runtime(int K, int N, double sec) {
-	vector<block> keys(K);
-	PRG().random_block(keys.data(), K);
-	vector<AES_KEY> skeys(K);
-	for (int k = 0; k < K; ++k) AES_set_encrypt_key(keys[k], &skeys[k]);
-	vector<block> buf(K * N);
-	PRG().random_block(buf.data(), K * N);
-	return run_for(sec, [&]() { ParaEnc(buf.data(), skeys.data(), K, N); }, buf.data());
-}
-
-static void bench(double sec) {
-	PRG prg;
-
-	cout << "=== single-shot (latency, serial-dep chain) ===\n";
-	{
-		// AES_set_encrypt_key chained through the LAST round key. Chaining
-		// through rd_key[0] would be a no-op (rd_key[0] == userkey by
-		// construction) and the compiler hoists the schedule.
-		block uk; prg.random_block(&uk, 1);
-		alignas(16) AES_KEY ek;
-		double calls = run_for(sec, [&]() {
-			AES_set_encrypt_key(uk, &ek);
-			uk = ek.rd_key[10];
-		}, &ek);
-		print_op("AES_set_encrypt_key", calls);
-	}
-	{
-		// Single-block encrypt with output-as-input chain.
-		block uk; prg.random_block(&uk, 1);
-		alignas(16) AES_KEY ek;
-		AES_set_encrypt_key(uk, &ek);
-		alignas(16) block x; prg.random_block(&x, 1);
-		double calls = run_for(sec, [&]() {
-			AES_ecb_encrypt_blks(&x, 1, &ek);
-		}, &x);
-		print_op("AES_ecb_encrypt_blks(N=1)", calls);
-	}
-
-	cout << "\n=== ParaEnc<K, N>  (templated, N blocks under K keys) ===\n";
-	print_vec("ParaEnc<1,1>",  bench_paraenc_template<1, 1>(sec),  1);
-	print_vec("ParaEnc<1,2>",  bench_paraenc_template<1, 2>(sec),  2);
-	print_vec("ParaEnc<1,4>",  bench_paraenc_template<1, 4>(sec),  4);
-	print_vec("ParaEnc<1,8>",  bench_paraenc_template<1, 8>(sec),  8);
-	print_vec("ParaEnc<1,16>", bench_paraenc_template<1, 16>(sec), 16);
-	print_vec("ParaEnc<1,32>", bench_paraenc_template<1, 32>(sec), 32);
-	print_vec("ParaEnc<2,1>",  bench_paraenc_template<2, 1>(sec),  2);
-	print_vec("ParaEnc<2,4>",  bench_paraenc_template<2, 4>(sec),  8);
-	print_vec("ParaEnc<4,1>",  bench_paraenc_template<4, 1>(sec),  4);
-	print_vec("ParaEnc<4,4>",  bench_paraenc_template<4, 4>(sec),  16);
-	print_vec("ParaEnc<8,1>",  bench_paraenc_template<8, 1>(sec),  8);
-	print_vec("ParaEnc<8,2>",  bench_paraenc_template<8, 2>(sec),  16);
-	print_vec("ParaEnc<8,4>",  bench_paraenc_template<8, 4>(sec),  32);
-	print_vec("ParaEnc<8,8>",  bench_paraenc_template<8, 8>(sec),  64);
-
-	cout << "\n=== ParaEnc(blks, keys, K, N)  (runtime dispatcher) ===\n";
-	for (int n : {1, 2, 4, 8, 16, 64, 256, 1024}) {
-		ostringstream lbl; lbl << "ParaEnc(K=1, N=" << n << ")";
-		print_vec(lbl.str(), bench_paraenc_runtime(1, n, sec), n);
-	}
-	for (int n : {1, 4, 16, 64}) {
-		ostringstream lbl; lbl << "ParaEnc(K=8, N=" << n << ")";
-		print_vec(lbl.str(), bench_paraenc_runtime(8, n, sec), 8 * n);
-	}
-}
-
-int main(int argc, char **argv) {
-	double sec = (argc >= 2) ? atof(argv[1]) : 0.2;
+int main(int /*argc*/, char ** /*argv*/) {
 	example();
 	cout << "\n";
 	if (!run_correctness()) {
 		cerr << "CORRECTNESS FAILURE\n";
 		return 1;
 	}
-	cout << "\n";
-	bench(sec);
 	return 0;
 }

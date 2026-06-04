@@ -22,8 +22,9 @@ namespace emp {
 namespace frontend {
 
 // Linear gates (XOR/NOT) are free; AND is the only costed op. Public constants
-// are first-class so the IR stays protocol-neutral — each backend realizes them
-// its own way (e.g. ag2pc synthesizes c0 = XOR(w,w), c1 = NOT c0).
+// are first-class CONST0/CONST1 gates (no operands) so the IR stays protocol-
+// neutral — each backend realizes a known 0/1 wire in whatever way its protocol
+// prescribes.
 enum class Op : int8_t { AND, XOR, NOT, CONST0, CONST1 };
 
 // in1 is unused for NOT and the CONST ops. `out` is the wire id produced.
