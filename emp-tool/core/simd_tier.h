@@ -94,6 +94,11 @@ struct AesLane<1> {
 	EMP_AES_TARGET_ATTR static vec_t ctr_xor_tweak(int64_t b0, int slot, vec_t tw) {
 		return _mm_xor_si128(_mm_set_epi64x(0, b0 + slot), tw);
 	}
+	// sigma(a) = swap_halves(a) ^ (a & {hi=~0, lo=0}); see block.hpp.
+	EMP_AES_TARGET_ATTR static vec_t sigma(vec_t a) {
+		return _mm_xor_si128(_mm_shuffle_epi32(a, 78),
+		                     _mm_and_si128(a, makeBlock(0xFFFFFFFFFFFFFFFFull, 0x0ull)));
+	}
 };
 
 #if EMP_HAS_VAES256
@@ -110,6 +115,12 @@ struct AesLane<2> {
 	EMP_AES_TARGET_ATTR static vec_t ctr_xor_tweak(int64_t b0, int slot, vec_t tw) {
 		return _mm256_xor_si256(
 			_mm256_set_epi64x(0, b0 + 2 * slot + 1, 0, b0 + 2 * slot), tw);
+	}
+	// _mm256_shuffle_epi32 / the broadcast mask are per-128-bit-lane, so this
+	// is sigma() applied independently to each block.
+	EMP_AES_TARGET_ATTR static vec_t sigma(vec_t a) {
+		const vec_t m = broadcast(makeBlock(0xFFFFFFFFFFFFFFFFull, 0x0ull));
+		return _mm256_xor_si256(_mm256_shuffle_epi32(a, 78), _mm256_and_si256(a, m));
 	}
 };
 #endif
@@ -129,6 +140,12 @@ struct AesLane<4> {
 		return _mm512_xor_si512(
 			_mm512_set_epi64(0, b0 + 4 * slot + 3, 0, b0 + 4 * slot + 2,
 			                 0, b0 + 4 * slot + 1, 0, b0 + 4 * slot), tw);
+	}
+	// _MM_PERM_BADC == 0x4E == 78: the per-128-lane half-swap of sigma().
+	EMP_AES_TARGET_ATTR static vec_t sigma(vec_t a) {
+		const vec_t m = broadcast(makeBlock(0xFFFFFFFFFFFFFFFFull, 0x0ull));
+		return _mm512_xor_si512(_mm512_shuffle_epi32(a, _MM_PERM_BADC),
+		                        _mm512_and_si512(a, m));
 	}
 };
 #endif
@@ -248,6 +265,12 @@ struct AesLane<1> {
 	}
 	static vec_t ctr_xor_tweak(int64_t b0, int slot, vec_t tw) {
 		return _mm_xor_si128(_mm_set_epi64x(0, b0 + slot), tw);
+	}
+	// Same body as the x86 lane; _mm_* resolve via the sse2neon shim, exactly
+	// as the scalar sigma() in block.hpp already does on aarch64.
+	static vec_t sigma(vec_t a) {
+		return _mm_xor_si128(_mm_shuffle_epi32(a, 78),
+		                     _mm_and_si128(a, makeBlock(0xFFFFFFFFFFFFFFFFull, 0x0ull)));
 	}
 };
 

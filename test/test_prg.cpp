@@ -93,13 +93,47 @@ static bool check_reseed_resets_counter() {
 static bool check_counter_continuity() {
 	// Streaming N blocks at once must match N back-to-back single-block calls.
 	block seed = makeBlock(1, 2);
-	for (int n : {1, 7, 16, 17, 257}) {
+	for (int n : {1, 7, 16, 17, 64, 65, 257}) {
 		PRG a(&seed), b(&seed);
 		vector<block> bulk(n), one_at_a_time(n);
 		a.random_block(bulk.data(), n);
 		for (int i = 0; i < n; ++i) b.random_block(&one_at_a_time[i], 1);
 		if (memcmp(bulk.data(), one_at_a_time.data(), n * sizeof(block)) != 0)
 			return false;
+	}
+	return true;
+}
+
+static bool check_fork_at_and_seek() {
+	// fork_at(c) and a fresh PRG seeked to c must both reproduce the bulk
+	// stream from block c onward (one AES key, same CTR counter => same output).
+	block seed = makeBlock(0xABCDEF, 0x12345);
+	const int total = 200;
+	PRG bulk(&seed);
+	vector<block> ref(total);
+	bulk.random_block(ref.data(), total);
+
+	for (uint64_t c : {uint64_t{0}, uint64_t{1}, uint64_t{17}, uint64_t{64}, uint64_t{129}}) {
+		const int avail = total - (int)c;
+		// (a) fork_at(c) from a PRG at an arbitrary position.
+		PRG src(&seed);
+		block warm[5];
+		src.random_block(warm, 5);              // advance src to a non-zero position
+		PRG forked = src.fork_at(c);
+		vector<block> from_fork(avail);
+		forked.random_block(from_fork.data(), avail);
+		if (memcmp(from_fork.data(), ref.data() + c, avail * sizeof(block)) != 0)
+			return false;
+		// (b) fresh PRG(seed).seek(c) matches the same slice.
+		PRG fresh(&seed);
+		fresh.seek(c);
+		vector<block> from_seek(avail);
+		fresh.random_block(from_seek.data(), avail);
+		if (memcmp(from_seek.data(), ref.data() + c, avail * sizeof(block)) != 0)
+			return false;
+		// (c) accessors report the seeked position; seed() round-trips.
+		if (fresh.position() != c + (uint64_t)avail) return false;
+		if (!blocks_eq(fresh.seed(), forked.seed())) return false;
 	}
 	return true;
 }
@@ -202,6 +236,7 @@ static bool run_correctness() {
 		{"seed determinism",                    check_seed_determinism},
 		{"reseed resets counter",               check_reseed_resets_counter},
 		{"counter continuity (bulk = singles)", check_counter_continuity},
+		{"fork_at / seek reproduce bulk slice",  check_fork_at_and_seek},
 		{"random_data == random_block (16B)",   check_random_data_matches_block},
 		{"random_data_unaligned vs aligned ref", check_random_data_unaligned},
 		{"random_data_unaligned counter",       check_random_data_unaligned_counter},

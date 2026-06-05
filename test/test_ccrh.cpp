@@ -6,7 +6,8 @@
 //   CCRH(key=zero_block)       inherits PRP
 //   block H(block)             single-block H
 //   template<int n> H(out, in) batched
-//   Hn(out, in, n, scratch=nullptr)  runtime-sized
+//   Hn(out, in, n)             runtime-sized, out-of-place (no overlap)
+//   Hn(data, n)                runtime-sized, in-place
 
 #include "emp-tool/emp-tool.h"
 
@@ -93,7 +94,12 @@ static bool check_Hn(int n) {
 	prp.permute_block(enc.data(), n);
 	for (int i = 0; i < n; ++i) ref[i] = ref[i] ^ enc[i];
 
-	return memcmp(out.data(), ref.data(), n * sizeof(block)) == 0;
+	if (memcmp(out.data(), ref.data(), n * sizeof(block)) != 0) return false;
+
+	// In-place overload must match the out-of-place result.
+	vector<block> inplace = in;
+	ccrh.Hn(inplace.data(), n);
+	return memcmp(inplace.data(), ref.data(), n * sizeof(block)) == 0;
 }
 
 static bool run_correctness() {
@@ -101,10 +107,15 @@ static bool run_correctness() {
 	bool ok = true;
 	bool a = check_definition();      ok &= a;
 	cout << "  H(x) = sigma(x) ^ PRP_K(sigma(x))       " << (a ? "OK" : "FAIL") << "\n";
-	bool b = check_batched<1>() && check_batched<4>() && check_batched<16>() && check_batched<64>();
+	bool b = check_batched<1>() && check_batched<2>() && check_batched<3>() && check_batched<4>()
+	      && check_batched<7>() && check_batched<8>() && check_batched<15>() && check_batched<16>()
+	      && check_batched<17>() && check_batched<32>() && check_batched<64>();
 	ok &= b;
 	cout << "  template H<n> matches reference         " << (b ? "OK" : "FAIL") << "\n";
-	bool c = check_Hn(1) && check_Hn(7) && check_Hn(33) && check_Hn(1024);
+	// Widths straddle the 16/8/4/2/1 tile boundaries to exercise every lane
+	// and the new VAES-512 16-block tile.
+	bool c = true;
+	for (int n : {1, 2, 3, 4, 7, 8, 15, 16, 17, 31, 33, 64, 65, 1024}) c &= check_Hn(n);
 	ok &= c;
 	cout << "  Hn(runtime) matches reference           " << (c ? "OK" : "FAIL") << "\n";
 	return ok;

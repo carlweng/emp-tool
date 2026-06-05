@@ -5,7 +5,8 @@
 //   CCRH(key=zero_block)       inherits PRP
 //   block H(block)             single-block H
 //   template<int n> H(out, in) batched
-//   Hn(out, in, n, scratch=nullptr)  runtime-sized
+//   Hn(out, in, n)             runtime-sized, out-of-place (no overlap)
+//   Hn(data, n)                runtime-sized, in-place
 
 #include "emp-tool/emp-tool.h"
 
@@ -96,14 +97,25 @@ static void bench(double sec) {
 		print_vec("CCRH::H<256>", c, 256);
 	}
 
-	cout << "\n=== Hn (runtime) ===\n";
+	cout << "\n=== Hn (runtime, out-of-place) ===\n";
 	for (int n : {1, 4, 16, 64, 256, 1024, 4096, 16384}) {
-		vector<block> in(n), out(n), scratch(n);
+		vector<block> in(n), out(n);
 		prg.random_block(in.data(), n);
 		double calls = run_for(sec, [&]() {
-			ccrh.Hn(out.data(), in.data(), n, scratch.data());
+			ccrh.Hn(out.data(), in.data(), n);
 		}, out.data());
 		ostringstream lbl; lbl << "CCRH::Hn(N=" << n << ")";
+		print_vec(lbl.str(), calls, n);
+	}
+
+	cout << "\n=== Hn (runtime, in-place) ===\n";
+	for (int n : {1, 4, 16, 64, 256, 1024, 4096, 16384}) {
+		vector<block> data(n);
+		prg.random_block(data.data(), n);
+		double calls = run_for(sec, [&]() {
+			ccrh.Hn(data.data(), n);
+		}, data.data());
+		ostringstream lbl; lbl << "CCRH::Hn_inplace(N=" << n << ")";
 		print_vec(lbl.str(), calls, n);
 	}
 }

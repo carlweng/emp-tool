@@ -18,39 +18,31 @@ class CCRH: public PRP { public:
 		return t;
 	}
 
-	// NOTE: the body is fully unrolled by the compiler for small n. For
-	// large n the unrolled body spills its per-block scratch (each block
-	// needs a SIMD register, and the target's architectural register
-	// file is finite). Callers wanting large batches should use Hn()
-	// below.
+	// H(x) = AES_K(σ(x)) ⊕ σ(x) (Davies–Meyer over σ). σ is folded into the
+	// AES tile source, so σ(in) is never materialized to a buffer — it stays
+	// live in-register as the XOR-back operand. For large n the fully-unrolled
+	// body spills (each block needs a SIMD register); use Hn() for big batches.
 	//
-	// H(x) = AES_K(σ(x)) ⊕ σ(x) (Davies–Meyer over σ). Compute σ(in)
-	// once into `pt`, then use the AES helper that stores AES(pt) ^ pt
-	// directly into `out` with one σ pass and one output write.
+	// Out-of-place contract: `out` must equal `in` or not overlap it (the
+	// fused forward pass would clobber a shifted view).
 	template<int n>
-	void H(block out[n], block in[n]) {
-		block pt[n];
-		for (int i = 0; i < n; ++i) pt[i] = sigma(in[i]);
-		detail::ParaEncXorInput_impl<1,n>(out, pt, &aes);
+	void H(block out[n], const block in[n]) {
+		detail::ParaEnc_mem_tiles_impl<detail::AesMemXorSigmaTile, 1, n>(out, in, &aes);
 	}
 
-	void Hn(block*out, block* in, int64_t length, block * scratch = nullptr) {
+	// Runtime-sized, out-of-place: out and in must not overlap.
+	void Hn(block * __restrict__ out, const block * __restrict__ in, int64_t length) {
 		if (length <= 0) return;
-		bool del = false;
-		if(scratch == nullptr) {
-			del = true;
-			scratch = new block[length];
-		}
+		detail::MemTileOp<detail::AesMemXorSigmaTile> op{out, in, &aes};
+		detail::drain_tiles(op, length);
+	}
 
-		for (int64_t i = 0; i < length; ++i)
-			scratch[i] = sigma(in[i]);
-
-		detail::ParaEncXorInput_runtime_impl(out, scratch, &aes, 1, length);
-
-		if(del) {
-			delete[] scratch;
-			scratch = nullptr;
-		}
+	// Runtime-sized, in-place. Per-tile σ is computed in-register before the
+	// store, so out == in is safe; a shifted overlap is not — copy first.
+	void Hn(block *data, int64_t length) {
+		if (length <= 0) return;
+		detail::MemTileOp<detail::AesMemXorSigmaTile> op{data, data, &aes};
+		detail::drain_tiles(op, length);
 	}
 };
 

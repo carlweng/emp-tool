@@ -104,53 +104,6 @@ inline void aes_tiles_xor_input(block *dst, const block *src, const AES_KEY *kk)
 		kk);
 }
 
-// Davies–Meyer / CRH counter-mode fill:
-//   dst[i] = AES_K(counter + i ⊕ tweak) ⊕ (counter + i ⊕ tweak),  i ∈ [0, W).
-// Correlation-robust under a *public* AES key (fixed-key AES modelled as
-// an ideal cipher) — use this when callers want the AES key public for
-// schedule-amortization and rely on the XOR-back for output PRG-ness.
-// For a secret AES key (regular PRG), use the plain `aes_ctr_fill` in
-// emp::detail instead.
-//
-// The XOR-back is done in-register at store time inside aes_tiles_src,
-// so there's no pt[] stash / second pass over dst.
-template <int W>
-EMP_AES_TARGET_ATTR
-inline void aes_ctr_fill_dm(block *dst, int64_t counter,
-                            const AES_KEY *kk, block tweak = zero_block) {
-#if EMP_HAS_VAES512
-	if constexpr (W % 4 == 0) {
-		using L = AesLane<4>;
-		const auto tw = L::broadcast(tweak);
-		aes_tiles_src<L, W/4>(
-			[&](int t) { return L::ctr_xor_tweak(counter, t, tw); },
-			[dst](int t, typename L::vec_t x, typename L::vec_t pt) {
-				L::store(dst + (size_t)t * L::N, L::xorv(x, pt));
-			}, kk);
-		return;
-	}
-#endif
-#if EMP_HAS_VAES256
-	if constexpr (W % 2 == 0) {
-		using L = AesLane<2>;
-		const auto tw = L::broadcast(tweak);
-		aes_tiles_src<L, W/2>(
-			[&](int t) { return L::ctr_xor_tweak(counter, t, tw); },
-			[dst](int t, typename L::vec_t x, typename L::vec_t pt) {
-				L::store(dst + (size_t)t * L::N, L::xorv(x, pt));
-			}, kk);
-		return;
-	}
-#endif
-	using L = AesLane<1>;
-	const auto tw = L::broadcast(tweak);
-	aes_tiles_src<L, W>(
-		[&](int t) { return L::ctr_xor_tweak(counter, t, tw); },
-		[dst](int t, typename L::vec_t x, typename L::vec_t pt) {
-			L::store(dst + (size_t)t * L::N, L::xorv(x, pt));
-		}, kk);
-}
-
 namespace detail {
 
 template<int NumKeys>
@@ -184,6 +137,41 @@ struct AesMemXorInputTile {
 	}
 };
 
+// Davies-Meyer-over-σ tile: dst = AES(σ(src)) ⊕ σ(src). σ is applied in the
+// tile source, so σ(src) stays live in-register as the XOR-back operand —
+// no σ stash buffer and no second pass. Shared by CCRH's compile-time H<n>
+// (via ParaEnc_mem_tiles_impl) and runtime Hn (via MemTileOp + drain_tiles).
+struct AesMemXorSigmaTile {
+	template<class L, int n_tiles>
+	EMP_AES_TARGET_ATTR
+	static void apply(block *dst, const block *src, const AES_KEY *kk) {
+		aes_tiles_src<L, n_tiles>(
+			[src](int t) { return L::sigma(L::load(src + (size_t)t * L::N)); },
+			[dst](int t, typename L::vec_t x, typename L::vec_t pt) {
+				L::store(dst + (size_t)t * L::N, L::xorv(x, pt));
+			}, kk);
+	}
+};
+
+// Emit a MemTile op over n_tiles AesLane<4> tiles in groups of <= 4. Each
+// group lands on aes_tiles_src's VAES-512 interleaved path (gated n_tiles<=4)
+// instead of the serial fallback that a single n_tiles>4 call would take.
+// Byte-identical to one apply<L,n_tiles>: the blocks are independent, only the
+// AES-pipelining grouping changes. Used for compile-time numEncs > 16, where
+// N4 = numEncs/4 exceeds 4; for n_tiles <= 4 it is a single apply as before.
+template<class MemTile, class L, int n_tiles>
+EMP_AES_TARGET_ATTR
+static inline void apply_grouped(block *dst, const block *src, const AES_KEY *kk) {
+	constexpr int G = 4;
+	if constexpr (n_tiles > G) {
+		MemTile::template apply<L, G>(dst, src, kk);
+		apply_grouped<MemTile, L, n_tiles - G>(
+			dst + (size_t)G * L::N, src + (size_t)G * L::N, kk);
+	} else if constexpr (n_tiles > 0) {
+		MemTile::template apply<L, n_tiles>(dst, src, kk);
+	}
+}
+
 // Per-key tile decomposition: split numEncs into {AesLane<4>,
 // AesLane<2>, AesLane<1>} chunks at compile time, picking the widest
 // available tier per slot. Each tile runs the fully-unrolled
@@ -213,7 +201,7 @@ static inline void ParaEnc_mem_tiles_impl(block *dst, const block *src, const AE
 		const block * const ps = src + k * (size_t)numEncs;
 		const AES_KEY * const kk = keys + k;
 #if EMP_HAS_VAES512
-		if constexpr (N4 > 0) MemTile::template apply<AesLane<4>, N4>(pd, ps, kk);
+		if constexpr (N4 > 0) apply_grouped<MemTile, AesLane<4>, N4>(pd, ps, kk);
 #endif
 #if EMP_HAS_VAES256
 		if constexpr (N2 > 0) MemTile::template apply<AesLane<2>, N2>(pd + N4 * W4, ps + N4 * W4, kk);
@@ -235,25 +223,42 @@ static inline void ParaEncXorInput_impl(block *dst, const block *src, const AES_
 	ParaEnc_mem_tiles_impl<AesMemXorInputTile, numKeys, numEncs>(dst, src, keys);
 }
 
-// Runtime dispatcher: tile each per-key stream into compile-time tiles
-// ({16, 8, 4, 2, 1} on VAES512; otherwise {8, 4, 2, 1}) so each tile
-// still goes through the unrolled memory-input tile op. Cross-key ILP is not
+// Single runtime tile ladder shared by every runtime-sized AES path
+// (ECB / XorInput / σ-CRH / CTR). Peels the widest available tile first
+// ({16, 8, 4, 2, 1} on VAES512; otherwise {8, 4, 2, 1}); `op.run<W>()`
+// emits one compile-time tile and advances the op's own cursor. Keeping
+// the ladder in one place stops the CTR and memory paths from drifting
+// to different tile widths.
+template<class Op>
+EMP_AES_TARGET_ATTR
+inline void drain_tiles(Op &op, int64_t n) {
+#if EMP_HAS_VAES512
+	while (n >= 16) { op.template run<16>(); n -= 16; }
+#endif
+	while (n >= 8)  { op.template run<8>();  n -= 8; }
+	if (n >= 4)     { op.template run<4>();  n -= 4; }
+	if (n >= 2)     { op.template run<2>();  n -= 2; }
+	if (n >= 1)       op.template run<1>();
+}
+
+// Per-key memory tile op for drain_tiles. Each run<W> goes through the
+// unrolled, register-resident ParaEnc_mem_tiles_impl. Cross-key ILP is not
 // exploited (would require an interleaved layout); hot callers that know
 // (K, N) at compile time should use ParaEnc<K, N> directly.
+template<class MemTile>
+struct MemTileOp {
+	block *pd; const block *ps; const AES_KEY *kk;
+	template<int W> EMP_AES_TARGET_ATTR void run() {
+		ParaEnc_mem_tiles_impl<MemTile, 1, W>(pd, ps, kk); pd += W; ps += W;
+	}
+};
+
 template<class MemTile>
 EMP_AES_TARGET_ATTR
 inline void ParaEnc_mem_tiles_runtime_impl(block *dst, const block *src, const AES_KEY *keys, int64_t K, int64_t N) {
 	for (int64_t k = 0; k < K; ++k) {
-		block *pd = dst + k * N;
-		const block *ps = src + k * N;
-		int64_t n = N;
-#if EMP_HAS_VAES512
-		while (n >= 16) { ParaEnc_mem_tiles_impl<MemTile, 1, 16>(pd, ps, keys + k); pd += 16; ps += 16; n -= 16; }
-#endif
-		while (n >= 8) { ParaEnc_mem_tiles_impl<MemTile, 1, 8>(pd, ps, keys + k); pd += 8; ps += 8; n -= 8; }
-		if (n >= 4)    { ParaEnc_mem_tiles_impl<MemTile, 1, 4>(pd, ps, keys + k); pd += 4; ps += 4; n -= 4; }
-		if (n >= 2)    { ParaEnc_mem_tiles_impl<MemTile, 1, 2>(pd, ps, keys + k); pd += 2; ps += 2; n -= 2; }
-		if (n >= 1)      ParaEnc_mem_tiles_impl<MemTile, 1, 1>(pd, ps, keys + k);
+		MemTileOp<MemTile> op{ dst + k * N, src + k * N, keys + k };
+		drain_tiles(op, N);
 	}
 }
 
@@ -267,46 +272,80 @@ inline void ParaEncXorInput_runtime_impl(block *dst, const block *src, const AES
 	ParaEnc_mem_tiles_runtime_impl<AesMemXorInputTile>(dst, src, keys, K, N);
 }
 
-// AES-CTR fill: dst[i] = AES_K(counter + i) for i in [0, W). Plaintext
-// counters are built in-register via AesLane<>::ctr_xor_tweak (with a
-// zero tweak), so the kernel only writes dst once — no intermediate
-// counter-write pass through the buffer.
+// AES-CTR fill over W blocks, one lane L. Counter plaintexts are built
+// in-register via L::ctr_xor_tweak, so the kernel only writes dst once —
+// no intermediate counter-write pass. Plain stores dst[i] = AES_K(ctr_i);
+// XorBack stores the Davies-Meyer dst[i] = AES_K(ctr_i ⊕ tweak) ⊕ (ctr_i ⊕
+// tweak), with the XOR done in-register at store time (no pt[] stash).
+enum class CtrStore { Plain, XorBack };
+
+template <class L, int W, CtrStore St>
+EMP_AES_TARGET_ATTR
+static inline void aes_ctr_fill_lane(block *dst, int64_t counter,
+                                     const AES_KEY *kk, block tweak) {
+	// Build the tweak broadcast from a compile-time zero on the Plain path so
+	// the per-counter XOR folds away. Threading `tweak` (= zero_block) through
+	// as a runtime value instead leaves a live XOR that ~halves single-block
+	// random_block on the VAES-512 target. XorBack genuinely needs the tweak.
+	aes_tiles_src<L, W / L::N>(
+		[&](int t) {
+			if constexpr (St == CtrStore::XorBack)
+				return L::ctr_xor_tweak(counter, t, L::broadcast(tweak));
+			else
+				return L::ctr_xor_tweak(counter, t, L::broadcast(_mm_setzero_si128()));
+		},
+		[dst](int t, typename L::vec_t x, typename L::vec_t pt) {
+			if constexpr (St == CtrStore::XorBack) x = L::xorv(x, pt);
+			L::store(dst + (size_t)t * L::N, x);
+		}, kk);
+}
+
+template <int W, CtrStore St>
+EMP_AES_TARGET_ATTR
+static inline void aes_ctr_fill_impl(block *dst, int64_t counter,
+                                     const AES_KEY *kk, block tweak) {
+#if EMP_HAS_VAES512
+	if constexpr (W % 4 == 0) { aes_ctr_fill_lane<AesLane<4>, W, St>(dst, counter, kk, tweak); return; }
+#endif
+#if EMP_HAS_VAES256
+	if constexpr (W % 2 == 0) { aes_ctr_fill_lane<AesLane<2>, W, St>(dst, counter, kk, tweak); return; }
+#endif
+	aes_ctr_fill_lane<AesLane<1>, W, St>(dst, counter, kk, tweak);
+}
+
 template <int W>
 EMP_AES_TARGET_ATTR
 static inline void aes_ctr_fill(block *dst, int64_t counter, const AES_KEY *kk) {
-#if EMP_HAS_VAES512
-	if constexpr (W % 4 == 0) {
-		using L = AesLane<4>;
-		const auto z = L::broadcast(_mm_setzero_si128());
-		aes_tiles_src<L, W/4>(dst,
-			[&](int t) { return L::ctr_xor_tweak(counter, t, z); }, kk);
-		return;
-	}
-#endif
-#if EMP_HAS_VAES256
-	if constexpr (W % 2 == 0) {
-		using L = AesLane<2>;
-		const auto z = L::broadcast(_mm_setzero_si128());
-		aes_tiles_src<L, W/2>(dst,
-			[&](int t) { return L::ctr_xor_tweak(counter, t, z); }, kk);
-		return;
-	}
-#endif
-	using L = AesLane<1>;
-	const auto z = L::broadcast(_mm_setzero_si128());
-	aes_tiles_src<L, W>(dst,
-		[&](int t) { return L::ctr_xor_tweak(counter, t, z); }, kk);
+	aes_ctr_fill_impl<W, CtrStore::Plain>(dst, counter, kk, zero_block);
 }
+
+struct CtrFillOp {
+	block *dst; int64_t counter; const AES_KEY *kk;
+	template<int W> EMP_AES_TARGET_ATTR void run() {
+		aes_ctr_fill<W>(dst, counter, kk); dst += W; counter += W;
+	}
+};
 
 EMP_AES_TARGET_ATTR
 inline void ParaCtrEnc(block *dst, int64_t counter, const AES_KEY *kk, int64_t n) {
-	while (n >= 8) { aes_ctr_fill<8>(dst, counter, kk); dst += 8; counter += 8; n -= 8; }
-	if (n >= 4)    { aes_ctr_fill<4>(dst, counter, kk); dst += 4; counter += 4; n -= 4; }
-	if (n >= 2)    { aes_ctr_fill<2>(dst, counter, kk); dst += 2; counter += 2; n -= 2; }
-	if (n >= 1)      aes_ctr_fill<1>(dst, counter, kk);
+	CtrFillOp op{dst, counter, kk};
+	drain_tiles(op, n);
 }
 
 }  // namespace detail
+
+// Davies–Meyer / CRH counter-mode fill:
+//   dst[i] = AES_K(counter + i ⊕ tweak) ⊕ (counter + i ⊕ tweak),  i ∈ [0, W).
+// Correlation-robust under a *public* AES key (fixed-key AES modelled as
+// an ideal cipher) — use this when callers want the AES key public for
+// schedule-amortization and rely on the XOR-back for output PRG-ness.
+// For a secret AES key (regular PRG), use detail::aes_ctr_fill instead.
+template <int W>
+EMP_AES_TARGET_ATTR
+inline void aes_ctr_fill_dm(block *dst, int64_t counter,
+                            const AES_KEY *kk, block tweak = zero_block) {
+	detail::aes_ctr_fill_impl<W, detail::CtrStore::XorBack>(dst, counter, kk, tweak);
+}
 
 // Schedule NumKeys AES-128 round keys per "Fast Garbling of Circuits
 // Under Standard Assumptions" (https://eprint.iacr.org/2015/751.pdf).

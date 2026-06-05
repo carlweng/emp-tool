@@ -17,9 +17,6 @@
 namespace emp {
 
 class PRG { public:
-	uint64_t counter = 0;
-	AES_KEY aes;
-	block key;
 	PRG(const void * seed = nullptr, int id = 0) {
 		if (seed != nullptr) {
 			// Unaligned-safe load: caller passed a void*, so the address
@@ -73,6 +70,21 @@ class PRG { public:
 		key = v;
 		AES_set_encrypt_key(v, &aes);
 		counter = 0;
+	}
+
+	// Stream position is the CTR block counter. seed() is the effective key
+	// (post id-XOR); a fresh PRG built from it and seek()'d to position c
+	// reproduces this PRG's output from block c onward — see fork_at().
+	block seed() const { return key; }
+	uint64_t position() const { return counter; }
+	void seek(uint64_t block_counter) {
+		counter = block_counter;
+		ptr = 32;  // invalidate the buffered operator() words
+	}
+	PRG fork_at(uint64_t block_counter) const {
+		PRG p(*this);  // copy shares the AES key; no re-schedule
+		p.seek(block_counter);
+		return p;
 	}
 
 	// `data` must be block-aligned (16-byte). Use random_data_unaligned otherwise.
@@ -205,12 +217,17 @@ class PRG { public:
 		return 0xFFFFFFFFFFFFFFFFULL;
 	}
 	result_type operator()() {
-		if(ptr == 32) {		
+		if(ptr == 32) {
 			random_block((block*)buffer, 16);
 			ptr = 0;
 		}
 		return buffer[ptr++];
 	}
+
+private:
+	uint64_t counter = 0;
+	AES_KEY aes;
+	block key;
 };
 
 }
