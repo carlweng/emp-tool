@@ -131,8 +131,3 @@ LSB-first-within-byte, byte-sequential layout back to memory.
   index flip (`U[i] = U_lsb[7-i]`) at entry and exit so callers
   see the LSB-first convention. The flip emits zero gates — it's
   pure renaming.
-- **`aes_128_ctr.h`'s `reverse_bytes(i) = 8*(15 - i/8) + (i%8)`** is
-  *byte* (not bit) reordering, specific to the wire layout of the
-  shipped `bristol_fashion/aes_128.txt` file (which expects byte
-  15 of the input first). It is not a general convention — new
-  code that builds AES from `aes_circuit.h` does not need it.

@@ -2,7 +2,6 @@
 
 #include "emp-tool/emp-tool.h"
 
-
 // Use the standard block-wire circuit aliases in this test translation unit.
 using namespace emp::block_types;
 using namespace std;
@@ -16,22 +15,24 @@ class AbandonIO: public IOChannel { public:
 int port, party;
 template <typename T>
 void test(T* netio) {
-	Bit* a = new Bit[128];
-	Bit* b = new Bit[128];
-	Bit* c = new Bit[128];
+	Bit* key = new Bit[128];
+	Bit* msg = new Bit[128];
+	Bit* out = new Bit[128];
 
 	PRG prg;
-	prg.random_block(reinterpret_cast<block*>(a), 128);
-	prg.random_block(reinterpret_cast<block*>(b), 128);
+	prg.random_block(reinterpret_cast<block*>(key), 128);
+	prg.random_block(reinterpret_cast<block*>(msg), 128);
 
-	string file = "./emp-tool/circuits/files/bristol_format/AES-non-expanded.txt";
-	BristolFormat cf(file.c_str());
+	AES_Calculator_T<block> aes;
+	auto garble_once = [&]() {
+		aes.encrypt_with_key(msg, key, out);
+	};
 
 	const int N = 1000;
+	const int AES_ANDS = 6400;
 	if (party == BOB) {
 		backend = new HalfGateEva(netio);
-		for (int i = 0; i < N; ++i)
-			cf.compute(c, a, b);
+		for (int i = 0; i < N; ++i) garble_once();
 		delete backend;
 		backend = nullptr;
 	} else {
@@ -39,29 +40,25 @@ void test(T* netio) {
 		backend = new HalfGateGen(aio);
 
 		auto start = clock_start();
-		for (int i = 0; i < N; ++i) {
-			cf.compute(c, a, b);
-		}
+		for (int i = 0; i < N; ++i) garble_once();
 		double interval = time_from(start);
-		cout << "Pure AES garbling speed : " << N * 6800 / interval << " million gate per second\n";
+		cout << "Pure AES garbling speed : " << N * AES_ANDS / interval << " million gate per second\n";
 		delete aio;
 		delete backend; backend = nullptr;
 
 		backend = new HalfGateGen(netio);
 
 		start = clock_start();
-		for (int i = 0; i < N; ++i) {
-			cf.compute(c, a, b);
-		}
+		for (int i = 0; i < N; ++i) garble_once();
 		interval = time_from(start);
-		cout << "AES garbling + Loopback Network : " << N * 6800 / interval << " million gate per second\n";
+		cout << "AES garbling + Loopback Network : " << N * AES_ANDS / interval << " million gate per second\n";
 
 		delete backend; backend = nullptr;
 	}
 
-	delete[] a;
-	delete[] b;
-	delete[] c;
+	delete[] key;
+	delete[] msg;
+	delete[] out;
 }
 
 int main(int argc, char** argv) {

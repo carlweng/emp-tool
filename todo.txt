@@ -1,2 +1,1 @@
-1. update readme
-2. thinking about circuit that instantiated with block
+1. generate circuit and improve float-point

@@ -107,7 +107,7 @@ emp-tool/
 ├── crypto/       PRG, PRP, AES, Hash, CCRH, MITCCRH, f2k, ec (Scalar/Point/ECGroup)
 ├── io/           IOChannel, NetIO, TLSIO, TraceIO
 ├── execution/    Backend interface, ClearBackend, HalfGate*, PrivacyFree*
-├── circuits/     Bit, BitVec, UnsignedInt, SignedInt, Float (all templated on Wire), BristolFormat/Fashion
+├── circuits/     Bit, BitVec, UnsignedInt, SignedInt, Float (all templated on Wire); BooleanProgram IR + .empbc format
 ├── frontend/     run / compile / replay pure circuit functions through any backend (emp::frontend)
 └── third_party/  ThreadPool, sse2neon
 ```
@@ -229,8 +229,8 @@ io.recv_data(buf, n);                            // blocks until n bytes arrive
 ### Plaintext circuit evaluation
 
 The simplest backend evaluates `Bit` / `BitVec` / `UnsignedInt` /
-`SignedInt` / `Float` in cleartext (and can optionally dump a
-Bristol-style file of the circuit it executed):
+`SignedInt` / `Float` in cleartext (and can optionally capture the
+circuit it executed as a native `.empbc` file):
 
 ```cpp
 using namespace emp::block_types;
@@ -249,8 +249,10 @@ std::cout << (big + UnsignedInt(32, 1u, PUBLIC)).reveal<uint32_t>() << "\n"; // 
 finalize_clear_backend();
 ```
 
-To dump the executed circuit as a Bristol-format file, pass a filename
-to `setup_clear_backend("circuit.txt")`.
+To capture the executed circuit as a native `.empbc` file, pass a filename
+to `setup_clear_backend("circuit.empbc")`; it is written on
+`finalize_clear_backend()`. (Capture requires all secret feeds before any
+gate — inputs are the leading wires.)
 
 ### Circuit frontend: run and compile
 
@@ -283,22 +285,35 @@ revealed whenever. The same `compile` / `run` drive any backend — the
 cleartext one above, or a protocol such as AG2PC. See
 [docs/frontend.md](docs/frontend.md).
 
-### Pre-built circuits (Bristol format)
+### Native circuit files (`.empbc`)
+
+Circuits load from the native binary `.empbc` format into one
+`emp::circuit::BooleanProgram` (flat: inputs are wires `[0, num_inputs)`,
+outputs are an explicit wire list) and run through the shared evaluator. The
+loader validates structure (bounds, single-definition, topological order) and
+rejects malformed files. No `.empbc` assets are shipped yet; generate or
+capture one and load it through this API.
 
 ```cpp
 using namespace emp::block_types;
+using namespace emp::circuit;
 
-BristolFashion aes("emp-tool/circuits/files/bristol_fashion/aes_128.txt");
+BooleanProgram program = load_empbc_file("my_circuit.empbc");
 
-Bit input[256];                                  // 2 × 128-bit input groups
-Bit output[128];
+// Dispatcher: realize each gate op on Bit slots through the active backend.
+struct BitCompute {
+    void and_gate(Bit& o, const Bit& a, const Bit& b) { o = a & b; }
+    void xor_gate(Bit& o, const Bit& a, const Bit& b) { o = a ^ b; }
+    void not_gate(Bit& o, const Bit& a)               { o = !a; }
+    void const_gate(Bit& o, bool v)                   { emp::backend->public_label(&o.bit, v); }
+};
+
+std::vector<Bit> input(program.num_inputs), output(program.outputs.size());
 // ... feed inputs via your protocol ...
-aes.compute(output, input);
+CircuitScratch<Bit> sc;
+execute_program<Bit>(program, input.data(), input.size(),
+                     output.data(), output.size(), sc, BitCompute{});
 ```
-
-`BristolFormat` is the older two-input-array variant; `BristolFashion`
-is the unified-input form used by most circuits in
-`emp-tool/circuits/files/bristol_fashion/`.
 
 ### Custom wire type
 

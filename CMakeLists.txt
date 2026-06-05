@@ -55,6 +55,7 @@ endif()
 set(emp_tool_sources
     emp-tool/emp-tool.cpp
     emp-tool/circuits/circuit.cpp
+    emp-tool/circuits/float_builtins.cpp
     emp-tool/crypto/ec.cpp)
 
 # ---------------------------------------------------------------------
@@ -149,7 +150,7 @@ if(EMP_TOOL_INSTALL)
         FILES_MATCHING
             PATTERN "*.h"
             PATTERN "*.hpp"
-            PATTERN "*.txt")
+            PATTERN "*.empbc")   # native circuit assets
 
     install(EXPORT emp-toolTargets
         NAMESPACE   emp-tool::

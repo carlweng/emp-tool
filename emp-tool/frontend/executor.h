@@ -160,8 +160,12 @@ run(F &&body, Args &&...args) {
 		return {};   // invalid_circuit_fn{} — unreachable; contract already asserted
 }
 
-// Build a Circuit (program + stats) from a finished recording.
+// Build a Circuit (program + stats) from a finished recording. Validate the
+// recorded program FIRST: the analysis passes and replay index wire buffers
+// directly, so a recorder bug (e.g. a stale -1 RecWire id widening to
+// UINT32_MAX) must be rejected here, not turned into an out-of-bounds access.
 inline Circuit make_circuit(BooleanProgram &&prog) {
+	emp::circuit::validate_program(prog);
 	Circuit c;
 	c.prog     = std::move(prog);
 	c.count    = count_pass(c.prog);
@@ -173,9 +177,28 @@ inline Circuit make_circuit(BooleanProgram &&prog) {
 
 // A compiled circuit that remembers its return type (RetRec, in RecWire form)
 // so a replay can hand back a reconstructed EMP object rather than flat bits.
+// arg_widths / return_width are the frontend-only shape metadata that replaces
+// the core IR's removed InputPort list: they let run() reject a caller whose
+// argument count or per-argument widths disagree with what was compiled (the
+// flat program alone only knows the total num_inputs).
 template <typename RetRec>
 struct TypedCircuit {
-	Circuit circuit;
+	Circuit               circuit;
+	std::vector<uint32_t> arg_widths;     // pack_size of each compiled argument
+	uint32_t              return_width = 0;
+};
+
+// Dispatcher that realizes each gate op by issuing the matching call on a
+// Backend. Used by execute_program to replay a compiled circuit's gates through
+// whatever Backend is installed (ClearBackend, AG2PC, …). Wire slots are the
+// backend's wire carriers; the const op materializes a known public 0/1 wire.
+template <typename Wire>
+struct BackendDispatcher {
+	Backend* b;
+	void and_gate(Wire& o, const Wire& l, const Wire& r) { b->and_gate(&o, &l, &r); }
+	void xor_gate(Wire& o, const Wire& l, const Wire& r) { b->xor_gate(&o, &l, &r); }
+	void not_gate(Wire& o, const Wire& l)                { b->not_gate(&o, &l); }
+	void const_gate(Wire& o, bool v)                     { b->public_label(&o, v); }
 };
 
 // Allocate an input-argument port of `n` wires and build the RecWire-typed
@@ -207,22 +230,32 @@ inline TypedCircuit<Ret> record_typed_(F &&body, MakeInputs make_inputs) {
 	backend = &rec;
 
 	auto rec_inputs = make_inputs();
+	// Per-argument widths (pack_size of each recorded argument), in order — the
+	// shape metadata run() validates against the live arguments.
+	std::vector<uint32_t> arg_widths;
+	std::apply([&](auto &...ins) {
+		(void)std::initializer_list<int>{(arg_widths.push_back((uint32_t)ins.pack_size()), 0)...};
+	}, rec_inputs);
+
 	// Pass the recorded inputs to the body as rvalues (value semantics): a
 	// circuit's arguments are values, not mutable references.
 	Ret rec_result =
 	    std::apply([&](auto &&...ins) { return body(std::move(ins)...); }, rec_inputs);
 
 	// The circuit's output IS the returned value's wires.
+	uint32_t return_width = 0;
 	if constexpr (std::is_base_of<emp::CircuitValue, Ret>::value) {
 		auto ow = pack_wires(rec_result);   // std::vector<RecWire>
 		rec.prog.outputs.clear();
 		rec.prog.outputs.reserve(ow.size());
-		for (const auto &x : ow) rec.prog.outputs.push_back(x.id);
+		for (const auto &x : ow) rec.prog.outputs.push_back((uint32_t)x.id);
+		return_width = (uint32_t)ow.size();
 	}
 
 	rec.finalize();
 	backend = saved;
-	return TypedCircuit<Ret>{make_circuit(std::move(rec.prog))};
+	return TypedCircuit<Ret>{make_circuit(std::move(rec.prog)),
+	                         std::move(arg_widths), return_width};
 }
 
 // Compile a pure circuit function (EMP args in, EMP value out). Two ways to fix
@@ -312,38 +345,32 @@ auto run(const TypedCircuit<RetRec> &tc, const Arg0 &a0, const Args &...rest)
 	// argument count/width would otherwise corrupt wire slots.
 	if (backend == nullptr || backend->wire_bytes() != sizeof(Wire))
 		error("frontend::run(circuit): wrong/absent backend for this wire type");
-	if (p.inputs.size() != 1 + sizeof...(Args))
+	if (tc.arg_widths.size() != 1 + sizeof...(Args))
 		error("frontend::run(circuit): argument count != circuit input count");
 
-	std::vector<Wire> buf(p.num_wire);
-
-	// Bind each argument's live wires into its input port, in order.
-	int ai = 0;
+	// Gather each argument's live wires, in order, into one flat input vector
+	// bound to wires [0, num_inputs). Per-argument widths are checked against
+	// the compiled shapes (arg_widths).
+	std::vector<Wire> inputs;
+	inputs.reserve(p.num_inputs);
+	size_t ai = 0;
 	auto bind = [&](const auto &arg) {
-		const InputPort &port = p.inputs[ai++];   // ai in range by the count check
 		std::vector<Wire> w = pack_wires(arg);
-		if ((int)w.size() != port.n)
+		if ((uint32_t)w.size() != tc.arg_widths[ai++])
 			error("frontend::run(circuit): argument width != circuit input width");
-		for (int k = 0; k < port.n; ++k) buf[port.base + k] = w[k];
+		for (auto &x : w) inputs.push_back(x);
 	};
 	bind(a0);
 	(void)std::initializer_list<int>{(bind(rest), 0)...};
+	if ((uint32_t)inputs.size() != p.num_inputs)
+		error("frontend::run(circuit): total argument width != circuit input count");
 
-	// Replay the gates through the installed backend.
-	for (const Gate &g : p.gates) {
-		switch (g.op) {
-			case Op::CONST0: backend->public_label(&buf[g.out], false); break;
-			case Op::CONST1: backend->public_label(&buf[g.out], true);  break;
-			case Op::AND: backend->and_gate(&buf[g.out], &buf[g.in0], &buf[g.in1]); break;
-			case Op::XOR: backend->xor_gate(&buf[g.out], &buf[g.in0], &buf[g.in1]); break;
-			case Op::NOT: backend->not_gate(&buf[g.out], &buf[g.in0]); break;
-		}
-	}
-
-	// Reconstruct the typed return value from the output wires.
-	std::vector<Wire> ow;
-	ow.reserve(p.outputs.size());
-	for (int w : p.outputs) ow.push_back(buf[w]);
+	// Replay through the installed backend via the shared evaluator.
+	std::vector<Wire> ow(p.outputs.size());
+	emp::circuit::CircuitScratch<Wire> scratch;
+	emp::circuit::execute_program<Wire>(p, inputs.data(), inputs.size(),
+	                                    ow.data(), ow.size(), scratch,
+	                                    BackendDispatcher<Wire>{backend});
 	return assemble<RetLive>(ow.data(), (int)ow.size());
 }
 

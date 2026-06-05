@@ -19,9 +19,6 @@ const static size_t IO_BOOL_CHUNK_SIZE = 8 * 1024;
 // these values implicitly.
 enum Party : int { XOR = -1, PUBLIC = 0, ALICE = 1, BOB = 2 };
 
-// Bristol-format gate-type tags (the 4th int per gate record).
-enum GateType : int { AND_GATE = 0, XOR_GATE = 1, NOT_GATE = 2 };
-
 // Upper bound on a group point's serialized length on the wire.
 // EC points are ≤ ~129 bytes; this caps wire-corruption at recv.
 const static uint32_t MAX_POINT_BYTES = 2048;

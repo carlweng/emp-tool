@@ -110,8 +110,9 @@ normal path (it is not exception-safe — don't throw out of a body mid-record).
 
 `compile` returns a `Circuit` (the typed `compile` wraps it in a
 `TypedCircuit<Ret>` that also remembers the return type). It is plain,
-backend-independent data — the recorded `BooleanProgram` (gates, argument input
-ports, output wire ids) plus stats computed once:
+backend-independent data — the recorded `BooleanProgram` (flat input wires,
+gates, output wire ids) plus stats computed once; `TypedCircuit` carries the
+per-argument widths used to bind live inputs on replay:
 
 - `circuit.count` — `num_and`, `num_xor`, `num_not`, `num_wire`, input/output
   bit counts.
@@ -142,9 +143,9 @@ bundle. See
 
 ## What's inside (internals)
 
-- `boolean_program.h` — the protocol-neutral IR: `Gate`
-  (`AND`/`XOR`/`NOT`/`CONST0`/`CONST1`), `InputPort{base, n}` (one per
-  argument), `outputs` (the return value's wire ids), `BooleanProgram`.
+- `boolean_program.h` — the protocol-neutral IR: `BooleanProgram` with flat
+  inputs `[0, num_inputs)`, `Gate` (`AND`/`XOR`/`NOT`/`CONST0`/`CONST1`), and
+  `outputs` (the return value's wire ids).
 - `record_backend.h` — `RecWire` + `RecordBackend` (a `Backend` that records
   operations into a `BooleanProgram`; rejects secret `feed` and `reveal`).
 - `passes.h` — analysis over the IR: `count`, `liveness`, `schedule`

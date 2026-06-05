@@ -4,21 +4,26 @@
 #include "emp-tool/core/block.h"
 #include "emp-tool/core/utils.h"
 #include "emp-tool/execution/backend.h"
+#include "emp-tool/circuits/boolean_program.h"
+#include "emp-tool/circuits/empbc.h"
 #include <cstring>
-#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
 
 namespace emp {
 
-// Plaintext / circuit-printer backend. A wire carries:
-//   - gid:        Bristol gate id (only meaningful for private wires)
+// Plaintext / circuit-capture backend. A wire carries:
+//   - gid:        circuit wire id (only meaningful for private wires)
 //   - is_public:  1 = public constant, 0 = private share
 //   - value:      0 or 1
-// With a non-empty filename, ClearBackend writes the circuit in Bristol-
-// fashion-ish format on `finalize()`; otherwise it just evaluates in
-// plaintext.
+// With an empty filename it just evaluates in plaintext. With a non-empty
+// filename it ALSO captures the executed computation as a native .empbc
+// BooleanProgram, written on finalize(). Unlike the frontend RecordBackend it
+// captures impure flows (it sees feed/reveal), so it stays a separate path.
+// Precondition for capture: all secret feeds occur before any gate, so input
+// wires are the leading [0, num_inputs) — validate_program() rejects a capture
+// that violates this rather than emitting a malformed file.
 struct ClearWire {
 	uint64_t gid;
 	uint32_t is_public;
@@ -32,7 +37,7 @@ public:
 	uint64_t n1 = 0, n2 = 0, n3 = 0;
 	bool print = false;
 	std::string filename;
-	std::ofstream fout;
+	emp::circuit::BooleanProgram prog;   // captured circuit (when print)
 	struct OutputRef {
 		bool is_public;
 		bool value;
@@ -46,18 +51,9 @@ public:
 	explicit ClearBackend(const std::string& filename_ = "")
 	    : Backend(PUBLIC), filename(filename_) {
 		print = !filename.empty();
-		if (print) {
-			fout.open(filename);
-			// placeholder for header (rewritten in finalize)
-			for (int i = 0; i < 200; ++i)
-				fout << " ";
-			fout << '\n';
-		}
 	}
 
-	~ClearBackend() override {
-		if (fout.is_open()) fout.close();
-	}
+	~ClearBackend() override {}
 
 	size_t wire_bytes() const override { return sizeof(ClearWire); }
 
@@ -70,11 +66,14 @@ public:
 		const ClearWire& r = *static_cast<const ClearWire*>(r_);
 		ClearWire& o = *static_cast<ClearWire*>(out);
 
+		// Capture operand ids before writing o: an in-place op (a &= b) makes
+		// `out` alias `l`, so o = {...} would clobber l.gid before we record it.
+		const uint32_t lg = (uint32_t)l.gid, rg = (uint32_t)r.gid;
 		if (l.is_public) { o = l.value ? r : public_zero; return; }
 		if (r.is_public) { o = r.value ? l : public_zero; return; }
 		o = ClearWire{ static_cast<uint64_t>(gid), 0, l.value & r.value };
 		if (print)
-			fout << "2 1 " << l.gid << ' ' << r.gid << ' ' << gid << " AND\n";
+			prog.gates.push_back({lg, rg, (uint32_t)gid, emp::circuit::Op::And});
 		++gid; ++gates; ++ands;
 	}
 
@@ -83,13 +82,14 @@ public:
 		const ClearWire& r = *static_cast<const ClearWire*>(r_);
 		ClearWire& o = *static_cast<ClearWire*>(out);
 
+		const uint32_t lg = (uint32_t)l.gid, rg = (uint32_t)r.gid;  // before any overwrite of o
 		if (l.is_public && l.value) { not_gate(out, r_); return; }
 		if (r.is_public && r.value) { not_gate(out, l_); return; }
 		if (l.is_public)            { o = r; return; }
 		if (r.is_public)            { o = l; return; }
 		o = ClearWire{ static_cast<uint64_t>(gid), 0, l.value ^ r.value };
 		if (print)
-			fout << "2 1 " << l.gid << ' ' << r.gid << ' ' << gid << " XOR\n";
+			prog.gates.push_back({lg, rg, (uint32_t)gid, emp::circuit::Op::Xor});
 		++gid; ++gates;
 	}
 
@@ -97,10 +97,11 @@ public:
 		const ClearWire& in = *static_cast<const ClearWire*>(in_);
 		ClearWire& o = *static_cast<ClearWire*>(out);
 
+		const uint32_t ing = (uint32_t)in.gid;   // before o (may alias in) is overwritten
 		if (in.is_public) { o = in.value ? public_zero : public_one; return; }
 		o = ClearWire{ static_cast<uint64_t>(gid), 0, in.value ^ 1u };
 		if (print)
-			fout << "1 1 " << in.gid << ' ' << gid << " INV\n";
+			prog.gates.push_back({ing, 0, (uint32_t)gid, emp::circuit::Op::Not});
 		++gid; ++gates;
 	}
 
@@ -134,42 +135,30 @@ public:
 
 	void finalize() override {
 		if (!print) return;
-		// Trailer: synthesize a constant-0 wire (z_index = wires[0] XOR
-		// wires[0]) and, if any public-true output needs it, a
-		// constant-1 wire (o_index = NOT z_index). Both helpers must be
-		// emitted before the output XOR block so the last n3 wires
-		// remain exactly the output gates, as BristolFormat::compute
-		// assumes (out[i] = wires[num_wire - n3 + i]). Each output XOR
-		// routes through one of {z_index, o_index, real gate id} so
-		// public-constant reveals carry the right value instead of
-		// leaking input wire 0.
-		int64_t z_index = gid++;
-		fout << "2 1 0 0 " << z_index << " XOR\n";
-		size_t extra = 1;
-		bool need_one = false;
-		for (auto& v : output_indices)
-			if (v.is_public && v.value) { need_one = true; break; }
-		int64_t o_index = -1;
-		if (need_one) {
-			o_index = gid++;
-			fout << "1 1 " << z_index << ' ' << o_index << " INV\n";
-			++extra;
-		}
+		// Assemble the program's outputs from the revealed wires. A private
+		// reveal maps to its producing wire id; a public-constant reveal
+			// synthesizes a first-class Const0/Const1 gate (deduped). Inputs are
+			// the leading n1+n2 wires; validate_program()
+			// enforces that (and the whole structure) before we write the file.
+		int c0 = -1, c1 = -1;
+		std::vector<uint32_t> outputs;
+		outputs.reserve(output_indices.size());
 		for (auto& v : output_indices) {
-			int64_t src = v.is_public ? (v.value ? o_index : z_index)
-			                          : v.gate_id;
-			fout << "2 1 " << z_index << ' ' << src << ' ' << gid++ << " XOR\n";
+			if (!v.is_public) { outputs.push_back((uint32_t)v.gate_id); continue; }
+			int& cache = v.value ? c1 : c0;
+			if (cache < 0) {
+				cache = (int)gid++;
+				prog.gates.push_back({0, 0, (uint32_t)cache,
+				    v.value ? emp::circuit::Op::Const1 : emp::circuit::Op::Const0});
+			}
+			outputs.push_back((uint32_t)cache);
 		}
-		gates += (extra + output_indices.size());
-
-		fout.flush();
-		fout.close();
-
-		// Rewrite the placeholder header.
-		std::fstream f(filename, std::fstream::in | std::fstream::out);
-		f << gates << ' ' << gid << '\n';
-		f << n1 << ' ' << n2 << ' ' << n3 << '\n';
-		f.close();
+		prog.num_inputs = (uint32_t)(n1 + n2);
+		prog.num_wires  = (uint32_t)gid;
+		prog.outputs    = std::move(outputs);
+		// save_empbc validates the program before writing (rejecting e.g. a
+		// capture where a secret feed followed a gate, breaking feeds-first).
+		emp::circuit::save_empbc_file(filename.c_str(), prog);
 	}
 
 private:

@@ -327,7 +327,7 @@ For ML-style fixed-point work, prefer `SignedInt` with a chosen scale.
 ### 4.12. Crypto primitives (AES-128, SHA3-256)
 
 Don't hand-roll AES or SHA3 in `Bit`/`BitVec` ops. emp-tool ships
-pre-built Bristol circuits wrapped in calculator classes:
+pre-built circuits wrapped in calculator classes:
 
 ```cpp
 // SHA3-256 over a secret byte string of public length 2000.
@@ -345,8 +345,8 @@ AES_128_CTR_Calculator aes;
 // ... see header for full signature ...
 ```
 
-The Calculator classes are wrappers around Bristol-format AES-128 and
-Keccak-f circuits embedded into the binary at compile time. Cost is
+The Calculator classes are wrappers around AES-128 and Keccak-f
+circuits embedded into the binary at compile time. Cost is
 ≈6800 ANDs for one AES block, ≈37k for one Keccak-f permutation.
 
 Because both circuits *are* circuits, every byte of input is an
@@ -420,7 +420,8 @@ int main() {
 parties' "secret" inputs because there's only one process). Use it to
 verify a translation produces the same output as the original C++ /
 Python before you stand up two real parties. Pass a filename to also
-dump a Bristol-format circuit file on `finalize`.
+capture the executed circuit as a native `.empbc` file on `finalize`
+(all secret feeds must precede any gate, so inputs are the leading wires).
 
 `backend->num_and()` returns the AND-gate count after a run — the
 right metric for circuit cost. (XOR / NOT are free in modern garbling
@@ -654,7 +655,7 @@ Float(float, party)                        // IEEE 754 binary32
 If(sel_bit).Then(x).Else(y) -> T           // fluent builder from sortable.h
 sort(arr, n, data=nullptr, acc=true)       // bitonic, in-place
 
-setup_clear_backend([filename])            // ClearBackend; optional Bristol dump
+setup_clear_backend([filename])            // ClearBackend; optional .empbc capture
 finalize_clear_backend()
 backend->num_and()                         // AND-gate count
 
@@ -707,9 +708,9 @@ Don't reference `backend` from circuit code — use the wrapper types.
 * `test/test_{aes_128_ctr,sha3_256}.cpp` — end-to-end examples of using
   the crypto calculators from circuit code, including reveal back to
   host bytes for a ground-truth check.
-* `test/test_gen_circuit.cpp` — minimal example of generating a Bristol
-  circuit file under `setup_clear_backend("filename")` and converting
-  it via `BristolFormat::to_file`.
+* `test/test_gen_circuit.cpp` — minimal example of capturing a circuit as
+  a native `.empbc` file under `setup_clear_backend("filename")`, then
+  reloading and re-executing it via `load_empbc_file` / `execute_program`.
 * `AGENTS.md` (top of repo) — project conventions index, with topical
   subdocs under `docs/` for the circuit-class layer, backend layer,
   numeric semantics, and the IO channel thread-safety contract.

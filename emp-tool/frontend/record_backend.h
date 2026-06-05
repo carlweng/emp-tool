@@ -39,12 +39,13 @@ public:
 
 	// Public constants fold to a single CONST0/CONST1 gate each (deduped), so
 	// the IR carries at most two constant wires regardless of how many times a
-	// public literal appears.
+	// public literal appears. Unused operands are normalized to 0 (the IR's
+	// convention; never read for const gates).
 	void public_label(void* out, bool b) override {
 		int& cache = b ? const1_id_ : const0_id_;
 		if (cache < 0) {
 			cache = alloc_();
-			prog.gates.push_back(Gate{-1, -1, cache, b ? Op::CONST1 : Op::CONST0});
+			prog.gates.push_back(Gate{0, 0, (uint32_t)cache, b ? Op::Const1 : Op::Const0});
 		}
 		static_cast<RecWire*>(out)->id = cache;
 	}
@@ -63,18 +64,18 @@ public:
 
 	void and_gate(void* out, const void* l, const void* r) override {
 		int o = alloc_();
-		prog.gates.push_back(Gate{id_(l), id_(r), o, Op::AND});
+		prog.gates.push_back(Gate{(uint32_t)id_(l), (uint32_t)id_(r), (uint32_t)o, Op::And});
 		static_cast<RecWire*>(out)->id = o;
-		++prog.num_and;
+		++and_count_;
 	}
 	void xor_gate(void* out, const void* l, const void* r) override {
 		int o = alloc_();
-		prog.gates.push_back(Gate{id_(l), id_(r), o, Op::XOR});
+		prog.gates.push_back(Gate{(uint32_t)id_(l), (uint32_t)id_(r), (uint32_t)o, Op::Xor});
 		static_cast<RecWire*>(out)->id = o;
 	}
 	void not_gate(void* out, const void* in) override {
 		int o = alloc_();
-		prog.gates.push_back(Gate{id_(in), -1, o, Op::NOT});
+		prog.gates.push_back(Gate{(uint32_t)id_(in), 0, (uint32_t)o, Op::Not});
 		static_cast<RecWire*>(out)->id = o;
 	}
 
@@ -88,23 +89,29 @@ public:
 	}
 
 	// Allocate `n` wires as an input-argument port (bound to a live value at
-	// run time). Returns the base wire id. Used by the compile() path.
+	// run time). Returns the base wire id. Used by the compile() path. The core
+	// IR has no port concept — inputs are simply the leading num_inputs wires —
+	// so we only accumulate the count; argument boundaries live on TypedCircuit
+	// (arg_widths). Call before recording any gate so inputs stay wires
+	// [0, num_inputs).
 	int external_input(int n) {
 		int base = next_id_;
 		for (int i = 0; i < n; ++i) alloc_();
-		prog.inputs.push_back(InputPort{base, n});
+		num_inputs_ += n;
 		return base;
 	}
 
-	uint64_t num_and() override { return prog.num_and; }
+	uint64_t num_and() override { return and_count_; }
 
 	void finalize() override {
-		prog.num_wire   = next_id_;
-		prog.wire_bytes = sizeof(RecWire);
+		prog.num_wires  = (uint32_t)next_id_;
+		prog.num_inputs = (uint32_t)num_inputs_;
 	}
 
 private:
-	int next_id_   = 0;
+	int next_id_    = 0;
+	int num_inputs_ = 0;
+	uint64_t and_count_ = 0;
 	int const0_id_ = -1, const1_id_ = -1;   // -1 = not yet materialized
 	int alloc_() { return next_id_++; }
 	static int id_(const void* p) { return static_cast<const RecWire*>(p)->id; }

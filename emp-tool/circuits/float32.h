@@ -5,7 +5,8 @@
 #include "emp-tool/circuits/sortable.h"
 #include "emp-tool/circuits/signed_int.h"
 #include "emp-tool/circuits/unsigned_int.h"
-#include "emp-tool/circuits/circuit_file.h"
+#include "emp-tool/circuits/boolean_program.h"
+#include "emp-tool/circuits/float_builtins.h"
 #include <math.h>
 #include <array>
 #include <cstdint>
@@ -94,20 +95,6 @@ class Float_T: public Sortable<Wire, Float_T<Wire>>, public CircuitValue { publi
 };
 
 #include "emp-tool/circuits/float32.hpp"
-#include "emp-tool/circuits/float_circuits/float32_add.hpp"
-#include "emp-tool/circuits/float_circuits/float32_sub.hpp"
-#include "emp-tool/circuits/float_circuits/float32_mul.hpp"
-#include "emp-tool/circuits/float_circuits/float32_div.hpp"
-#include "emp-tool/circuits/float_circuits/float32_sq.hpp"
-#include "emp-tool/circuits/float_circuits/float32_sqrt.hpp"
-#include "emp-tool/circuits/float_circuits/float32_eq.hpp"
-#include "emp-tool/circuits/float_circuits/float32_le.hpp"
-#include "emp-tool/circuits/float_circuits/float32_leq.hpp"
-#include "emp-tool/circuits/float_circuits/float32_sin.hpp"
-#include "emp-tool/circuits/float_circuits/float32_cos.hpp"
-#include "emp-tool/circuits/float_circuits/float32_exp.hpp"
-#include "emp-tool/circuits/float_circuits/float32_exp2.hpp"
-#include "emp-tool/circuits/float_circuits/float32_ln.hpp"
-#include "emp-tool/circuits/float_circuits/float32_log2.hpp"
+#include "emp-tool/circuits/float_circuits/float32_ops.hpp"
 }
 #endif// DOUBLE_H__
