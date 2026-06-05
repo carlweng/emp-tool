@@ -33,7 +33,7 @@
 
         {
             "name":   "native",
-            "displayName": "Release + -march=native (benchmarks only)",
+            "displayName": "Release + -march=native + benchmarks",
             "inherits": "release",
             "cacheVariables": {
                 "EMP_TOOL_NATIVE_ARCH": "ON",
@@ -82,8 +82,7 @@
             "name": "base",
             "hidden": true,
             "output": { "outputOnFailure": true, "verbosity": "default" },
-            "execution": { "noTestsAction": "error", "stopOnFailure": false },
-            "filter": { "exclude": { "name": "^(netio|garble|ot|ferret)$" } }
+            "execution": { "noTestsAction": "error", "stopOnFailure": false }
         },
         { "name": "release",        "configurePreset": "release",        "inherits": "base" },
         { "name": "debug",          "configurePreset": "debug",          "inherits": "base" },

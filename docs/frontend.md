@@ -99,7 +99,8 @@ A body pinned to a concrete wire (`[](UInt32 a, …)` with `UInt32 =
 - `compile<UInt32, UInt32>(body)` — input **types** as template args; the width
   comes from the type (fixed-width types / `Bit` / `Float`). No dummy values.
 - `compile(body, a, b)` — sample **values**; only their shape is read (handy
-  when you already hold inputs, or for runtime-width integer values).
+  when you already hold inputs, or for runtime-width `UnsignedInt` /
+  `SignedInt` values).
 
 Both capture the body's returned value as the circuit output. `compile` records
 via an internal `RecordBackend`, restoring the previous global `backend` on the

@@ -3,7 +3,7 @@
 // Public surface:
 //   ctor(addr, port)                   open one TCP fd
 //   ctor(existing_sock)                wrap an already-connected fd
-//   send_data / recv_data              raw bytes (size_t-correct)
+//   send_data / recv_data              raw bytes (int64_t lengths)
 //   send_block / recv_block            block-typed wrapper
 //   send_bool / recv_bool              packed via bools_to_bits
 //   flush()                            drain outbound only (no peer coupling)

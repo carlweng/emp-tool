@@ -48,7 +48,7 @@ class BitVec_T : public CircuitValue { public:
 	size_t size() const { return bits.size(); }
 
 	// Circuit-value interface (see circuit_value.h): one wire per bit, LSB
-	// first. Integer subclasses inherit pack/unpack/pack_size and override
+	// first. UnsignedInt_T/SignedInt_T inherit pack/unpack/pack_size and override
 	// `rebind` to name their own shape. (BitVec_T has no Sortable base, so it
 	// declares wire_type here; the integer subclasses, which inherit both this
 	// and Sortable, re-declare it to resolve the duplicate base alias.)

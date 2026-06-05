@@ -1,9 +1,9 @@
 // BitVec_T<Wire> implementation.
 
 // Bit-pattern ctor: BitVec has no signedness concept, so the bytes
-// past sizeof(T) are always zero-extended. UnsignedInt inherits this
-// straight; SignedInt overrides the ctor to sign-extend instead so
-// `Integer(64, (int)-1, …)` round-trips through the int's sign bit.
+// past sizeof(T) are always zero-extended. UnsignedInt_T inherits this
+// straight; SignedInt_T overrides the ctor to sign-extend instead so
+// `SignedInt_T<Wire>(64, (int)-1, party)` round-trips through the int's sign bit.
 //
 // `tmp` is a per-bit unpack of `value` handed to backend->feed. RAII
 // via std::unique_ptr<bool[]> so the (rare) exception path doesn't leak.

@@ -232,7 +232,7 @@ inline TypedCircuit<Ret> record_typed_(F &&body, MakeInputs make_inputs) {
 //                                     types / Bit / Float).
 //   compile(body, a, b)             — sample values; only their shape is read
 //                                     (handy when you already hold inputs, or
-//                                     for runtime-width integer values).
+//                                     for runtime-width UnsignedInt/SignedInt values).
 // The body must not feed secret inputs or reveal inside (RecordBackend rejects
 // both); pass secrets as arguments and reveal the returned value outside.
 

@@ -197,7 +197,7 @@ static TLSConfig make_cfg(int party) {
 }
 
 // -------------------------------------------------------------------------
-// bench(): loopback throughput sweep. Same shape as test_netio's bench.
+// bench(): loopback throughput sweep. Same shape as bench_netio.
 // Expect TLS overhead to drop to a few % at 16+ KiB messages and be more
 // pronounced on small messages (per-record AEAD).
 // -------------------------------------------------------------------------

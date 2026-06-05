@@ -25,8 +25,8 @@ flush first. Applies to function boundaries, phase boundaries within
 a function, and any blocking wait (thread join, barrier, recv on a
 *different* NetIO).
 
-`test/test_netio.cpp` runs the full correctness + send-only-regression
-+ bench suite.
+`test/test_netio.cpp` runs the correctness + send-only-regression coverage.
+Throughput lives separately in `bench/bench_netio.cpp`.
 
 ## Thread-safety
 

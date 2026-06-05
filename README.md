@@ -12,10 +12,11 @@
 >   or branch [`v0.3.x`](https://github.com/emp-toolkit/emp-tool/tree/v0.3.x).
 >   Bug fixes and security patches will be backported to `v0.3.x`.
 > - **New projects, or willing to migrate: track the development branch**
->   (this branch). It will become `1.0.0-alpha` after a polish pass and
->   then `1.0.0`. Faster, cleaner APIs (test-mode determinism, trace I/O,
->   refactored AES/PRG/group), but the API is not yet frozen and headers
->   may move between alphas.
+>   (this branch). Its CMake package metadata is already `1.0.0` for
+>   local development, but the API is still pre-alpha and not frozen.
+>   Faster, cleaner APIs (test-mode determinism, trace I/O, refactored
+>   AES/PRG/group), but headers and names may still move before the
+>   first tagged alpha/release.
 
 Foundational primitives for the emp-toolkit family: SIMD `block` types,
 fast AES / PRG / PRP / hash / GF(2^128) kernels, OpenSSL-backed elliptic
@@ -26,7 +27,7 @@ curve ops, IO channels, a templated boolean-circuit frontend
 
 ## Requirements
 
-- CMake ≥ 3.21
+- CMake ≥ 3.25
 - A C++17 compiler (Clang ≥ 12, GCC ≥ 9, AppleClang 14+)
 - OpenSSL ≥ 3.0
 - pthreads
@@ -315,14 +316,14 @@ don't opt into `emp::block_types` unless you explicitly want the block binding.
 #include <emp-tool/circuits/signed_int.h>
 
 struct MyWire { /* ... */ };
-class MyBackend : public Backend { /* override wire_bytes/and_gate/... */ };
+class MyBackend : public emp::Backend { /* override wire_bytes/and_gate/... */ };
 
-backend = new MyBackend(/* args */);
+emp::backend = new MyBackend(/* args */);
 
-using MyBit         = Bit_T<MyWire>;
-using MyBitVec      = BitVec_T<MyWire>;
-using MyUnsignedInt = UnsignedInt_T<MyWire>;
-using MySignedInt   = SignedInt_T<MyWire>;
+using MyBit         = emp::Bit_T<MyWire>;
+using MyBitVec      = emp::BitVec_T<MyWire>;
+using MyUnsignedInt = emp::UnsignedInt_T<MyWire>;
+using MySignedInt   = emp::SignedInt_T<MyWire>;
 ```
 
 The class definitions in `circuits/` carry no `block` of their own; the
