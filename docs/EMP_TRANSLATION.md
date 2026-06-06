@@ -314,12 +314,13 @@ Cost is O(N log² N) compare-swaps; each compare-swap is O(W) gates.
 
 ### 4.11. Floats
 
-`Float` is IEEE 754 binary32. It supplies `+ - * / unary-`, `sqr`,
-`sqrt`, `sin`, `cos`, `exp`, `exp2`, `ln`, `log2`, plus `equal`,
-`less_than`, `less_equal`, and `select`. `==` and `!=` come from the
-Sortable mixin (which dispatches to `equal`); `<`, `<=`, `>`, `>=`
-aren't wired up — call `less_than` / `less_equal` directly (and
-`!less_than` for `>`). There is no float64.
+emp-tool ships IEEE 754 `Float16`, `Float32` / `Float`, and `Float64`.
+They supply `+ - * / unary-`, `sqr`, `sqrt`, `recip`, `rsqrt`, `fma`,
+`min`, `max`, `abs`, `copysign`, classifiers (`is_nan`, `is_inf`,
+`is_zero`), and named comparisons (`equal`, `not_equal`, `less_than`,
+`less_equal`, `greater_than`, `greater_equal`). Transcendentals
+(`sin`/`cos`/`exp`/`log`/...) are not provided; use fixed-point or an
+explicit approximation circuit if a source program needs them.
 
 Float circuits are large (thousands of AND gates for a single mul).
 For ML-style fixed-point work, prefer `SignedInt` with a chosen scale.
@@ -647,12 +648,15 @@ SignedInt(W, value, party) : BitVec
   as_unsigned() -> UnsignedInt             // bit-cast, no gates
   reveal<signed-integral|string>(party)
 
-Float(float, party)                        // IEEE 754 binary32
+Float32(float, party) / Float(float, party) // IEEE 754 binary32
+Float64(double, party)                      // IEEE 754 binary64
+Float16(float, party)                       // IEEE 754 binary16 payload
   + - * / unary-
-  sqr sqrt sin cos exp exp2 ln log2
-  equal(rhs) less_than(rhs) less_equal(rhs) -> Bit
-  abs(), select(sel, rhs)
-  operator[i] -> Bit& (i in [0, 32))
+  sqr sqrt recip rsqrt fma min max
+  equal/not_equal less/greater comparisons -> Bit
+  is_nan(), is_inf(), is_zero() -> Bit
+  abs(), copysign(rhs), select(sel, rhs)
+  operator[i] -> Bit& (i in [0, width))
   reveal<float|double|string>(party)
 
 If(sel_bit).Then(x).Else(y) -> T           // fluent builder from sortable.h

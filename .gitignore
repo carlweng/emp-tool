@@ -4,8 +4,10 @@ Testing/
 *CTestTestfile.cmake
 .exrc
 build/
+build_local/
 build-*/
 sort.txt
+todo.txt
 sort_file.h
 CMakeCache.txt
 CMakeFiles/

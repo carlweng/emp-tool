@@ -113,6 +113,18 @@ int main() {
 		{ auto b = bytes; b[6] = 7;              check(rejects(b), "bad index_width not rejected"); }
 		// Corrupt an op code (first gate's op byte: header 24 + 3*2 = byte 30).
 		{ auto b = bytes; b[24 + 3 * 2] = 0x7F;  check(rejects(b), "bad op code not rejected"); }
+		// Huge declared wire count with no encoded gates must be rejected by the
+		// dense-count check before validation allocates per-wire scratch.
+		std::vector<uint8_t> huge = {
+			'E','M','P','B',
+			1,0,        // version
+			4,0,        // u32 indices, flags
+			0xff,0xff,0xff,0xff,  // num_wires
+			0,0,0,0,              // num_inputs
+			0,0,0,0,              // num_outputs
+			0,0,0,0               // num_gates
+		};
+		check(rejects(huge), "huge sparse header not rejected before allocation");
 	}
 
 	if (ok) printf("test_boolean_program: all checks passed\n");

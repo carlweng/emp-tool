@@ -11,7 +11,7 @@
 // little-endian field reads (never a struct overlay / reinterpret_cast, so the
 // reader is endian- and layout-independent), overflow-checked size math, an
 // exact total-size check, and validate_program() after decode. Trusted
-// self-produced blobs (the embedded float builtins) take the same path; the
+// self-produced assets (the shipped float circuits) take the same path; the
 // cost is negligible and it keeps one loader.
 //
 // Layout (all integers little-endian):

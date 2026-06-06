@@ -69,7 +69,7 @@ and mux any value without per-type external traits:
   lookup.
 - `template<class NW> using rebind = Self<NW…>;` — "same shape, different
   wire" (compile-time only; moves no data). Each type names its own
-  shape (`UnsignedInt_T<NW,N>`, `Float_T<NW>`, …); `BitVec_T` provides
+  shape (`UnsignedInt_T<NW,N>`, `Float_T<NW,W>`, …); `BitVec_T` provides
   the default and the integer types override it.
 - `int pack_size() const` / `void pack(Wire*) const` /
   `void unpack(const Wire*, int n)` — flatten to / rebuild from a wire

@@ -71,11 +71,16 @@ inline void validate_program(const BooleanProgram& p) {
 	if (p.num_inputs > NW)
 		throw std::runtime_error("validate_program: num_inputs exceeds num_wires");
 
-	// A wire is "defined" once its producer has been seen; input wires are
-	// defined up front. Enforces single-definition + read-before-define +
-	// no-write-to-input in a single forward pass (topological order).
-	std::vector<char> defined(p.num_wires, 0);
-	for (uint64_t w = 0; w < p.num_inputs; ++w) defined[w] = 1;
+	const uint64_t NG = p.gates.size();
+	const uint64_t non_inputs = NW - p.num_inputs;
+	if (NG != non_inputs)
+		throw std::runtime_error("validate_program: num_wires must equal num_inputs + num_gates (dense program)");
+
+	// A non-input wire is "defined" once its producer has been seen; input
+	// wires are defined up front. Track only non-input wires, not all
+	// num_wires, so a malformed file cannot force allocation proportional to a
+	// huge declared input count during validation.
+	std::vector<char> defined_non_input((size_t)non_inputs, 0);
 
 	auto at = [](size_t gi, uint32_t w) {
 		return " (gate " + std::to_string(gi) + ", wire " + std::to_string(w) + ")";
@@ -83,7 +88,8 @@ inline void validate_program(const BooleanProgram& p) {
 	size_t gi = 0;
 	auto chk_read = [&](uint32_t w, const char* what) {
 		if (w >= NW) throw std::runtime_error(std::string("validate_program: ") + what + " index out of range" + at(gi, w));
-		if (!defined[w]) throw std::runtime_error(std::string("validate_program: ") + what + " read before defined" + at(gi, w));
+		if (w >= p.num_inputs && !defined_non_input[w - p.num_inputs])
+			throw std::runtime_error(std::string("validate_program: ") + what + " read before defined" + at(gi, w));
 	};
 	for (; gi < p.gates.size(); ++gi) {
 		const Gate& g = p.gates[gi];
@@ -109,22 +115,16 @@ inline void validate_program(const BooleanProgram& p) {
 			throw std::runtime_error("validate_program: gate out index out of range");
 		if (g.out < p.num_inputs)
 			throw std::runtime_error("validate_program: gate writes an input wire");
-		if (defined[g.out])
+		const uint32_t out_idx = g.out - p.num_inputs;
+		if (defined_non_input[out_idx])
 			throw std::runtime_error("validate_program: wire defined more than once");
-		defined[g.out] = 1;
+		defined_non_input[out_idx] = 1;
 	}
-	// Dense-wire invariant: every non-input wire in [num_inputs, num_wires) is
-	// produced by exactly one gate (single-definition is checked above; this
-	// rejects "holes" — counted-but-undefined wires, which signal a producer bug
-	// such as a stale -1 wire id widening to UINT32_MAX).
-	for (uint32_t w = p.num_inputs; w < NW; ++w)
-		if (!defined[w])
-			throw std::runtime_error("validate_program: wire " + std::to_string(w) +
-			                         " is counted but never defined (non-dense program)");
 
 	for (uint32_t w : p.outputs) {
 		if (w >= NW) throw std::runtime_error("validate_program: output index out of range");
-		if (!defined[w]) throw std::runtime_error("validate_program: output wire never defined");
+		if (w >= p.num_inputs && !defined_non_input[w - p.num_inputs])
+			throw std::runtime_error("validate_program: output wire never defined");
 	}
 }
 

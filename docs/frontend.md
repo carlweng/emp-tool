@@ -108,11 +108,11 @@ normal path (it is not exception-safe — don't throw out of a body mid-record).
 
 ## The compiled circuit object
 
-`compile` returns a `Circuit` (the typed `compile` wraps it in a
-`TypedCircuit<Ret>` that also remembers the return type). It is plain,
+`compile` returns a `TypedCircuit<Ret>`. Its `circuit` member is plain,
 backend-independent data — the recorded `BooleanProgram` (flat input wires,
-gates, output wire ids) plus stats computed once; `TypedCircuit` carries the
-per-argument widths used to bind live inputs on replay:
+gates, output wire ids) plus stats computed once — while `TypedCircuit` also
+remembers the return type and per-argument widths used to bind live inputs on
+replay:
 
 - `circuit.count` — `num_and`, `num_xor`, `num_not`, `num_wire`, input/output
   bit counts.
@@ -125,7 +125,7 @@ Because it's data, it's **reusable and inspectable**: build it once, read
 `run(circ, …)` it as
 many times as you like with fresh inputs — the body's C++ isn't re-traversed on
 replay. The gate *shape* is value-free (it depends only on public structure, not
-on argument values), so all parties build the same `Circuit` — provided the body
+on argument values), so all parties build the same `TypedCircuit` shape — provided the body
 obeys the contract above (no branch on a revealed value; public feeds are
 literals/agreed constants, not per-party runtime values).
 

@@ -32,12 +32,12 @@ inline void ParaEnc(block* __restrict__ dst,
                     const block* __restrict__ src,
                     const AES_KEY* keys);
 
-// Runtime-sized companion. Tiles each per-key stream into compile-time
-// tiles {8, 4, 2, 1} so each tile still goes through the unrolled,
-// register-resident templated kernel. Cross-key ILP is not exploited
-// here — preserving K-major layout while tiling on N would require
-// interleaved layouts. Hot callers that know (K, N) at compile time
-// should use ParaEnc<K, N> directly.
+// Runtime-sized companion. Tiles each per-key stream into compile-time tiles
+// ({16, 8, 4, 2, 1} on VAES-512 builds; otherwise {8, 4, 2, 1}) so each tile
+// still goes through the unrolled, register-resident templated kernel.
+// Cross-key ILP is not exploited here — preserving K-major layout while tiling
+// on N would require interleaved layouts. Hot callers that know (K, N) at
+// compile time should use ParaEnc<K, N> directly.
 inline void ParaEnc(block* blks, const AES_KEY* keys, int64_t K, int64_t N);
 
 inline void ParaEnc(block* __restrict__ dst,
