@@ -12,7 +12,7 @@
 
 namespace emp {
 
-template<typename Wire> class Float_T;
+// Float_T is forward-declared (with its default width) by unsigned_int.h.
 
 // Signed integer (two's-complement) over `Wire`. Width is fixed at compile
 // time when N > 0, runtime when N == 0 (default). Wraps mod 2^width on
@@ -100,10 +100,10 @@ class SignedInt_T : public BitVec_T<Wire>,
 	Bit_T<Wire>  equal(const SignedInt_T& rhs) const;
 	SignedInt_T  select(const Bit_T<Wire>& sel, const SignedInt_T& rhs) const;
 
-	// Encode this signed value (interpreted as a fixed-point number with
-	// `s` fractional bits) as IEEE-754 single-precision. Definition in
-	// float32.hpp; requires float32.h at the call site.
-	Float_T<Wire> to_float32(size_t s) const;
+	// Encode this signed value (interpreted as a fixed-point number with `s`
+	// fractional bits) as IEEE-754 binary<W> (default binary32). Definition in
+	// float.hpp; requires float.h at the call site.
+	template<int W = 32> Float_T<Wire, W> to_float(size_t s) const;
 
 private:
 	// Same set of fixed-width-N invariant guards as UnsignedInt_T —

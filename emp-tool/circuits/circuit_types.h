@@ -43,7 +43,9 @@ inline constexpr std::size_t runtime_width = 0;
 	APPLY(CTX, WIRE, SUFFIX, BitVec, BitVec_T<WIRE>)                         \
 	APPLY(CTX, WIRE, SUFFIX, UnsignedInt, UnsignedInt_T<WIRE, emp::runtime_width>) \
 	APPLY(CTX, WIRE, SUFFIX, SignedInt, SignedInt_T<WIRE, emp::runtime_width>) \
-	APPLY(CTX, WIRE, SUFFIX, Float, Float_T<WIRE>)                           \
+	APPLY(CTX, WIRE, SUFFIX, Float16, Float_T<WIRE, 16>)                     \
+	APPLY(CTX, WIRE, SUFFIX, Float32, Float_T<WIRE, 32>)                     \
+	APPLY(CTX, WIRE, SUFFIX, Float64, Float_T<WIRE, 64>)                     \
 	APPLY(CTX, WIRE, SUFFIX, UInt8, UnsignedInt_T<WIRE, 8>)                  \
 	APPLY(CTX, WIRE, SUFFIX, UInt16, UnsignedInt_T<WIRE, 16>)                \
 	APPLY(CTX, WIRE, SUFFIX, UInt32, UnsignedInt_T<WIRE, 32>)                \
@@ -63,8 +65,11 @@ inline constexpr std::size_t runtime_width = 0;
 	using EMP_CAT(NAME, SUFFIX) = emp::__VA_ARGS__;
 
 // Public: bind the whole standard primitive set in the current namespace.
+// `Float` is a convenience alias for Float32 (Float_T<WIRE, 32>), appended here
+// rather than as a list row so it is not separately instantiated/extern-declared.
 #define EMP_CIRCUIT_TYPES_ALL_AS(WIRE, SUFFIX) \
-	EMP_CIRCUIT_TYPE_LIST(EMP_CIRCUIT_TYPE_ALIAS, EMP_CIRCUIT_TYPES_ALIAS_CTX, WIRE, SUFFIX)
+	EMP_CIRCUIT_TYPE_LIST(EMP_CIRCUIT_TYPE_ALIAS, EMP_CIRCUIT_TYPES_ALIAS_CTX, WIRE, SUFFIX) \
+	using EMP_CAT(Float, SUFFIX) = EMP_CAT(Float32, SUFFIX);
 
 // Public: bind the whole standard primitive set without a suffix.
 #define EMP_CIRCUIT_TYPES_ALL(WIRE) \

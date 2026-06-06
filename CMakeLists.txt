@@ -55,8 +55,21 @@ endif()
 set(emp_tool_sources
     emp-tool/emp-tool.cpp
     emp-tool/circuits/circuit.cpp
-    emp-tool/circuits/float_builtins.cpp
+    emp-tool/circuits/circuit_assets.cpp
+    emp-tool/circuits/float_circuit_files.cpp
     emp-tool/crypto/ec.cpp)
+
+# ---------------------------------------------------------------------
+# Default search roots for shipped circuit assets. circuit_assets.cpp owns the
+# actual resolution policy: EMP_CIRCUIT_DIR override, then build-tree assets,
+# then the install-tree location beside the installed public headers.
+# ---------------------------------------------------------------------
+set(EMP_CIRCUIT_ASSET_DIR_BUILD "${CMAKE_CURRENT_SOURCE_DIR}/emp-tool/circuits/files")
+set(EMP_CIRCUIT_ASSET_DIR_INSTALL "${CMAKE_INSTALL_FULL_INCLUDEDIR}/emp-tool/circuits/files")
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/circuit_asset_dirs.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/emp-tool/circuits/circuit_asset_dirs.h
+    @ONLY)
 
 # ---------------------------------------------------------------------
 # Library target
@@ -73,6 +86,7 @@ target_compile_features(emp-tool PUBLIC cxx_std_17)
 
 target_include_directories(emp-tool PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 target_link_libraries(emp-tool PUBLIC

@@ -62,8 +62,8 @@ report that the program cannot be translated as-written**.
 | `uint8_t … uint64_t`, `unsigned`  | `UnsignedInt(W, value, party)`         | W = bit width, must match exactly |
 | `int8_t … int64_t`, `int`         | `SignedInt(W, value, party)`           | two's complement |
 | `__uint128_t`, `__int128`         | `UnsignedInt(128, …)` / `SignedInt(128, …)` | constructor accepts 128-bit literals |
-| `float` (IEEE 754 binary32)       | `Float`                                | only float32; no float64 / double |
-| `double`                          | **not supported** — re-target to `Float`, or run in fixed-point with `SignedInt` |
+| `float` (IEEE 754 binary32)       | `Float` / `Float32`                    | also `Float16` (binary16) and `Float64` (binary64) |
+| `double` (IEEE 754 binary64)      | `Float64`                              | correctly-rounded; same op set as `Float32` |
 | fixed-size bit array / packed flags | `BitVec(W, value, party)`            | no arithmetic, only `& \| ^ ~ << >>` and slice / concat |
 | Python `int` (arbitrary precision)| `SignedInt(W, …)` after **you** pick W | translator must commit to a width |
 | Python `bool`                     | `Bit`                                  | |
@@ -498,9 +498,12 @@ Refuse, or flag for the user, when the source program does any of these:
    actually uses. Python `int` is unbounded; you must commit to a W.
    GMP / `mpz_t` operations have no direct EMP equivalent — they need
    a custom multi-limb construction.
-9. **`double`-precision float**. emp-tool ships only `float32`. If the
-   source genuinely needs `double`, either reduce to `float` (with the
-   user's blessing — accuracy loss) or refuse.
+9. **Float width**. emp-tool ships `Float16` / `Float32` / `Float64`
+   (IEEE binary16 / binary32 / binary64), all correctly-rounded. Map
+   `float` to `Float32` and `double` to `Float64`; pick `Float16` only
+   when the source is explicitly half-precision. Transcendentals
+   (`sin`/`cos`/`exp`/`log`/…) are not provided — fixed-point or a
+   polynomial approximation if the source needs them.
 10. **String operations whose result length depends on the input
     bytes** (`strlen` on secret data, `split`, regex). Translate only
     fixed-shape byte transformations; pad inputs and outputs to public
@@ -693,7 +696,7 @@ Don't reference `backend` from circuit code — use the wrapper types.
   backends. `HalfGateGen` (Alice-side) and `HalfGateEva` (Bob-side)
   are the concrete classes; `HalfGate` is the protocol-agnostic base.
   Same shape for `PrivacyFreeGen` / `PrivacyFreeEva`.
-* `emp-tool/circuits/{bit,bitvec,unsigned_int,signed_int,float32}.h`
+* `emp-tool/circuits/{bit,bitvec,unsigned_int,signed_int,float}.h`
   — the user-facing circuit primitives. The headers are short; read
   them.
 * `emp-tool/circuits/sortable.h` — `If(cond).Then(x).Else(y)` and

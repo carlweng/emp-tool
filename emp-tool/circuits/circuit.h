@@ -13,7 +13,7 @@
 #include "emp-tool/circuits/bitvec.h"
 #include "emp-tool/circuits/unsigned_int.h"
 #include "emp-tool/circuits/signed_int.h"
-#include "emp-tool/circuits/float32.h"
+#include "emp-tool/circuits/float.h"
 #include "emp-tool/circuits/aes_circuit.h"
 #include "emp-tool/circuits/aes_128_ctr.h"
 #include "emp-tool/circuits/sha3_circuit.h"
