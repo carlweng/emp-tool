@@ -1,7 +1,7 @@
 // Generic Float_T<Wire, W> implementation (W in {16,32,64}), included from
 // float.h inside namespace emp after the class is declared. Three parts:
-//   1. op dispatch over the on-disk fp<W> circuits,
-//   2. host<->bits, bit-twiddling ops, and the circuit-backed members,
+//   1. op dispatch over the on-disk fp<W> circuits for nontrivial ops,
+//   2. host<->bits, direct bit ops, and the circuit-backed members,
 //   3. float <-> fixed-point integer conversions (width-generic).
 // The host value's IEEE pattern is extracted/reinjected via FloatTraits<W>
 // (memcpy for fp32/fp64, software RNE for fp16).
@@ -200,8 +200,7 @@ Float_T<Wire, W> Float_T<Wire, W>::fma(const Float_T<Wire, W>& b, const Float_T<
 	return float_ternary_<Wire, W>("fma", *this, b, c);
 }
 
-// copysign: |this| with sign of rhs — pure wiring (the fp<W>_copysign circuit is
-// 0-AND), realized directly on the bits.
+// copysign: |this| with sign of rhs — pure wiring, realized directly on bits.
 template <typename Wire, int W>
 Float_T<Wire, W> Float_T<Wire, W>::copysign(const Float_T<Wire, W>& rhs) const {
 	Float_T<Wire, W> res(*this);

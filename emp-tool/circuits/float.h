@@ -103,11 +103,13 @@ const BooleanProgram& float_circuit(int width, const char* op);
 }  // namespace circuit
 
 // Width-generic IEEE-754 float circuit value. W in {16,32,64} selects
-// binary16 / binary32 / binary64. Every arithmetic, comparison, and classifier
-// op is realized by the matching on-disk circuit in emp-tool/circuits/files/
-// (fp16_*/fp32_*/fp64_*.empbc), loaded once and shared; there is no embedded
-// gate table. The host scalar is `float` for fp16/fp32 and
-// `double` for fp64 (FloatTraits<W>::host_t; fp16 host conversion is software).
+// binary16 / binary32 / binary64. Nontrivial arithmetic, comparisons, and
+// classifiers are realized by matching on-disk circuits in
+// emp-tool/circuits/files/ (fp16_*/fp32_*/fp64_*.empbc), loaded once and shared;
+// simple structural ops such as abs, neg, and copysign are direct bit
+// operations. There is no embedded gate table. The host scalar is `float` for
+// fp16/fp32 and `double` for fp64 (FloatTraits<W>::host_t; fp16 host conversion
+// is software).
 //
 // Bind with Float16 / Float32 / Float64; `Float` is an alias for Float32.
 // Transcendentals (sin/cos/exp/...) are intentionally absent: the on-disk suite

@@ -23,8 +23,9 @@
 //   num_inputs  : u32
 //   num_outputs : u32
 //   num_gates   : u32
-//   gates   : num_gates × { in0, in1, out (each index_width bytes), op u8, pad }
-//             record size = 3*index_width + 2 (u16 form: 8 bytes; u32 form: 16)
+//   gates   : num_gates × { in0, in1, out (each index_width bytes), op u8,
+//                           zero padding to the next index slot }
+//             record size = 4*index_width (u16 form: 8 bytes; u32 form: 16)
 //   outputs : num_outputs × index_width bytes
 
 #include "emp-tool/circuits/boolean_program.h"

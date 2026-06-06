@@ -291,8 +291,11 @@ Circuits load from the native binary `.empbc` format into one
 `emp::circuit::BooleanProgram` (flat: inputs are wires `[0, num_inputs)`,
 outputs are an explicit wire list) and run through the shared evaluator. The
 loader validates structure (bounds, single-definition, topological order) and
-rejects malformed files. No `.empbc` assets are shipped yet; generate or
-capture one and load it through this API.
+rejects malformed files. Floating-point `.empbc` assets ship in
+`emp-tool/circuits/files/`; see
+[docs/floating_point_circuits.md](docs/floating_point_circuits.md) for the
+asset format and regeneration notes. You can also generate or capture your own
+program and load it through this API.
 
 ```cpp
 using namespace emp::block_types;

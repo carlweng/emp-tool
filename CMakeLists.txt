@@ -166,6 +166,9 @@ if(EMP_TOOL_INSTALL)
             PATTERN "*.hpp"
             PATTERN "*.empbc")   # native circuit assets
 
+    install(FILES emp-tool/circuits/files/README.md
+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/emp-tool/circuits/files)
+
     install(EXPORT emp-toolTargets
         NAMESPACE   emp-tool::
         DESTINATION ${_cmake_install_dir}
