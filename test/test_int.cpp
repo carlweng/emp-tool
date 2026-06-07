@@ -28,6 +28,7 @@
 // Use the standard block-wire circuit aliases in this test translation unit.
 using namespace emp::block_types;
 using namespace emp;
+using namespace emp::legacy;
 using std::cout;
 
 // ---- example -------------------------------------------------------------

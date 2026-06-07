@@ -18,6 +18,7 @@
 // Use the standard block-wire circuit aliases in this test translation unit.
 using namespace emp::block_types;
 using namespace emp;
+using namespace emp::legacy;
 
 // --- Plain-C Keccak-f[1600] reference --------------------------------------
 // Input/output: 25 lanes of 64 bits each. state[x + 5*y] is lane (x, y); bit z
@@ -271,7 +272,7 @@ static int test_sha3_vs_openssl() {
 		for (size_t j = 0; j < L; ++j) msg[j] = (uint8_t)(rand() & 0xff);
 
 		uint8_t want[32];
-		emp::sha3_256<uint8_t>(want, msg, L);
+		emp::legacy::sha3_256<uint8_t>(want, msg, L);
 
 		BitVec input(L * 8, msg, ALICE);
 		Bit out_bits[256];

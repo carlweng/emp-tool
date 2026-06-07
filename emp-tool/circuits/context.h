@@ -6,15 +6,14 @@
 // wires`; gates are value-return over a cheap, copyable `Ctx::Wire` handle, so
 // dispatch is static and inlineable. Heavy protocol state lives in the context,
 // keyed by the handle. Large circuits are recorded once into a BooleanProgram
-// (RecordContext) and replayed through any context via execute_program(ctx,...).
+// (RecordCtx) and replayed through any context via execute_program(ctx,...).
 //
-// This is the canonical (and only) BooleanContext home; the earlier experimental/
-// prototype has been removed. Requires C++20 (concepts, std::regular, std::span).
-// It includes the C++17 IR headers, which compile fine in a C++20 TU.
+// This is the canonical BooleanContext home. Requires C++20 (concepts,
+// std::regular, std::span). It includes the C++17 IR headers, which compile fine
+// in a C++20 TU.
 
 #include "emp-tool/circuits/boolean_program.h"
 #include "emp-tool/frontend/passes.h"     // schedule_pass for scheduled_execute_program
-#include "emp-tool/execution/backend.h"   // BackendContext legacy bridge
 #include "emp-tool/core/utils.h"          // error()
 #include <concepts>
 #include <cstdint>
@@ -38,10 +37,10 @@ concept BooleanContext =
     };
 
 // ---------------------------------------------------------------------------
-// ClearContext — plaintext evaluation. Wire = uint8_t bit (0/1), no folding, so
+// ClearCtx — plaintext evaluation. Wire = uint8_t bit (0/1), no folding, so
 // gate counts match a recorded program exactly. The crypto-free static arm.
 // ---------------------------------------------------------------------------
-struct ClearContext {
+struct ClearCtx {
     using Wire = uint8_t;
     Wire public_bit(bool v)       { return v ? 1 : 0; }
     Wire and_gate(Wire a, Wire b) { return a & b; }
@@ -54,22 +53,22 @@ struct ClearContext {
 };
 
 // ===========================================================================
-// Analysis contexts (CountContext / DigestContext). These are intentionally
+// Analysis contexts (CountCtx / DigestCtx). These are intentionally
 // CORE: they are the non-crypto "alternative interpretations" of the same kernel
 // (cost counting, determinism hashing) that make the "one source, many semantics"
-// model concrete — peers of ClearContext (eval) and RecordContext (emit IR). The
+// model concrete — peers of ClearCtx (eval) and RecordCtx (emit IR). The
 // execution/frontend path does NOT depend on them (frontend/circuit_fn.h includes
 // neither); they are analysis/verification tools, not an execution dependency.
 // ===========================================================================
 
 // ---------------------------------------------------------------------------
-// CountContext — count gate calls of a templated kernel (no value tracking).
+// CountCtx — count gate calls of a templated kernel (no value tracking).
 // (For a stored BooleanProgram use count_pass instead.)
 // ---------------------------------------------------------------------------
-struct CountContext {
+struct CountCtx {
     using Wire = uint8_t;   // value unused; only the call counts matter
     uint64_t ands = 0, xors = 0, nots = 0, consts = 0;
-    bool c0_seen = false, c1_seen = false;   // dedup consts to match RecordContext
+    bool c0_seen = false, c1_seen = false;   // dedup consts to match RecordCtx
     Wire public_bit(bool v) { bool& s = v ? c1_seen : c0_seen; if (!s) { s = true; ++consts; } return 0; }
     Wire and_gate(Wire, Wire)     { ++ands;   return 0; }
     Wire xor_gate(Wire, Wire)     { ++xors;   return 0; }
@@ -78,33 +77,33 @@ struct CountContext {
 };
 
 // ---------------------------------------------------------------------------
-// DigestContext — fold the gate stream (op + operands + output id) into a
+// DigestCtx — fold the gate stream (op + operands + output id) into a
 // running hash. Two runs of a deterministic kernel/replay produce the same
 // digest; a reordered or nondeterministic stream does not. Wire = wire id.
 // ---------------------------------------------------------------------------
-struct DigestContext {
+struct DigestCtx {
     using Wire = uint32_t;
     uint64_t digest = 1469598103934665603ull;   // FNV-1a offset basis
     uint32_t next_id = 0;
-    int64_t c0 = -1, c1 = -1;                    // dedup consts (mirror RecordContext)
+    int64_t c0 = -1, c1 = -1;                    // dedup consts (mirror RecordCtx)
     void mix_(uint64_t x) { digest = (digest ^ x) * 1099511628211ull; }
     // Reserve input wires [0, n) so gate outputs start at n — the SAME logical
-    // numbering as RecordContext / replay, which the digest must match to detect
+    // numbering as RecordCtx / replay, which the digest must match to detect
     // nondeterministic replay. Mixes num_inputs (input reservation is part of the
     // digest). Call before any gate.
     Wire external_input(size_t n) {
-        if (n == 0) error("DigestContext::external_input: zero-width argument");
-        if ((uint64_t)next_id + n > UINT32_MAX) error("DigestContext::external_input: wire id overflow");
+        if (n == 0) error("DigestCtx::external_input: zero-width argument");
+        if ((uint64_t)next_id + n > UINT32_MAX) error("DigestCtx::external_input: wire id overflow");
         Wire base = next_id; next_id += (uint32_t)n; mix_(0xE); mix_((uint64_t)n); return base;
     }
     Wire emit_(uint64_t op, uint64_t a, uint64_t b) {
-        if ((uint64_t)next_id + 1 > UINT32_MAX) error("DigestContext: wire id overflow");
+        if ((uint64_t)next_id + 1 > UINT32_MAX) error("DigestCtx: wire id overflow");
         uint32_t o = next_id++;
         mix_(op); mix_(a); mix_(b); mix_(o);
         return o;
     }
     // Dedup const0/const1 and mix the gate only on first emission (mirrors
-    // RecordContext) so a streamed digest matches the recorded program's digest.
+    // RecordCtx) so a streamed digest matches the recorded program's digest.
     Wire public_bit(bool v) {
         int64_t& c = v ? c1 : c0;
         if (c < 0) c = (int64_t)emit_(3 + (v ? 1 : 0), 0, 0);
@@ -116,31 +115,30 @@ struct DigestContext {
 };
 
 // ---------------------------------------------------------------------------
-// RecordContext — the CANONICAL recorder. Runs a templated kernel and emits a
-// validated BooleanProgram (the IDENTICAL circuit replayed by every other
-// context). Call external_input(n) BEFORE any gate so inputs are wires
-// [0, num_inputs); then finish(output_wires). (RecordBackend, if kept, is only
-// a Backend-compatible wrapper around this — the two are not the same thing.)
+// RecordCtx — the recorder for templated BooleanContext kernels. Runs a kernel
+// and emits a validated BooleanProgram (the IDENTICAL circuit replayed by every
+// other context). Call external_input(n) BEFORE any gate so inputs are wires
+// [0, num_inputs); then finish(output_wires). (The Backend-shaped RecordBackend
+// in frontend/record_backend.h is a separate, internal recorder for the legacy
+// global-Backend kernels that produce the .empbc builtins.)
 // ---------------------------------------------------------------------------
-struct RecordContext {
+struct RecordCtx {
     using Wire = uint32_t;
     circuit::BooleanProgram prog;
     uint32_t next_id = 0, num_inputs = 0;
     int64_t c0 = -1, c1 = -1;   // dedup the two constant wires
     bool inputs_closed = false; // flips once any gate is emitted (see alloc_)
 
-    uint32_t alloc_() { inputs_closed = true; if (next_id == UINT32_MAX) error("RecordContext: wire id overflow"); return next_id++; }
+    uint32_t alloc_() { inputs_closed = true; if (next_id == UINT32_MAX) error("RecordCtx: wire id overflow"); return next_id++; }
     Wire external_input(size_t n) {
         // Contract: all inputs are reserved before any gate, so inputs occupy
         // wires [0, num_inputs). A late external_input would interleave input ids
-        // with gate ids and corrupt replay; catch it immediately in debug builds
-        // rather than only at finish()/validate_program().
-#ifndef NDEBUG
-        if (inputs_closed) error("RecordContext::external_input: called after a gate was emitted");
-#endif
-        if (n == 0) error("RecordContext::external_input: zero-width argument");
-        if ((uint64_t)next_id + n > UINT32_MAX) error("RecordContext::external_input: wire id overflow");
-        if ((uint64_t)num_inputs + n > UINT32_MAX) error("RecordContext::external_input: num_inputs overflow");
+        // with gate ids and corrupt replay. Always enforced (cheap, record-path
+        // only) so corruption can't slip through a release build.
+        if (inputs_closed) error("RecordCtx::external_input: called after a gate was emitted");
+        if (n == 0) error("RecordCtx::external_input: zero-width argument");
+        if ((uint64_t)next_id + n > UINT32_MAX) error("RecordCtx::external_input: wire id overflow");
+        if ((uint64_t)num_inputs + n > UINT32_MAX) error("RecordCtx::external_input: num_inputs overflow");
         Wire base = next_id; next_id += (uint32_t)n; num_inputs += (uint32_t)n; return base;
     }
 
@@ -164,34 +162,14 @@ struct RecordContext {
     }
 };
 
-// ---------------------------------------------------------------------------
-// BackendContext<Wire> — legacy bridge: value-return gates that forward to the
-// existing global virtual emp::Backend. `Wire` MUST match the backend's wire
-// payload (e.g. ClearBackend uses ClearWire, NOT block) — guarded below.
-// ---------------------------------------------------------------------------
-template <class WireT>
-struct BackendContext {
-    using Wire = WireT;
-    Backend* b;
-    explicit BackendContext(Backend* be) : b(be) {
-        if (!b) error("BackendContext: null backend");
-        if (b->wire_bytes() != sizeof(Wire))
-            error("BackendContext: Wire size does not match backend->wire_bytes()");
-    }
-    Wire public_bit(bool v)        { Wire o; b->public_label(&o, v); return o; }
-    Wire and_gate(Wire a, Wire b_) { Wire o; b->and_gate(&o, &a, &b_); return o; }
-    Wire xor_gate(Wire a, Wire b_) { Wire o; b->xor_gate(&o, &a, &b_); return o; }
-    Wire not_gate(Wire a)          { Wire o; b->not_gate(&o, &a); return o; }
-};
-
-static_assert(BooleanContext<ClearContext>);
-static_assert(BooleanContext<CountContext>);
-static_assert(BooleanContext<DigestContext>);
-static_assert(BooleanContext<RecordContext>);
+static_assert(BooleanContext<ClearCtx>);
+static_assert(BooleanContext<CountCtx>);
+static_assert(BooleanContext<DigestCtx>);
+static_assert(BooleanContext<RecordCtx>);
 
 // ---------------------------------------------------------------------------
 // Canonical replay digest. digest_program(p) hashes num_inputs + the gate stream
-// exactly as a DigestContext replay of the same source does, so a streamed
+// exactly as a DigestCtx replay of the same source does, so a streamed
 // digest (digest_source) can be compared against a recorded/stored program — the
 // unambiguous target for replay-determinism checks.
 // ---------------------------------------------------------------------------
@@ -207,13 +185,13 @@ inline uint64_t digest_program(const circuit::BooleanProgram& p) {
     return h;
 }
 
-// Digest a pure circuit body by replaying it through a DigestContext. `body` is
-// callable as body(DigestContext&, const std::vector<uint32_t>& input_wires) and
+// Digest a pure circuit body by replaying it through a DigestCtx. `body` is
+// callable as body(DigestCtx&, const std::vector<uint32_t>& input_wires) and
 // runs gates on the context. Equals digest_program() of the program that body
-// produces under RecordContext.
+// produces under RecordCtx.
 template <class Body>
 inline uint64_t digest_source(uint32_t num_inputs, Body&& body) {
-    DigestContext d;
+    DigestCtx d;
     uint32_t base = d.external_input((size_t)num_inputs);
     std::vector<uint32_t> in(num_inputs);
     for (uint32_t i = 0; i < num_inputs; ++i) in[i] = base + i;

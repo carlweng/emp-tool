@@ -26,10 +26,10 @@ int hash_in_circuit(){
   }
 
 
-  emp::aes_128_ctr(key, iv, input, output_bytes, 2000, 77777);
+  emp::legacy::aes_128_ctr(key, iv, input, output_bytes, 2000, 77777);
 
   // let's make sure we can decrypt this
-  emp::aes_128_ctr(key, iv, output_bytes, decrypted_bytes, 2000, 77777);
+  emp::legacy::aes_128_ctr(key, iv, output_bytes, decrypted_bytes, 2000, 77777);
   for(size_t i=0; i<2000; ++i) {
     if (input[i] != decrypted_bytes[i]) {
       std::cerr << "decryption did not match input\n" << std::flush;

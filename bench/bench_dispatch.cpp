@@ -3,15 +3,16 @@
 // and recorded-IR replay — over mul64 (controlled, all arms identical
 // source/circuit) and AES-128 / SHA-256 (existing kernels, virtual baseline +
 // IR replay). Runs entirely on the canonical BooleanContext surface
-// (circuits/context.h); the superseded experimental/ prototype is gone.
+// (circuits/context.h).
 //
 // Fairness: the controlled virtual arm uses NoFoldClearBackend (same uint8 bit
-// semantics as ClearContext, NO constant folding), so virtual-vs-static differs
+// semantics as ClearCtx, NO constant folding), so virtual-vs-static differs
 // only in dispatch. Throughput is normalized by the LOGICAL gate count from the
 // recorded BooleanProgram, never ClearBackend::num_and() (which folds).
 
 #include "emp-tool/emp-tool.h"
-#include "emp-tool/circuits/context.h"          // ClearContext, BackendContext, execute_program
+#include "emp-tool/circuits/context.h"          // ClearCtx, execute_program
+#include "emp-tool/circuits/backend_ctx.h"       // BackendCtx (global-backend bridge)
 #include "emp-tool/circuits/aes_circuit.h"
 #include "emp-tool/circuits/sha256_circuit.h"
 #include "emp-tool/frontend/record_backend.h"
@@ -25,12 +26,13 @@
 #include <vector>
 
 using namespace emp;
+using namespace emp::legacy;
 using emp::frontend::RecordBackend;
 using emp::frontend::RecWire;
 namespace ckt = emp::circuit;
 using clk = std::chrono::high_resolution_clock;
 
-// --- the controlled virtual baseline: same uint8 semantics as ClearContext, NO
+// --- the controlled virtual baseline: same uint8 semantics as ClearCtx, NO
 // constant folding, so every gate is a real virtual call. wire_bytes()==1. ---
 namespace {
 class NoFoldClearBackend : public Backend {
@@ -57,8 +59,8 @@ public:
 
 // 64x64 -> 128 schoolbook unsigned multiply, written once against the
 // BooleanContext concept so the SAME source/circuit runs through every dispatch
-// arm (static ClearContext, virtual BackendContext, and IR replay once recorded
-// through RecordContext). No folding: every gate is materialized identically.
+// arm (static ClearCtx, virtual BackendCtx, and IR replay once recorded
+// through RecordCtx). No folding: every gate is materialized identically.
 template <class Ctx>
 inline void mul64(Ctx& ctx, const typename Ctx::Wire a[64],
                   const typename Ctx::Wire b[64], typename Ctx::Wire out[128]) {
@@ -114,7 +116,7 @@ static const std::vector<uint8_t>& replay(Ctx& ctx, const ckt::BooleanProgram& p
 
 // ----- recording (the IDENTICAL circuits the arms run) --------------------
 static ckt::BooleanProgram record_mul64() {
-    RecordContext rc;
+    RecordCtx rc;
     uint32_t base = rc.external_input(128);
     uint32_t a[64], b[64], out[128];
     for (int i = 0; i < 64; ++i) { a[i] = base + i; b[i] = base + 64 + i; }
@@ -194,8 +196,8 @@ static void add_row(const char* k, const char* arm, const ckt::BooleanProgram& p
 int main() {
     std::mt19937_64 rng(0xC0FFEE);
     NoFoldClearBackend nf;
-    ClearContext cc_ir;                      // reused IR-static context
-    BackendContext<uint8_t> bc_ir(&nf);      // reused IR-virtual context
+    ClearCtx cc_ir;                      // reused IR-static context
+    BackendCtx<uint8_t> bc_ir(&nf);      // reused IR-virtual context
     ProgramWorkspace<uint8_t> ws_s, ws_v;    // reused replay workspaces
 
     // ===================== mul64 (full controlled matrix) =====================
@@ -215,16 +217,16 @@ int main() {
     int bad = 0;
 
     uint8_t out_s[128];
-    { ClearContext cc; mul64(cc, a8, b8, out_s); if (recon(out_s) != ref) { printf("  [FAIL] mul static\n"); bad++; } }
+    { ClearCtx cc; mul64(cc, a8, b8, out_s); if (recon(out_s) != ref) { printf("  [FAIL] mul static\n"); bad++; } }
 
     uint8_t out_v[128];
-    { BackendContext<uint8_t> bc(&nf); mul64(bc, a8, b8, out_v); if (recon(out_v) != ref) { printf("  [FAIL] mul virtual\n"); bad++; } }
+    { BackendCtx<uint8_t> bc(&nf); mul64(bc, a8, b8, out_v); if (recon(out_v) != ref) { printf("  [FAIL] mul virtual\n"); bad++; } }
 
     if (recon(replay(cc_ir, pm, in_m, ws_s).data()) != ref) { printf("  [FAIL] mul IR-static\n"); bad++; }
     if (recon(replay(bc_ir, pm, in_m, ws_v).data()) != ref) { printf("  [FAIL] mul IR-virtual\n"); bad++; }
 
-    add_row("mul64", "static",     pm, run_for(0.5, [&]{ ClearContext cc; mul64(cc, a8, b8, out_s); }, out_s));
-    add_row("mul64", "virtual",    pm, run_for(0.5, [&]{ BackendContext<uint8_t> bc(&nf); mul64(bc, a8, b8, out_v); }, out_v));
+    add_row("mul64", "static",     pm, run_for(0.5, [&]{ ClearCtx cc; mul64(cc, a8, b8, out_s); }, out_s));
+    add_row("mul64", "virtual",    pm, run_for(0.5, [&]{ BackendCtx<uint8_t> bc(&nf); mul64(bc, a8, b8, out_v); }, out_v));
     add_row("mul64", "IR-static",  pm, run_for(0.5, [&]{ replay(cc_ir, pm, in_m, ws_s); }, ws_s.out.data()));
     add_row("mul64", "IR-virtual", pm, run_for(0.5, [&]{ replay(bc_ir, pm, in_m, ws_v); }, ws_v.out.data()));
 

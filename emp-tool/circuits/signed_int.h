@@ -11,6 +11,7 @@
 #include <utility>
 
 namespace emp {
+namespace legacy {
 
 // Float_T is forward-declared (with its default width) by unsigned_int.h.
 
@@ -147,5 +148,6 @@ template<typename Wire> using Int64_T = SignedInt_T<Wire, 64>;
 
 #include "emp-tool/circuits/signed_int.hpp"
 
+}  // namespace legacy
 }  // namespace emp
 #endif

@@ -4,12 +4,14 @@
 // Umbrella for the circuit-function frontend over the C++20 BooleanContext model:
 // write a PURE circuit body once, compile() it into a context-free Circuit<Sig>,
 // and run() it on ANY context (plaintext / garbled 2PC / ZK / ...), exactly like
-// the built-in .empbc circuits. Typed circuit values (Bit/UInt/Int/Float<Ctx>)
-// come from circuits/typed.h; context-free shapes from circuits/shape.h.
+// the built-in .empbc circuits. Typed circuit values (Bit_T/UInt_T/Int_T/
+// Float_T<Ctx>) come from circuits/typed.h; compile() names them over RecordCtx
+// via the rec:: aliases in frontend/rec.h.
 //
-// The legacy Bit_T / global-Backend frontend (frontend/executor.h) is RETIRED;
-// downstream protocols (ag2pc / agmpc / zk) migrate onto this surface.
+// The context is passed explicitly; there is no global backend. This is the
+// frontend downstream protocols (ag2pc / agmpc / zk) build on.
 
 #include "emp-tool/frontend/circuit_fn.h"
+#include "emp-tool/frontend/rec.h"
 
 #endif  // EMP_FRONTEND_H__

@@ -20,15 +20,17 @@
 
 Foundational primitives for the emp-toolkit family: SIMD `block` types,
 fast AES / PRG / PRP / hash / GF(2^128) kernels, OpenSSL-backed elliptic
-curve ops, IO channels, a templated boolean-circuit frontend
-(`Bit_T<Wire>` / `BitVec_T<Wire>` / `UnsignedInt_T<Wire>` /
-`SignedInt_T<Wire>` / `Float_T<Wire>`), and pluggable execution backends
-(plaintext circuit printer, half-gate garbling, privacy-free garbling).
+curve ops, IO channels, and a boolean-circuit layer built around
+context-bound typed values (`Bit_T<Ctx>` / `UInt_T<Ctx,N>` /
+`Int_T<Ctx,N>` / `Float_T<Ctx,W>`) with a compile-once / run-on-any-context
+frontend. A `BooleanContext` is the execution target: plaintext evaluation
+(`ClearCtx`), program recording (`RecordCtx`), and protocol contexts such as
+emp-sh2pc's garbled `SH2PCCtx`.
 
 ## Requirements
 
 - CMake ≥ 3.25
-- A C++17 compiler (Clang ≥ 12, GCC ≥ 9, AppleClang 14+)
+- A C++20 compiler (Clang ≥ 12, GCC ≥ 10, AppleClang 14+)
 - OpenSSL ≥ 3.0
 - pthreads
 - x86_64 with AES-NI + PCLMULQDQ + SSE4.2, **or** arm64 with `armv8-a+crypto+crc`. The default build uses `-march=native` and pulls in VAES, VPCLMULQDQ, AVX-512 etc. wherever the host CPU has them; pass `-DEMP_TOOL_NATIVE_ARCH=OFF` for a portable binary tied only to the baseline above.
@@ -58,7 +60,7 @@ binary that runs on any AES-NI + PCLMUL + SSE4.2 (x86_64) or
 | `EMP_TOOL_BUILD_TESTS` | `ON` when top-level | Build the test suite under `test/`. |
 | `EMP_TOOL_BUILD_BENCHMARKS` | `OFF` | Build throughput benchmarks under `bench/`; not registered with `ctest`. |
 | `EMP_TOOL_INSTALL` | `ON` when top-level | Generate install + export rules. |
-| `EMP_TOOL_THREADING` | `OFF` | Make the global `Backend* backend` pointer thread-local. Required if multiple threads run circuits concurrently against different backends. |
+| `EMP_TOOL_THREADING` | `OFF` | Make the process-wide execution pointers thread-local. Required if multiple threads run circuits concurrently against different execution targets. |
 
 ## Consuming from another CMake project
 
@@ -83,21 +85,16 @@ add_subdirectory(third_party/emp-tool)
 target_link_libraries(my-app PRIVATE emp-tool::emp-tool)
 ```
 
-A single header pulls in the substrate (core / crypto / IO / backends /
-wire-templated circuit classes):
+A single header pulls in the substrate (core / crypto / IO):
 
 ```cpp
 #include <emp-tool/emp-tool.h>
 using namespace emp;
 ```
 
-Circuit aliases are explicit because downstream protocol libraries bind their
-own wire types. `emp-tool.h` makes the standard `block` wire aliases available
-under `emp::block_types`; applications opt into that nested namespace:
-
-```cpp
-using namespace emp::block_types;  // in .cpp files
-```
+The context-bound circuit values live in `emp-tool/circuits/typed.h` and the
+frontend in `emp-tool/frontend/`; include those directly when you write
+circuits (see "Circuit frontend" below).
 
 ## Layout
 
@@ -106,24 +103,22 @@ emp-tool/
 ├── core/         block, constants, utils
 ├── crypto/       PRG, PRP, AES, Hash, CCRH, MITCCRH, f2k, ec (Scalar/Point/ECGroup)
 ├── io/           IOChannel, NetIO, TLSIO, TraceIO
-├── execution/    Backend interface, ClearBackend, HalfGate*, PrivacyFree*
-├── circuits/     Bit, BitVec, UnsignedInt, SignedInt, Float (all templated on Wire); BooleanProgram IR + .empbc format
-├── frontend/     run / compile / replay pure circuit functions through any backend (emp::frontend)
+├── circuits/     BooleanContext + typed values (Bit_T/UInt_T/Int_T/Float_T<Ctx>); BooleanProgram IR + .empbc format
+├── frontend/     compile / run pure circuit functions on any context (emp::frontend)
 └── third_party/  ThreadPool, sse2neon
 ```
 
-`circuits/` is templated on the wire type; `emp::block_types` provides the
-standard aliases (`Bit`, `BitVec`, `UnsignedInt`, `SignedInt`, `Float`)
-all over `block`, so most application code only needs one explicit opt-in.
+The canonical circuit value layer is the context-bound typed values in
+`circuits/typed.h`: `Bit_T<Ctx>`, `UInt_T<Ctx,N>`, `Int_T<Ctx,N>`,
+`Float_T<Ctx,W>`, each templated on a `BooleanContext` `Ctx`. There is no global
+backend — every value carries its context and issues value-return gates on it.
 
-The numeric layer makes signedness explicit: `UnsignedInt` wraps mod
-2^N matching `uint{N}_t`, `SignedInt` is two's-complement matching
-`int{N}_t` on hardware (C signed-overflow UB is sidestepped — emp-tool
-wraps deterministically), and `BitVec` carries no arithmetic at all
-(just bitwise / shifts / slice / concat). `UnsignedInt` and `SignedInt`
-inherit from `BitVec` so they pick up the structural ops; conversion
-between signed and unsigned is an explicit `.as_signed()` /
-`.as_unsigned()` bit-cast (no gates).
+The numeric layer makes signedness explicit: `UInt_T<Ctx,N>` wraps mod 2^N
+matching `uint{N}_t`, `Int_T<Ctx,N>` is two's-complement matching `int{N}_t` on
+hardware (C signed-overflow UB is sidestepped — emp-tool wraps
+deterministically). `Float_T<Ctx,W>` is IEEE binary{16,32,64}. Comparisons
+return `Bit_T<Ctx>`; the host clear types are `bool` / `uint64_t` / `int64_t` /
+the host float.
 
 ## Usage
 
@@ -228,31 +223,37 @@ io.recv_data(buf, n);                            // blocks until n bytes arrive
 
 ### Plaintext circuit evaluation
 
-The simplest backend evaluates `Bit` / `BitVec` / `UnsignedInt` /
-`SignedInt` / `Float` in cleartext (and can optionally capture the
-circuit it executed as a native `.empbc` file):
+`ClearCtx` is the plaintext `BooleanContext`: it evaluates typed values in
+cleartext with no crypto, so a circuit's gate counts match what a protocol
+context would run exactly. Build typed values over it and operate directly:
 
 ```cpp
-using namespace emp::block_types;
+#include <emp-tool/circuits/typed.h>
+using namespace emp;
 
-setup_clear_backend();                           // installs ClearBackend
+ClearCtx cx;
+using S32 = Int_T<ClearCtx, 32>;
 
-SignedInt a(32, 7,  PUBLIC);
-SignedInt b(32, 35, PUBLIC);
-SignedInt c = a * b + SignedInt(32, 1, PUBLIC);
-std::cout << c.reveal<int32_t>() << "\n";        // 246
+auto a = S32::constant(cx, 7);
+auto b = S32::constant(cx, 35);
+auto c = a * b + S32::constant(cx, 1);           // value-return gates on cx
+
+// On ClearCtx a wire IS the cleartext bit (uint8_t 0/1), so the result reads
+// straight off the value's wires via the type's clear codec:
+bool bits[32]; for (int i = 0; i < 32; ++i) bits[i] = c.w[i] & 1;
+std::cout << S32::decode(bits) << "\n";          // 246
 
 // Wrap on overflow is well-defined and matches int32_t / uint32_t hardware:
-UnsignedInt big(32, UINT32_MAX, PUBLIC);
-std::cout << (big + UnsignedInt(32, 1u, PUBLIC)).reveal<uint32_t>() << "\n"; // 0
-
-finalize_clear_backend();
+using U32 = UInt_T<ClearCtx, 32>;
+auto big = U32::constant(cx, UINT32_MAX);
+auto wrapped = big + U32::constant(cx, 1u);       // == 0
 ```
 
-To capture the executed circuit as a native `.empbc` file, pass a filename
-to `setup_clear_backend("circuit.empbc")`; it is written on
-`finalize_clear_backend()`. (Capture requires all secret feeds before any
-gate — inputs are the leading wires.)
+`UInt_T` wraps mod 2^N, `Int_T` is two's-complement, `Float_T` is IEEE
+binary{16,32,64}, and comparisons return `Bit_T<ClearCtx>`. The same typed
+code runs on any other `BooleanContext` (e.g. the garbled `SH2PCCtx`)
+unchanged — there the wires are labels, so values leave the circuit only
+through `ctx.reveal(...)`.
 
 ### Circuit frontend: compile once, run on any context
 
@@ -260,91 +261,65 @@ Write a **pure circuit function** (inputs are arguments, the output is the retur
 value — no `input`/`reveal` inside) over the typed values `Bit/UInt/Int/Float<Ctx>`.
 Call it live, or **compile it once into a context-free `Circuit`** and `run` it on
 any context — plaintext, garbled 2PC, ZK — with no global backend. I/O is the
-session's job, around the circuit. Add `#include <emp-tool/frontend/circuit_fn.h>`.
+context's job, around the circuit. Add `#include <emp-tool/frontend/circuit_fn.h>`.
 
 ```cpp
 #include <emp-tool/frontend/circuit_fn.h>
+#include <emp-tool/frontend/rec.h>
 using namespace emp;
 namespace cf = emp::frontend;
 
-auto add  = [](auto a, auto b){ return a + b; };             // pure circuit (implicit ctx)
-auto circ = cf::compile<UIntShape<32>, UIntShape<32>>(add);  // record ONCE -> Circuit
+auto add  = [](auto a, auto b){ return a + b; };               // pure circuit (implicit ctx)
+auto circ = cf::compile<rec::UInt<32>, rec::UInt<32>>(add);    // record ONCE -> Circuit
 
-ClearContext cx;                                             // ... then run on any context
-auto x = UInt<ClearContext,32>::constant(cx, 7);
-auto y = UInt<ClearContext,32>::constant(cx, 5);
-auto z = cf::run(cx, circ, x, y);                           // replay -> UInt<ClearContext,32> (== 12)
+ClearCtx cx;                                                   // ... then run on any context
+auto x = UInt_T<ClearCtx,32>::constant(cx, 7);
+auto y = UInt_T<ClearCtx,32>::constant(cx, 5);
+auto z = cf::run(cx, circ, x, y);                             // replay -> UInt_T<ClearCtx,32> (== 12)
 ```
 
-The same `circ` runs identically on `ClearContext`, the garbled `SH2PCContext`, and
+The same `circ` runs identically on `ClearCtx`, the garbled `SH2PCCtx`, and
 future contexts — user circuits are as portable as the built-in `.empbc` files.
-Arguments are context-free **shapes** (`UIntShape<32>`, `BitShape`, `FloatShape<32>`,
-…); the compiled `Circuit` holds a validated `BooleanProgram` + signature. Bodies are
-C++20: an implicit-context form (`[](auto a, auto b){…}`, constants via `a.constant(v)`)
-and an explicit-context form (`[](auto& ctx, …){…}`, required for nullary circuits). See
-[docs/frontend.md](docs/frontend.md).
+Arguments are named by the recording value types (`rec::UInt<32>`, `rec::Bit`,
+`rec::Float<32>`, …); the compiled `Circuit` holds a validated `BooleanProgram` +
+signature. Bodies are C++20: an implicit-context form (`[](auto a, auto b){…}`,
+constants via `a.constant(v)`) and an explicit-context form (`[](auto& ctx, …){…}`,
+required for nullary circuits). See [docs/frontend.md](docs/frontend.md).
 
 ### Native circuit files (`.empbc`)
 
 Circuits load from the native binary `.empbc` format into one
 `emp::circuit::BooleanProgram` (flat: inputs are wires `[0, num_inputs)`,
-outputs are an explicit wire list) and run through the shared evaluator. The
+outputs are an explicit wire list) and replay through any `BooleanContext`. The
 loader validates structure (bounds, single-definition, topological order) and
 rejects malformed files. Floating-point `.empbc` assets ship in
 `emp-tool/circuits/files/`; see
 [docs/floating_point_circuits.md](docs/floating_point_circuits.md) for the
-asset format and regeneration notes. You can also generate or capture your own
-program and load it through this API.
+asset format and regeneration notes. You can also `compile` your own pure
+circuit function (above) or capture a recorded program and load it through this
+API.
 
 ```cpp
-using namespace emp::block_types;
+#include <emp-tool/circuits/context.h>   // execute_program, ClearCtx
+#include <emp-tool/circuits/empbc.h>     // load_empbc_file
+using namespace emp;
 using namespace emp::circuit;
 
 BooleanProgram program = load_empbc_file("my_circuit.empbc");
 
-// Dispatcher: realize each gate op on Bit slots through the active backend.
-struct BitCompute {
-    void and_gate(Bit& o, const Bit& a, const Bit& b) { o = a & b; }
-    void xor_gate(Bit& o, const Bit& a, const Bit& b) { o = a ^ b; }
-    void not_gate(Bit& o, const Bit& a)               { o = !a; }
-    void const_gate(Bit& o, bool v)                   { emp::backend->public_label(&o.bit, v); }
-};
-
-std::vector<Bit> input(program.num_inputs), output(program.outputs.size());
-// ... feed inputs via your protocol ...
-CircuitScratch<Bit> sc;
-execute_program<Bit>(program, input.data(), input.size(),
-                     output.data(), output.size(), sc, BitCompute{});
+ClearCtx ctx;                                            // any BooleanContext
+std::vector<ClearCtx::Wire> inputs(program.num_inputs);
+// ... fill inputs (the leading wires) ...
+std::vector<ClearCtx::Wire> out =
+    execute_program(ctx, program,
+                    std::span<const ClearCtx::Wire>(inputs.data(), inputs.size()));
 ```
 
-### Custom wire type
-
-If you implement your own backend with a non-`block` wire (e.g. an
-arithmetic share, a long bytestring), instantiate the circuit templates
-on it directly, or bind aliases in your own namespace. `emp-tool.h` defines
-no bare aliases in `emp`, so protocol libraries can include it safely; just
-don't opt into `emp::block_types` unless you explicitly want the block binding.
-
-```cpp
-#include <emp-tool/execution/backend.h>
-#include <emp-tool/circuits/bit.h>
-#include <emp-tool/circuits/bitvec.h>
-#include <emp-tool/circuits/unsigned_int.h>
-#include <emp-tool/circuits/signed_int.h>
-
-struct MyWire { /* ... */ };
-class MyBackend : public emp::Backend { /* override wire_bytes/and_gate/... */ };
-
-emp::backend = new MyBackend(/* args */);
-
-using MyBit         = emp::Bit_T<MyWire>;
-using MyBitVec      = emp::BitVec_T<MyWire>;
-using MyUnsignedInt = emp::UnsignedInt_T<MyWire>;
-using MySignedInt   = emp::SignedInt_T<MyWire>;
-```
-
-The class definitions in `circuits/` carry no `block` of their own; the
-standard `block` commitment lives only in `emp::block_types`.
+`execute_program(ctx, program, inputs)` walks the gate list issuing the
+context's value-return gate ops, so the same loaded program runs on `ClearCtx`,
+the garbled `SH2PCCtx`, or any other context unchanged. A bulk/round-sensitive
+context can consume the AND-depth schedule instead (`make_scheduled_plan` +
+`scheduled_execute_program`).
 
 ## Tests
 

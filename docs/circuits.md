@@ -1,100 +1,93 @@
-# Circuit class layer (`emp-tool/circuits/`)
+# Circuit value layer (`emp-tool/circuits/`)
 
-Conventions for the user-facing circuit primitives — `Bit_T`,
-`BitVec_T`, `UnsignedInt_T`, `SignedInt_T`, `Float_T` — and the explicit
-wire-binding aliases such as `emp::block_types::Bit`. Read this when
-modifying any header under `emp-tool/circuits/` or adding a new circuit
-primitive.
+Conventions for the circuit value types under `emp-tool/circuits/`.
 
-For numeric semantics (wrap, division, shifts, resize), read
+The circuit value layer is the **context-bound typed values**: `Bit_T<Ctx>`,
+`UInt_T<Ctx,N>`, `Int_T<Ctx,N>`, `Float_T<Ctx,W>` in
+[typed.h](../emp-tool/circuits/typed.h), templated on a `BooleanContext`
+(`circuits/context.h`). Static dispatch, no global backend; each value carries
+its own `Ctx*` and issues value-return gates on it. This is the layer the
+[frontend](frontend.md) compiles and replays, and the layer protocol contexts
+(e.g. emp-sh2pc's `SH2PCCtx`) feed through `input`/`reveal`.
+
+A separate internal `emp::legacy` namespace holds the Wire-bound object API
+(`Bit_T<Wire>`, `BitVec_T<Wire>`, the `*_Calculator_T<Wire>` kernels, …): the
+global-`emp::backend` object API and the recording sources that produce the
+prebuilt `.empbc` builtins. It is not a peer user-facing layer; see
+[Internal: the Wire-bound layer](#internal-the-wire-bound-layer-emplegacy) at
+the end.
+
+For numeric semantics (wrap, division, comparison), read
 [numeric_semantics.md](numeric_semantics.md). For protocol code that
 *uses* these primitives, read [EMP_TRANSLATION.md](EMP_TRANSLATION.md)
 instead.
 
-## Templating and storage
+## Context-bound values (`typed.h`)
 
-- Circuit primitives — `Bit_T`, `BitVec_T`, `UnsignedInt_T`,
-  `SignedInt_T`, `Float_T` — are class templates on `Wire`. Class
-  definitions must not reference `block`. Wire storage is inline
-  (`Wire bit;` in `Bit_T`, `vector<Bit_T<Wire>> bits;` in `BitVec_T`)
-  — required for the gate-rate budget; do not introduce indirection.
+Each value is a small struct templated on a `BooleanContext`
+`Ctx`. It holds its wires inline (`Wire w;` in `Bit_T`,
+`std::array<Wire,N> w;` in `UInt_T`/`Int_T`/`Float_T`) plus a private `Ctx*`
+(reached via `context()`); operators issue value-return gates on the context. No
+inheritance, no marker base, no global backend.
 
-- The standard `block`-typed aliases (`Bit`, `BitVec`, `UnsignedInt`,
-  `SignedInt`, `Float`, plus the AES/SHA3 calculator aliases) live
-  under `emp::block_types`. `emp-tool.h` makes that namespace available
-  but intentionally defines no bare circuit aliases in `emp`, so
-  downstream protocol libraries can include it as a substrate and bind
-  their own wire types. Custom-wire users include the templated headers
-  directly and spell out their own aliases or provide their own namespace.
+Every value provides three contracts that generic code (contexts, the frontend)
+relies on:
 
-## Inheritance and operator dispatch
+- **context** — `context() -> Ctx*`, `using context_type = Ctx;`, and
+  `template<BooleanContext C2> using rebind = X_T<C2,…>;` ("same value family,
+  different context"; compile-time only, moves no data). E.g.
+  `UInt_T<RecordCtx,32>::rebind<ClearCtx> == UInt_T<ClearCtx,32>`.
+- **wire layout** — `static constexpr int width()`, `void pack_wires(Wire*) const`,
+  `static X_T from_wires(Ctx&, const Wire*)`.
+- **clear codec** — `static std::vector<bool> encode(clear_t)` (LSB-first) and
+  `static clear_t decode(const bool*)`, with `using clear_t = …;` (`bool` for
+  `Bit_T`, `uint64_t` for `UInt_T`, `int64_t` for `Int_T`, the host float type
+  for `Float_T`).
 
-- `UnsignedInt_T` and `SignedInt_T` inherit from `BitVec_T` for storage
-  and bitwise/structural ops. The derived classes override `& | ^ ~`
-  and the static-shamt shifts so they return the derived type — keeps
-  `UnsignedInt ^ UnsignedInt → UnsignedInt` rather than slicing into
-  `BitVec`. Conversion between signed and unsigned is an explicit
-  `.as_signed()` / `.as_unsigned()` bit-cast (no gates).
+These static members are exposed uniformly through
+[`emp::value_traits<T>`](../emp-tool/circuits/value_traits.h)
+(`width()`/`encode`/`decode`/`rebind<Ctx>`) — the single metadata accessor over a
+value's own static members. A type meeting all three contracts satisfies the
+`CircuitValue` concept (`frontend/circuit_fn.h`) and can be `input`/`reveal`'d by
+a context and `compile`/`run` by the frontend.
 
-- Sortable / If / sort dispatch goes through the CRTP mixin
-  `Sortable<Wire, Self>`, where `Self` is the concrete derived type (e.g.
-  `Sortable<Wire, UnsignedInt_T<Wire, N>>`).
-  Derived classes supply `geq` / `equal` / `select`; the mixin provides
-  `>=`, `<=`, `<`, `>`, `==`, `!=`, `If`. Don't add `operator==` on
-  `BitVec_T` itself — it would collide with the mixin's operator==
-  on classes that inherit both `BitVec_T` and `Sortable`.
+```cpp
+#include "emp-tool/circuits/typed.h"
+using namespace emp;
 
-## Shared kernels
+ClearCtx cx;
+auto a = UInt_T<ClearCtx,32>::constant(cx, 7);
+auto b = UInt_T<ClearCtx,32>::constant(cx, 5);
+auto s = a + b;                         // value-return gates on cx
+auto lt = a < b;                        // -> Bit_T<ClearCtx>
+```
 
-- Shared bit-array kernels (`add_full`, `sub_full`, `mul_full`,
-  `div_full`, `cond_neg`, `if_then_else`) live in
-  `circuits/numeric_kernels.h`. Both `UnsignedInt_T` and `SignedInt_T`
-  consume them. Sign semantics live one level up: signed division is
-  unsigned div with pre/post `cond_neg`, signed comparison is
-  sign-extended subtraction, etc.
+### Arithmetic kernels (`emp::kernel`)
 
-## Circuit-value interface (`CircuitValue`)
+The small, inlineable, compiler-fusible structured kernels (ripple add/sub,
+mux, comparators, multiply, restoring division, `if_then_else`) live in namespace
+`emp::kernel` in `typed.h`, written against bare `Ctx::Wire` (no per-bit `Ctx*`).
+They are LSB-first and size-optimal (one AND per full adder: an N-bit add is
+N−1 ANDs). The value-type operators forward to them. Large ops are handled
+differently: `Float_T` arithmetic **replays** the recorded `fp<W>_<op>.empbc`
+builtins through the context (`circuit::float_circuit` + `execute_program`),
+rather than carrying a templated kernel; integer multiply/div/mod stay templated
+kernels because they are width-generic over `N`.
 
-Every circuit value (`Bit_T`, `BitVec_T`, `UnsignedInt_T`, `SignedInt_T`,
-`Float_T`) inherits the empty marker base `CircuitValue`
-([circuit_value.h](../emp-tool/circuits/circuit_value.h)) and provides a
-small uniform interface that generic code (notably the
-[frontend](frontend.md) record/replay layer) uses to flatten, rebuild,
-and mux any value without per-type external traits:
+### Context check
 
-- `using wire_type = Wire;` — `Sortable` supplies it for `Bit_T` and
-  `Float_T`; `BitVec_T` has no `Sortable` base so it declares its own. The
-  integer types inherit it from *both* `BitVec_T` and `Sortable`, so they
-  re-declare `using wire_type = Wire;` to resolve the otherwise-ambiguous
-  lookup.
-- `template<class NW> using rebind = Self<NW…>;` — "same shape, different
-  wire" (compile-time only; moves no data). Each type names its own
-  shape (`UnsignedInt_T<NW,N>`, `Float_T<NW,W>`, …); `BitVec_T` provides
-  the default and the integer types override it.
-- `int pack_size() const` / `void pack(Wire*) const` /
-  `void unpack(const Wire*, int n)` — flatten to / rebuild from a wire
-  array. `BitVec_T` implements these over `bits`; the integer types
-  inherit them.
-- `Self select(const Bit_T<Wire>& cond, const Self& alt) const` —
-  `cond ? alt : *this`. Already present on every type (also the basis of
-  the `If/Then/Else` builder).
-- Generic free helpers `wire_t<T>`, `rebind_t<T,NW>`, `pack_wires(v)`,
-  `assemble<T>(w,n)` live alongside the base.
-
-`CircuitValue` is **non-virtual on purpose**: a vtable would add a vptr to
-every `Bit_T` (2–4× its size) and break `Bit_T<block>` trivial-copyability
-and the `memcpy` fast paths — and we never dynamically dispatch (all use
-is templated on a concrete type). Instead the base declares the methods as
-**templated defaults whose bodies `static_assert`-fail** (deferred via a
-dependent trait): a type that implements a method hides the default, while
-a type that forgets one gets a clear "must implement …" error at the use
-site. Adding a new circuit type = give it these members; no central trait
-list to edit.
+Mixing typed values from two different contexts silently corrupts (especially
+with id-based wires). `check_same_context` guards binary operators: a trivial
+pointer compare of the two `context()`s. It is DEBUG-ONLY by default (on when
+`NDEBUG` is unset); `-DEMP_CONTEXT_CHECKS=1` makes it an always-on `error()`,
+`-DEMP_CONTEXT_CHECKS=0` disables it entirely.
 
 ## Bit / byte ordering
 
 The toolkit-wide convention is **LSB-first within a byte, byte
-sequential in memory**. Two pieces:
+sequential in memory**. It is the layout the canonical clear codecs use
+(`encode`/`decode` emit/consume bits LSB-first) and the layout the internal
+`BitVec_T` and the `.empbc` byte feeds use. Two pieces:
 
 1. **Bit-within-byte: LSB at index 0.** `(byte >> k) & 1` with `k=0`
    gives the least-significant bit. This matches FIPS-197's `b_0` =
@@ -131,3 +124,48 @@ LSB-first-within-byte, byte-sequential layout back to memory.
   index flip (`U[i] = U_lsb[7-i]`) at entry and exit so callers
   see the LSB-first convention. The flip emits zero gates — it's
   pure renaming.
+
+## Internal: the Wire-bound layer (`emp::legacy`)
+
+The `emp::legacy` namespace holds the Wire-bound object API: classes templated
+directly on a `Wire` type that drive the global `emp::backend` (virtual
+dispatch). It exists to serve two internal paths — the global-backend object API
+and the **recording sources** that produce the prebuilt `.empbc` builtins (AES,
+SHA, the `fp<W>_*` float suite). Application code uses the context-bound values
+above; reach into `emp::legacy` only when working on those internal paths.
+
+The set: `Bit_T<Wire>`, `BitVec_T<Wire>`, `UnsignedInt_T<Wire,N>`,
+`SignedInt_T<Wire,N>`, `Float_T<Wire,W>`, plus the calculator kernels
+`AES_Calculator_T<Wire>`, `AES_128_CTR_Calculator_T<Wire>`,
+`Keccak_F_Calculator_T<Wire>`, `SHA3_256_Calculator_T<Wire>`,
+`SHA256_Calculator_T<Wire>` (in
+`circuits/{bit,bitvec,unsigned_int,signed_int,float,aes_circuit,aes_128_ctr,
+sha3_circuit,sha3_256,sha256_circuit}.h`, gathered by `circuits/circuit.h`).
+Wire storage is inline (`Wire bit;`, `std::vector<Bit_T<Wire>> bits;`) for the
+gate-rate budget. The standard `block`-typed aliases (`Bit`, `BitVec`,
+`UnsignedInt`, `SignedInt`, `Float`, …) are bound by
+`EMP_CIRCUIT_TYPES_ALL(emp::block)` (`circuits/circuit_types.h`) under the
+nested `emp::block_types` namespace; `emp-tool.h` defines no bare circuit aliases
+in `emp` itself.
+
+Implementation notes for anyone modifying this layer:
+
+- `UnsignedInt_T` / `SignedInt_T` inherit from `BitVec_T` for storage and
+  bitwise/structural ops, overriding `& | ^ ~` and the static-shamt shifts to
+  return the derived type. Signed/unsigned conversion is an explicit
+  `.as_signed()` / `.as_unsigned()` bit-cast (no gates).
+- Sortable / `If` / `sort` dispatch goes through the CRTP mixin
+  `Sortable<Wire, Self>` (`circuits/sortable.h`); derived classes supply
+  `geq` / `equal` / `select`. Don't add `operator==` on `BitVec_T` itself — it
+  would collide with the mixin's `operator==`.
+- Shared bit-array kernels (`add_full`, `sub_full`, `mul_full`, `div_full`,
+  `cond_neg`, `if_then_else`) live in `circuits/numeric_kernels.h`; sign
+  semantics live one level up (signed division = unsigned div with pre/post
+  `cond_neg`, etc.). These are the Wire-bound counterpart of the context-bound
+  layer's `emp::kernel` set.
+- Each value implements a small uniform interface (`wire_type`, `rebind<NW>`,
+  `pack_size`/`pack`/`unpack`, `select`) via the **non-virtual** marker base
+  `CircuitValue` ([circuit_value.h](../emp-tool/circuits/circuit_value.h)): a
+  vtable would bloat `Bit_T` and break `Bit_T<block>` trivial-copyability, and
+  dispatch is always templated on a concrete type. (This is independent of the
+  context-bound layer's `CircuitValue` *concept* + `value_traits<T>`.)

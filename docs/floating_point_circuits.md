@@ -10,8 +10,7 @@ emp-tool/circuits/files/fp<width>_<op>.empbc
 The `.empbc` files are the canonical stored format for nontrivial generated
 circuits. emp-tool loads them through `emp::circuit::float_circuit()`, which
 uses the shared circuit asset resolver: `EMP_CIRCUIT_DIR`, then build-tree
-assets, then install-tree assets beside the installed headers. The old generated
-C++ gate tables are gone.
+assets, then install-tree assets beside the installed headers.
 
 ## Scope
 

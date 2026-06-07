@@ -2,16 +2,18 @@
 #define EMP_FRONTEND_CIRCUIT_FN_H__
 
 // The circuit-function frontend over the C++20 BooleanContext model: write a
-// PURE circuit body once, compile() it into a context-free Circuit<Sig> (a
-// recorded BooleanProgram + signature), and run() it on ANY context — plaintext,
-// garbled 2PC, ZK, ... — exactly like the built-in .empbc circuits. No global
-// backend, no Bit_T.
+// PURE circuit body once, compile() it into a Circuit<RetV, ArgVs...> (a recorded
+// BooleanProgram + signature, named by value types over RecordCtx), and run() it
+// on ANY context — plaintext, garbled 2PC, ZK, ... — exactly like the built-in
+// .empbc circuits. No global backend; the context is passed explicitly. Values are
+// Bit_T<Ctx> / UInt_T<Ctx,N> / Int_T<Ctx,N> / Float_T<Ctx,W>; compile names them
+// via the rec:: aliases, e.g. rec::UInt<32> == UInt_T<RecordCtx,32>.
 //
-// A circuit is PURE: no input/reveal/OT inside a body (RecordContext has no I/O,
-// so it is structurally impossible). The session does I/O AROUND run():
-//   auto a = sess.input<UInt<Ctx,32>>(ctx, ALICE, av);
+// A circuit is PURE: no input/reveal/OT inside a body (RecordCtx has no I/O,
+// so it is structurally impossible). The CONTEXT does I/O AROUND run():
+//   auto a = ctx.input<UInt_T<Ctx,32>>(ALICE, av);     // ctx is the protocol context
 //   auto c = frontend::run(ctx, circuit, a, b);
-//   sess.reveal(c, PUBLIC);
+//   auto out = ctx.reveal(c, PUBLIC);
 //
 // A body comes in two forms; compile/run pick whichever is invocable:
 //   [](auto a, auto b){ return a + b; }          // implicit context (default)
@@ -22,10 +24,10 @@
 // A body callable in BOTH forms (e.g. a variadic lambda) is a contract error.
 // In the implicit form, make a constant from an argument: a.constant(5). C++20.
 
-#include "emp-tool/circuits/context.h"          // RecordContext, execute_program, ProgramWorkspace
+#include "emp-tool/circuits/context.h"          // RecordCtx, execute_program, ProgramWorkspace
 #include "emp-tool/circuits/circuit_artifact.h" // CircuitArtifact, CircuitSignature, validate_artifact
-#include "emp-tool/circuits/shape.h"            // Shape concept + *Shape
-#include "emp-tool/circuits/typed.h"            // typed values (Bit/UInt/Int/Float)
+#include "emp-tool/circuits/value_traits.h"     // value_traits (metadata accessor)
+#include "emp-tool/circuits/typed.h"            // typed values (Bit_T/UInt_T/Int_T/Float_T)
 #include "emp-tool/core/utils.h"                // error()
 #include <array>
 #include <cstdint>
@@ -39,20 +41,20 @@ namespace emp {
 namespace frontend {
 
 // ---------------------------------------------------------------------------
-// CircuitValue concept — a typed value over some BooleanContext (the new-layer
-// analogue of the legacy is_base_of<CircuitValue>). Does NOT include
-// circuit_value.h; uses context()/context_type/shape, never a public field.
+// CircuitValue concept — a typed value over some BooleanContext. Uses
+// context()/context_type/rebind, never a public marker base. The concept also
+// pins the clear codec (clear_t + encode/decode) so the I/O contract is uniform —
+// contexts read it through value_traits<T> (circuits/value_traits.h).
 // ---------------------------------------------------------------------------
 template <class V_>
 concept CircuitValue =
     requires {
         typename std::decay_t<V_>::Wire;
         typename std::decay_t<V_>::context_type;
-        typename std::decay_t<V_>::shape;
+        typename std::decay_t<V_>::clear_t;
         { std::decay_t<V_>::width() } -> std::convertible_to<int>;
     } &&
-    Shape<typename std::decay_t<V_>::shape> &&
-    std::same_as<typename std::decay_t<V_>::shape::template bind<typename std::decay_t<V_>::context_type>,
+    std::same_as<typename std::decay_t<V_>::template rebind<typename std::decay_t<V_>::context_type>,
                  std::decay_t<V_>> &&
     requires(const std::decay_t<V_> v, typename std::decay_t<V_>::Wire* out) {
         { v.context() } -> std::convertible_to<typename std::decay_t<V_>::context_type*>;
@@ -60,9 +62,21 @@ concept CircuitValue =
     } &&
     requires(typename std::decay_t<V_>::context_type& c, const typename std::decay_t<V_>::Wire* in) {
         { std::decay_t<V_>::from_wires(c, in) } -> std::same_as<std::decay_t<V_>>;
+    } &&
+    requires(typename std::decay_t<V_>::clear_t cv, const bool* bits) {
+        { std::decay_t<V_>::encode(cv) } -> std::convertible_to<std::vector<bool>>;
+        { std::decay_t<V_>::decode(bits) } -> std::same_as<typename std::decay_t<V_>::clear_t>;
     };
 
 template <class V> inline constexpr bool is_circuit_value_v = CircuitValue<std::decay_t<V>>;
+
+// A circuit value whose context is the recording context — the only valid argument
+// type to compile() (its body is recorded through a RecordCtx). Use the rec::
+// aliases (frontend/rec.h): rec::UInt<32> == UInt_T<RecordCtx,32>.
+template <class V_>
+concept RecordValue =
+    CircuitValue<V_> &&
+    std::same_as<typename std::decay_t<V_>::context_type, RecordCtx>;
 
 // ---------------------------------------------------------------------------
 // circuit_fn_traits — introspect a body over typed args, in either form.
@@ -124,31 +138,35 @@ struct circuit_contract<Tr, false> {
 };
 
 // ---------------------------------------------------------------------------
-// Circuit<RetShape, ArgShapes...> — a compiled, context-free circuit: a
-// validated BooleanProgram + its signature (arg widths + return width). The
-// shapes are template parameters so run() reconstructs the typed values.
+// Circuit<RetV, ArgVs...> — a compiled, context-free circuit: a validated
+// BooleanProgram + its signature (arg widths + return width). The value types
+// (over RecordCtx) are template parameters so run() reconstructs the typed
+// values via rebind<Ctx>.
 // ---------------------------------------------------------------------------
-template <Shape RetShape, Shape... ArgShapes>
+// A compiled circuit's signature is named by value types over RecordCtx (the
+// rec:: aliases), so the class requires RecordValue — only compile()/load helpers
+// that normalize to rec:: types can name a Circuit.
+template <RecordValue RetV, RecordValue... ArgVs>
 class Circuit {
 public:
-    using ret_shape = RetShape;
-    static constexpr std::size_t arity = sizeof...(ArgShapes);
+    using ret_value = RetV;
+    static constexpr std::size_t arity = sizeof...(ArgVs);
 
     // Construct from a recorded (or loaded) artifact. Validates the program
-    // structurally AND that the signature matches the declared shapes — so a
+    // structurally AND that the signature matches the declared value types — so a
     // stale, hand-edited, or mis-typed loaded artifact is rejected here rather
     // than silently mis-running. The artifact is otherwise immutable (private).
     explicit Circuit(circuit::CircuitArtifact a) : artifact_(std::move(a)) {
         circuit::validate_artifact(artifact_);
         const circuit::CircuitSignature& s = artifact_.signature;
-        const std::array<uint32_t, sizeof...(ArgShapes)> want{(uint32_t)ArgShapes::width...};
-        if (s.arg_widths.size() != sizeof...(ArgShapes))
-            error("Circuit: artifact signature arity != declared shapes");
+        const std::array<uint32_t, sizeof...(ArgVs)> want{(uint32_t)ArgVs::width()...};
+        if (s.arg_widths.size() != sizeof...(ArgVs))
+            error("Circuit: artifact signature arity != declared value types");
         for (std::size_t i = 0; i < want.size(); ++i)
             if (s.arg_widths[i] != want[i])
-                error("Circuit: artifact argument width != declared shape width");
-        if (s.return_width != (uint32_t)RetShape::width)
-            error("Circuit: artifact return width != declared shape width");
+                error("Circuit: artifact argument width != declared value width");
+        if (s.return_width != (uint32_t)RetV::width())
+            error("Circuit: artifact return width != declared value width");
     }
 
     const circuit::BooleanProgram&   program()   const { return artifact_.program; }
@@ -161,51 +179,52 @@ private:
 struct invalid_circuit_fn {};   // sentinel for the contract-violating branch
 
 template <class T> inline constexpr bool is_circuit_v = false;
-template <Shape R, Shape... A> inline constexpr bool is_circuit_v<Circuit<R, A...>> = true;
+template <RecordValue R, RecordValue... A> inline constexpr bool is_circuit_v<Circuit<R, A...>> = true;
 
 // ---------------------------------------------------------------------------
-// compile<ArgShapes...>(body): record the body once through a RecordContext.
+// compile<ArgVs...>(body): record the body once through a RecordCtx. The ArgVs
+// are circuit value types over RecordCtx (use the rec:: aliases, e.g.
+// rec::UInt<32>).
 // ---------------------------------------------------------------------------
 namespace detail {
-// non-shape -> BitShape so the traits stay well-formed and the static_assert
-// below produces the clean "must be a shape" message first.
-template <class S> using shape_or_default = std::conditional_t<Shape<S>, S, BitShape>;
-template <class S> using rec_value_t = typename shape_or_default<S>::template bind<RecordContext>;
-
-template <bool Ok, class Tr, class... ArgShapes>
+template <bool Ok, class Tr, class... ArgVs>
 struct compiled_ret { using type = invalid_circuit_fn; };
-template <class Tr, class... ArgShapes>
-struct compiled_ret<true, Tr, ArgShapes...> {
-    using type = Circuit<typename Tr::value_return::shape, ArgShapes...>;
+template <class Tr, class... ArgVs>
+struct compiled_ret<true, Tr, ArgVs...> {
+    using type = Circuit<typename Tr::value_return, ArgVs...>;
 };
-template <class Tr, class... ArgShapes>
+// Gate on RecordValue (args AND the body's return) so a non-RecordCtx argument
+// makes the return type fall back to invalid_circuit_fn — keeping compile()'s
+// signature well-formed so the in-body static_assert fires the clear diagnostic
+// (rather than a substitution failure from an ill-formed Circuit<...>).
+template <class Tr, class... ArgVs>
 using compiled_ret_t =
-    typename compiled_ret<((Shape<ArgShapes> && ...) && Tr::ok), Tr, ArgShapes...>::type;
+    typename compiled_ret<((RecordValue<ArgVs> && ...) && Tr::ok &&
+                           RecordValue<typename Tr::value_return>), Tr, ArgVs...>::type;
 
 // Build one recording-context arg from a freshly reserved input window.
-template <Shape S>
-typename S::template bind<RecordContext> make_rec_arg(RecordContext& rc) {
-    using V = typename S::template bind<RecordContext>;
-    RecordContext::Wire base = rc.external_input((size_t)S::width);
-    std::array<RecordContext::Wire, (std::size_t)S::width> win{};
-    for (int i = 0; i < S::width; ++i) win[i] = base + (RecordContext::Wire)i;
-    return V::from_wires(rc, win.data());
+template <CircuitValue RecV>
+RecV make_rec_arg(RecordCtx& rc) {
+    RecordCtx::Wire base = rc.external_input((size_t)RecV::width());
+    std::array<RecordCtx::Wire, (std::size_t)RecV::width()> win{};
+    for (int i = 0; i < RecV::width(); ++i) win[i] = base + (RecordCtx::Wire)i;
+    return RecV::from_wires(rc, win.data());
 }
 }  // namespace detail
 
-template <class... ArgShapes, class F,
-          class Tr = circuit_fn_traits<RecordContext, std::decay_t<F>,
-                                       detail::rec_value_t<ArgShapes>...>>
-detail::compiled_ret_t<Tr, ArgShapes...> compile(F&& body) {
-    static_assert((Shape<ArgShapes> && ...),
-        "frontend::compile: each input must be a SHAPE (BitShape / UIntShape<N> / IntShape<N> / FloatShape<W>)");
+template <class... ArgVs, class F,
+          class Tr = circuit_fn_traits<RecordCtx, std::decay_t<F>, ArgVs...>>
+detail::compiled_ret_t<Tr, ArgVs...> compile(F&& body) {
+    static_assert((RecordValue<ArgVs> && ...),
+        "compile: each arg must be a circuit value over RecordCtx (use rec::UInt<32> / rec::Bit / ...)");
     (void)sizeof(circuit_contract<Tr>);
-    if constexpr ((Shape<ArgShapes> && ...) && Tr::ok) {
-        RecordContext rc;
+    if constexpr ((RecordValue<ArgVs> && ...) && Tr::ok) {
+        static_assert(RecordValue<typename Tr::value_return>,
+            "compile: the body must return a circuit value over RecordCtx");
+        RecordCtx rc;
         // Reserve inputs + build args, left-to-right (braced-init order), BEFORE
-        // any gate (RecordContext requires all external_input calls up front).
-        std::tuple<typename ArgShapes::template bind<RecordContext>...> args{
-            detail::make_rec_arg<ArgShapes>(rc)...};
+        // any gate (RecordCtx requires all external_input calls up front).
+        std::tuple<ArgVs...> args{detail::make_rec_arg<ArgVs>(rc)...};
         auto ret = [&] {
             if constexpr (Tr::wants_ctx)
                 return std::apply([&](auto&&... a) { return body(rc, std::move(a)...); }, args);
@@ -213,15 +232,15 @@ detail::compiled_ret_t<Tr, ArgShapes...> compile(F&& body) {
                 return std::apply([&](auto&&... a) { return body(std::move(a)...); }, args);
         }();
         using Ret = std::decay_t<decltype(ret)>;
-        std::array<RecordContext::Wire, (std::size_t)Ret::width()> ow{};
+        std::array<RecordCtx::Wire, (std::size_t)Ret::width()> ow{};
         ret.pack_wires(ow.data());
-        rc.finish(std::span<const RecordContext::Wire>(ow.data(), ow.size()));
+        rc.finish(std::span<const RecordCtx::Wire>(ow.data(), ow.size()));
 
         circuit::CircuitArtifact art;
         art.program   = std::move(rc.prog);
         art.signature = circuit::CircuitSignature{
-            std::vector<uint32_t>{(uint32_t)ArgShapes::width...}, (uint32_t)Ret::width()};
-        return detail::compiled_ret_t<Tr, ArgShapes...>(std::move(art));   // ctor validates
+            std::vector<uint32_t>{(uint32_t)ArgVs::width()...}, (uint32_t)Ret::width()};
+        return detail::compiled_ret_t<Tr, ArgVs...>(std::move(art));   // ctor validates
     } else {
         return {};   // invalid_circuit_fn; unreachable after the asserts
     }
@@ -241,14 +260,19 @@ inline void append_wires(std::vector<Wire>& out, const V& v) {
 }
 }  // namespace detail
 
-template <BooleanContext Ctx, Shape RetShape, Shape... ArgShapes>
-typename RetShape::template bind<Ctx>
-run(Ctx& ctx, const Circuit<RetShape, ArgShapes...>& c,
-    const typename ArgShapes::template bind<Ctx>&... args) {
+template <BooleanContext Ctx, CircuitValue RetV, CircuitValue... ArgVs>
+typename RetV::template rebind<Ctx>
+run(Ctx& ctx, const Circuit<RetV, ArgVs...>& c,
+    const typename ArgVs::template rebind<Ctx>&... args) {
     using Wire = typename Ctx::Wire;
     const circuit::BooleanProgram& p = c.program();
-    if (c.signature().arg_widths.size() != sizeof...(ArgShapes))
+    if (c.signature().arg_widths.size() != sizeof...(ArgVs))
         error("frontend::run: argument count != circuit arity (stale artifact?)");
+#if EMP_CONTEXT_CHECKS
+    // Every argument must belong to the context it is being replayed on.
+    { bool ok = true; ((ok = ok && args.context() == &ctx), ...);
+      if (!ok) error("frontend::run: an argument belongs to a different context"); }
+#endif
     std::vector<Wire> inputs;
     inputs.reserve(p.num_inputs);
     (detail::append_wires(inputs, args), ...);
@@ -257,7 +281,7 @@ run(Ctx& ctx, const Circuit<RetShape, ArgShapes...>& c,
     ProgramWorkspace<Wire> ws;
     const std::vector<Wire>& ow =
         execute_program(ctx, p, std::span<const Wire>(inputs.data(), inputs.size()), ws);
-    return RetShape::template bind<Ctx>::from_wires(ctx, ow.data());
+    return RetV::template rebind<Ctx>::from_wires(ctx, ow.data());
 }
 
 // ---------------------------------------------------------------------------
@@ -274,6 +298,11 @@ run(F&& body, Arg0&& a0, Args&&... rest) {
     (void)sizeof(circuit_contract<Tr>);
     if constexpr (Tr::ok) {
         Ctx& ctx = *a0.context();
+#if EMP_CONTEXT_CHECKS
+        // All arguments must share the first argument's context.
+        { bool ok = true; ((ok = ok && rest.context() == a0.context()), ...);
+          if (!ok) error("frontend::run: arguments belong to different contexts"); }
+#endif
         if constexpr (Tr::wants_ctx)
             return body(ctx, std::forward<Arg0>(a0), std::forward<Args>(rest)...);
         else

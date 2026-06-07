@@ -5,7 +5,7 @@
 #include <vector>
 
 // Bit-array-level arithmetic kernels shared by UnsignedInt_T and SignedInt_T.
-// All operate on Bit_T<Wire>* bit arrays of the caller's chosen length.
+// All operate on legacy::Bit_T<Wire>* bit arrays of the caller's chosen length.
 // Sign semantics live one level up: signed division is unsigned div with
 // pre/post condNeg, signed comparison is sign-extended subtraction, etc.
 //
@@ -16,16 +16,16 @@ namespace emp {
 // dest <- op1 + op2 + carryIn (mod 2^size). carryOut may be null.
 // Reference: obliv-c / oblivious-IR add_full.
 template<typename Wire>
-inline void add_full(Bit_T<Wire>* dest, Bit_T<Wire>* carryOut,
-                     const Bit_T<Wire>* op1, const Bit_T<Wire>* op2,
-                     const Bit_T<Wire>* carryIn, int size) {
-	Bit_T<Wire> carry, bxc, axc, t;
+inline void add_full(legacy::Bit_T<Wire>* dest, legacy::Bit_T<Wire>* carryOut,
+                     const legacy::Bit_T<Wire>* op1, const legacy::Bit_T<Wire>* op2,
+                     const legacy::Bit_T<Wire>* carryIn, int size) {
+	legacy::Bit_T<Wire> carry, bxc, axc, t;
 	int i = 0;
 	if (size == 0) {
 		if (carryIn && carryOut) *carryOut = *carryIn;
 		return;
 	}
-	carry = carryIn ? *carryIn : Bit_T<Wire>(false, PUBLIC);
+	carry = carryIn ? *carryIn : legacy::Bit_T<Wire>(false, PUBLIC);
 	int skipLast = (carryOut == nullptr);
 	while (size-- > skipLast) {
 		axc = op1[i] ^ carry;
@@ -41,16 +41,16 @@ inline void add_full(Bit_T<Wire>* dest, Bit_T<Wire>* carryOut,
 
 // dest <- op1 - op2 - borrowIn (mod 2^size). borrowOut may be null.
 template<typename Wire>
-inline void sub_full(Bit_T<Wire>* dest, Bit_T<Wire>* borrowOut,
-                     const Bit_T<Wire>* op1, const Bit_T<Wire>* op2,
-                     const Bit_T<Wire>* borrowIn, int size) {
-	Bit_T<Wire> borrow, bxc, bxa, t;
+inline void sub_full(legacy::Bit_T<Wire>* dest, legacy::Bit_T<Wire>* borrowOut,
+                     const legacy::Bit_T<Wire>* op1, const legacy::Bit_T<Wire>* op2,
+                     const legacy::Bit_T<Wire>* borrowIn, int size) {
+	legacy::Bit_T<Wire> borrow, bxc, bxa, t;
 	int i = 0;
 	if (size == 0) {
 		if (borrowIn && borrowOut) *borrowOut = *borrowIn;
 		return;
 	}
-	borrow = borrowIn ? *borrowIn : Bit_T<Wire>(false, PUBLIC);
+	borrow = borrowIn ? *borrowIn : legacy::Bit_T<Wire>(false, PUBLIC);
 	int skipLast = (borrowOut == nullptr);
 	while (size-- > skipLast) {
 		bxa = op1[i] ^ op2[i];
@@ -72,10 +72,10 @@ inline void sub_full(Bit_T<Wire>* dest, Bit_T<Wire>* borrowOut,
 // work that follows; use std::vector for RAII (no leaks on a future
 // exception, no manual delete[] pair to keep in sync).
 template<typename Wire>
-inline void mul_full(Bit_T<Wire>* dest, const Bit_T<Wire>* op1,
-                     const Bit_T<Wire>* op2, int size) {
-	std::vector<Bit_T<Wire>> sum(size, Bit_T<Wire>(false, PUBLIC));
-	std::vector<Bit_T<Wire>> tmp(size);
+inline void mul_full(legacy::Bit_T<Wire>* dest, const legacy::Bit_T<Wire>* op1,
+                     const legacy::Bit_T<Wire>* op2, int size) {
+	std::vector<legacy::Bit_T<Wire>> sum(size, legacy::Bit_T<Wire>(false, PUBLIC));
+	std::vector<legacy::Bit_T<Wire>> tmp(size);
 	for (int i = 0; i < size; ++i) {
 		for (int k = 0; k < size - i; ++k)
 			tmp[k] = op1[k] & op2[i];
@@ -87,10 +87,10 @@ inline void mul_full(Bit_T<Wire>* dest, const Bit_T<Wire>* op1,
 
 // dest[i] <- cond ? tsrc[i] : fsrc[i].
 template<typename Wire>
-inline void if_then_else(Bit_T<Wire>* dest, const Bit_T<Wire>* tsrc,
-                         const Bit_T<Wire>* fsrc, int size,
-                         const Bit_T<Wire>& cond) {
-	Bit_T<Wire> x, a;
+inline void if_then_else(legacy::Bit_T<Wire>* dest, const legacy::Bit_T<Wire>* tsrc,
+                         const legacy::Bit_T<Wire>* fsrc, int size,
+                         const legacy::Bit_T<Wire>& cond) {
+	legacy::Bit_T<Wire> x, a;
 	int i = 0;
 	while (size-- > 0) {
 		x = tsrc[i] ^ fsrc[i];
@@ -102,13 +102,13 @@ inline void if_then_else(Bit_T<Wire>* dest, const Bit_T<Wire>* tsrc,
 
 // dest <- cond ? -src : src. Two's-complement negation of src, gated.
 template<typename Wire>
-inline void cond_neg(const Bit_T<Wire>& cond, Bit_T<Wire>* dest,
-                     const Bit_T<Wire>* src, int size) {
+inline void cond_neg(const legacy::Bit_T<Wire>& cond, legacy::Bit_T<Wire>* dest,
+                     const legacy::Bit_T<Wire>* src, int size) {
 	int i;
-	Bit_T<Wire> c = cond;
+	legacy::Bit_T<Wire> c = cond;
 	for (i = 0; i < size - 1; ++i) {
 		dest[i] = src[i] ^ cond;
-		Bit_T<Wire> t = dest[i] ^ c;
+		legacy::Bit_T<Wire> t = dest[i] ^ c;
 		c = c & dest[i];
 		dest[i] = t;
 	}
@@ -122,15 +122,15 @@ inline void cond_neg(const Bit_T<Wire>& cond, Bit_T<Wire>* dest,
 // Same RAII story as mul_full above: short-lived scratch, four vectors
 // instead of four hand-paired new[]/delete[] sites.
 template<typename Wire>
-inline void div_full(Bit_T<Wire>* vquot, Bit_T<Wire>* vrem,
-                     const Bit_T<Wire>* op1, const Bit_T<Wire>* op2, int size) {
-	std::vector<Bit_T<Wire>> overflow(size);
-	std::vector<Bit_T<Wire>> tmp(size);
-	std::vector<Bit_T<Wire>> rem(size);
-	std::vector<Bit_T<Wire>> quot(size);
-	Bit_T<Wire> b;
+inline void div_full(legacy::Bit_T<Wire>* vquot, legacy::Bit_T<Wire>* vrem,
+                     const legacy::Bit_T<Wire>* op1, const legacy::Bit_T<Wire>* op2, int size) {
+	std::vector<legacy::Bit_T<Wire>> overflow(size);
+	std::vector<legacy::Bit_T<Wire>> tmp(size);
+	std::vector<legacy::Bit_T<Wire>> rem(size);
+	std::vector<legacy::Bit_T<Wire>> quot(size);
+	legacy::Bit_T<Wire> b;
 	std::copy(op1, op1 + size, rem.begin());
-	overflow[0] = Bit_T<Wire>(false, PUBLIC);
+	overflow[0] = legacy::Bit_T<Wire>(false, PUBLIC);
 	for (int i = 1; i < size; ++i)
 		overflow[i] = overflow[i - 1] | op2[size - i];
 	for (int i = size - 1; i >= 0; --i) {

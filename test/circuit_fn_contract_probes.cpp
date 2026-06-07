@@ -7,6 +7,7 @@
 #include "emp-tool/circuits/context.h"
 #include "emp-tool/circuits/typed.h"
 #include "emp-tool/frontend/circuit_fn.h"
+#include "emp-tool/frontend/rec.h"
 #include <cstdio>
 #include <type_traits>
 
@@ -14,14 +15,14 @@ using namespace emp;
 namespace cf = emp::frontend;
 
 int main() {
-    ClearContext cx;
-    auto x = UInt<ClearContext, 32>::constant(cx, 1);
-    auto y = UInt<ClearContext, 32>::constant(cx, 2);
+    ClearCtx cx;
+    auto x = UInt_T<ClearCtx, 32>::constant(cx, 1);
+    auto y = UInt_T<ClearCtx, 32>::constant(cx, 2);
 
 #if !defined(NEG_CASE)
     // Positive: compile + compiled run + live run, implicit form.
     auto add = [](auto a, auto b) { return a + b; };
-    auto c = cf::compile<UIntShape<32>, UIntShape<32>>(add);
+    auto c = cf::compile<rec::UInt<32>, rec::UInt<32>>(add);
     auto r = cf::run(cx, c, x, y);
     auto lr = cf::run(add, x, y);
     printf("circuit_fn contract probe: PASS (%d %d)\n", (int)(r.w[0] & 1), (int)(lr.w[0] & 1));
@@ -31,17 +32,17 @@ int main() {
     (void)cf::run(bad, x, y);
 
 #elif NEG_CASE == 2   // compile + non-const lvalue-ref params
-    (void)cf::compile<UIntShape<32>, UIntShape<32>>([](auto& a, auto& b) { return a + b; });
+    (void)cf::compile<rec::UInt<32>, rec::UInt<32>>([](auto& a, auto& b) { return a + b; });
 
 #elif NEG_CASE == 3   // run + reference return -> must RETURN BY VALUE
     auto bad = [](auto a, auto b) -> decltype(a)& { (void)b; return a; };
     (void)cf::run(bad, x, y);
 
 #elif NEG_CASE == 4   // compile + reference return
-    (void)cf::compile<UIntShape<32>, UIntShape<32>>(
+    (void)cf::compile<rec::UInt<32>, rec::UInt<32>>(
         [](auto a, auto b) -> decltype(a)& { (void)b; return a; });
 
-#elif NEG_CASE == 5   // compile<int> : input is not a shape
+#elif NEG_CASE == 5   // compile<int> : input is not a circuit value
     (void)cf::compile<int>([](auto a) { return a; });
 
 #elif NEG_CASE == 6   // run + plain (non-circuit) return -> not a plain value
@@ -53,8 +54,11 @@ int main() {
     (void)cf::run(bad, x, y);
 
 #elif NEG_CASE == 8   // compile + body callable in BOTH context forms -> ambiguous
-    (void)cf::compile<UIntShape<32>, UIntShape<32>>(
+    (void)cf::compile<rec::UInt<32>, rec::UInt<32>>(
         [](auto a, auto b, auto... rest) { (void)b; (void)sizeof...(rest); return a; });
+
+#elif NEG_CASE == 9   // compile arg is a circuit value but NOT over RecordCtx
+    (void)cf::compile<UInt_T<ClearCtx, 32>>([](auto a) { return a; });
 #endif
     return 0;
 }

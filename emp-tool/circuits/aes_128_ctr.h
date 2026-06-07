@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 namespace emp {
+namespace legacy {
 
 // Calculate the AES_128_CTR encryption of some bytes
 // (length refers to the number of elements of type T in the array "input").
@@ -186,7 +187,7 @@ class AES_128_CTR_Calculator_T { public:
 		// and the late-return both clean of a leak.
 		const size_t nbytes = (length + 7) / 8;
 		auto bytes = std::make_unique<uint8_t[]>(nbytes);
-		int success = emp::aes_128_ctr(key, iv, (uint8_t *) nullptr,
+		int success = emp::legacy::aes_128_ctr(key, iv, (uint8_t *) nullptr,
 		                               bytes.get(), nbytes, start_chunk);
 		if (success != 0) return success;
 		BitVec_T<Wire> blind_int(length, bytes.get(), party);
@@ -247,5 +248,6 @@ private:
 	bool key_set = false;
 };
 
+}  // namespace legacy
 }
 #endif

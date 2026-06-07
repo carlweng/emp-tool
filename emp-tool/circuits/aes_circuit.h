@@ -4,6 +4,7 @@
 #include "emp-tool/circuits/bit.h"
 
 namespace emp {
+namespace legacy {
 
 // ===========================================================================
 // LEGACY Bit_T circuit kernel — RECORDING SOURCE, not the canonical layer.
@@ -298,6 +299,7 @@ public:
 	}
 };
 
+}  // namespace legacy
 }  // namespace emp
 
 #endif  // EMP_AES_CIRCUIT_H_

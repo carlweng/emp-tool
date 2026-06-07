@@ -7,6 +7,7 @@
 #include "emp-tool/circuits/sortable.h"
 #include "emp-tool/circuits/circuit_value.h"
 namespace emp {
+namespace legacy {
 
 template<typename Wire>
 class Bit_T: public Sortable<Wire, Bit_T<Wire>>, public CircuitValue { public:
@@ -57,5 +58,6 @@ class Bit_T: public Sortable<Wire, Bit_T<Wire>>, public CircuitValue { public:
 	}
 };
 #include "emp-tool/circuits/bit.hpp"
+}  // namespace legacy
 }
 #endif

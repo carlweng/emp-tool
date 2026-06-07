@@ -8,6 +8,7 @@
 using namespace emp::block_types;
 using namespace std;
 using namespace emp;
+using namespace emp::legacy;
 
 template<typename F>
 void print_bits(const F& a) {

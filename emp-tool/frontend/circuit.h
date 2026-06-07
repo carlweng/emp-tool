@@ -1,23 +1,13 @@
 #ifndef EMP_FRONTEND_CIRCUIT_H__
 #define EMP_FRONTEND_CIRCUIT_H__
 
-// A compiled circuit: the recorded BooleanProgram plus the analysis stats,
-// computed once so they amortize across many runs (replays).
+// RETIRED. The old non-template `emp::frontend::Circuit` (a recorded
+// BooleanProgram + analysis stats) collided with the compiled-circuit type of the
+// BooleanContext frontend: `emp::frontend::Circuit<RetV, ArgVs...>` in
+// emp-tool/frontend/circuit_fn.h, produced by `compile<rec::UInt<32>, ...>(body)`.
+// Use that instead; for the raw program + analysis stats, work with
+// emp::circuit::BooleanProgram and the passes in emp-tool/frontend/passes.h.
 
-#include "emp-tool/frontend/boolean_program.h"
-#include "emp-tool/frontend/passes.h"
+#error "emp-tool/frontend/circuit.h is retired; use emp-tool/frontend/circuit_fn.h (Circuit<RetV, ArgVs...> from compile<rec::...>(body)). See this header comment."
 
-namespace emp {
-namespace frontend {
-
-struct Circuit {
-	BooleanProgram prog;
-	CountStats     count;
-	LivenessStats  liveness;
-	ScheduleStats  schedule;
-	LayoutStats    layout;
-};
-
-}  // namespace frontend
-}  // namespace emp
 #endif  // EMP_FRONTEND_CIRCUIT_H__

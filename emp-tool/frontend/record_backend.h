@@ -1,19 +1,24 @@
 #ifndef EMP_FRONTEND_RECORD_BACKEND_H__
 #define EMP_FRONTEND_RECORD_BACKEND_H__
 
-// A protocol-neutral Backend that records a PURE circuit function into a
-// BooleanProgram instead of evaluating it. A circuit takes its inputs as
-// arguments and returns its output — there is no I/O inside it: secret feed()
-// and reveal() are rejected (do I/O in direct mode, around the circuit).
-// Public-constant feeds are allowed (they fold to CONST gates). The gate shape
-// is value-free with respect to the arguments, so all parties record an
-// identical program — provided public feeds are literal / agreed constants
-// (they bake in as CONST gates and must not be per-party runtime values).
+// Internal recorder for the legacy global-Backend circuit kernels (emp::legacy::
+// Bit_T<Wire> + emp::Backend): it records a PURE circuit function into a
+// BooleanProgram instead of evaluating it, the source that produces the .empbc
+// builtins (AES / SHA). (Templated BooleanContext kernels record through RecordCtx
+// in circuits/context.h instead; this Backend-shaped recorder exists only for the
+// legacy kernels.) A circuit takes its inputs as arguments and returns its output
+// — there is no I/O inside it: secret feed() and reveal() are rejected (do I/O in
+// direct mode, around the circuit). Public-constant feeds are allowed (they fold
+// to CONST gates). The gate shape is value-free with respect to the arguments, so
+// all parties record an identical program — provided public feeds are literal /
+// agreed constants (they bake in as CONST gates and must not be per-party runtime
+// values).
 
 #include "emp-tool/execution/backend.h"
 #include "emp-tool/core/utils.h"            // error()
 #include "emp-tool/frontend/boolean_program.h"
 #include <cstddef>
+#include <cstdint>
 
 namespace emp {
 namespace frontend {
@@ -88,13 +93,19 @@ public:
 		      "outside the circuit (reveal() inside the body is not allowed)");
 	}
 
-	// Allocate `n` wires as an input-argument port (bound to a live value at
-	// run time). Returns the base wire id. Used by the compile() path. The core
-	// IR has no port concept — inputs are simply the leading num_inputs wires —
-	// so we only accumulate the count; argument boundaries live on TypedCircuit
-	// (arg_widths). Call before recording any gate so inputs stay wires
-	// [0, num_inputs).
+	// Reserve `n` input wires (the leading wires of the program); returns the base
+	// wire id. The core IR has no input-port concept — inputs are simply wires
+	// [0, num_inputs) — so we only accumulate the count; per-argument widths live
+	// on the compiled Circuit's signature (CircuitSignature::arg_widths). Mirrors
+	// RecordCtx::external_input: positive count, no overflow, and inputs only
+	// before any gate (incl. a CONST gate); all always-on.
 	int external_input(int n) {
+		if (n <= 0)
+			error("RecordBackend::external_input: width must be positive");
+		if ((int64_t)next_id_ + n > INT32_MAX)
+			error("RecordBackend::external_input: wire id overflow");
+		if (!prog.gates.empty())
+			error("RecordBackend::external_input: inputs must be reserved before any gate");
 		int base = next_id_;
 		for (int i = 0; i < n; ++i) alloc_();
 		num_inputs_ += n;

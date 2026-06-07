@@ -1,6 +1,6 @@
 // Typed values over a BooleanContext (emp-tool/circuits/typed.h): exercise
 // UInt/SignedInt arithmetic+compare and Float arithmetic (IR replay) on
-// ClearContext vs host, plus a record->replay round-trip. C++20.
+// ClearCtx vs host, plus a record->replay round-trip. C++20.
 
 #include "emp-tool/emp-tool.h"
 #include "emp-tool/circuits/typed.h"
@@ -20,13 +20,13 @@ template <int N, class V> static uint64_t read_bits(const V& v) {
 }
 
 int main() {
-    ClearContext cx;
+    ClearCtx cx;
     const uint32_t A = 0xDEADBEEF, B = 0x12345678;
 
     // ---- UInt32 arithmetic / compare vs host ----
     {
-        auto a = UInt<ClearContext, 32>::constant(cx, A);
-        auto b = UInt<ClearContext, 32>::constant(cx, B);
+        auto a = UInt_T<ClearCtx, 32>::constant(cx, A);
+        auto b = UInt_T<ClearCtx, 32>::constant(cx, B);
         chk("uint +",  read_bits<32>(a + b) == (uint32_t)(A + B));
         chk("uint -",  read_bits<32>(a - b) == (uint32_t)(A - B));
         chk("uint &",  read_bits<32>(a & b) == (A & B));
@@ -35,7 +35,7 @@ int main() {
         chk("uint ~",  read_bits<32>(~a) == (uint32_t)(~A));
         chk("uint ==", ((a == a).w & 1) == 1 && ((a == b).w & 1) == 0);
         chk("uint <",  ((b < a).w & 1) == (B < A) && ((a < b).w & 1) == (A < B));
-        chk("uint sel", read_bits<32>(a.select(Bit<ClearContext>::constant(cx, true), b)) == B);
+        chk("uint sel", read_bits<32>(a.select(Bit_T<ClearCtx>::constant(cx, true), b)) == B);
         chk("uint *",  read_bits<32>(a * b) == (uint32_t)(A * B));
         chk("uint /",  read_bits<32>(a / b) == (uint32_t)(A / B));
         chk("uint %",  read_bits<32>(a % b) == (uint32_t)(A % B));
@@ -44,25 +44,44 @@ int main() {
     // ---- SignedInt32: +, -, unary-, signed < ----
     {
         const int32_t X = -1000000, Y = 2000000;
-        auto x = Int<ClearContext, 32>::constant(cx, X);
-        auto y = Int<ClearContext, 32>::constant(cx, Y);
+        auto x = Int_T<ClearCtx, 32>::constant(cx, X);
+        auto y = Int_T<ClearCtx, 32>::constant(cx, Y);
         chk("int +", (int32_t)read_bits<32>(x + y) == (int32_t)(X + Y));
         chk("int -", (int32_t)read_bits<32>(x - y) == (int32_t)(X - Y));
         chk("int neg", (int32_t)read_bits<32>(-x) == -X);
         chk("int < (neg<pos)", ((x < y).w & 1) == 1);
         chk("int < (pos<neg)", ((y < x).w & 1) == 0);
+        chk("int *", (int32_t)read_bits<32>(x * y) == (int32_t)((uint32_t)X * (uint32_t)Y));
+        chk("int &", (int32_t)read_bits<32>(x & y) == (int32_t)(X & Y));
+        chk("int ^", (int32_t)read_bits<32>(x ^ y) == (int32_t)(X ^ Y));
+        chk("int |", (int32_t)read_bits<32>(x | y) == (int32_t)(X | Y));
+        chk("int ~", (int32_t)read_bits<32>(~x) == (int32_t)(~X));
+        chk("int ==", ((x == x).w & 1) == 1 && ((x == y).w & 1) == 0);
+        chk("int !=", ((x != y).w & 1) == 1 && ((x != x).w & 1) == 0);
+        chk("int <=/>=", ((x <= y).w & 1) == 1 && ((y >= x).w & 1) == 1 && ((y <= x).w & 1) == 0);
+        chk("int []", ((uint32_t)(x[0].w & 1)) == ((uint32_t)X & 1));
+        chk("int sel", (int32_t)read_bits<32>(x.select(Bit_T<ClearCtx>::constant(cx, true), y)) == Y);
+        // signed div/mod truncate toward zero; remainder takes the dividend's sign
+        // (C++ semantics) — check all four sign combinations.
+        struct DM { int32_t a, b; };
+        for (DM t : {DM{-100, 7}, DM{100, -7}, DM{-100, -7}, DM{100, 7}, DM{7, 100}, DM{-7, -100}}) {
+            auto ia = Int_T<ClearCtx, 32>::constant(cx, t.a);
+            auto ib = Int_T<ClearCtx, 32>::constant(cx, t.b);
+            chk("int /", (int32_t)read_bits<32>(ia / ib) == t.a / t.b);
+            chk("int %", (int32_t)read_bits<32>(ia % ib) == t.a % t.b);
+        }
     }
 
     // ---- Float32 arithmetic via IR replay through the context ----
     {
         auto bits = [](float f) { uint32_t u; std::memcpy(&u, &f, 4); return (uint64_t)u; };
         auto tofl = [](uint64_t u32) { float f; uint32_t u = (uint32_t)u32; std::memcpy(&f, &u, 4); return f; };
-        auto fa = Float<ClearContext, 32>::from_bits(cx, bits(1.5f));
-        auto fb = Float<ClearContext, 32>::from_bits(cx, bits(2.25f));
-        auto f2 = Float<ClearContext, 32>::from_bits(cx, bits(2.0f));
-        auto f4 = Float<ClearContext, 32>::from_bits(cx, bits(4.0f));
-        auto fz = Float<ClearContext, 32>::from_bits(cx, bits(0.0f));
-        auto fn = Float<ClearContext, 32>::from_bits(cx, bits(-1.5f));
+        auto fa = Float_T<ClearCtx, 32>::from_bits(cx, bits(1.5f));
+        auto fb = Float_T<ClearCtx, 32>::from_bits(cx, bits(2.25f));
+        auto f2 = Float_T<ClearCtx, 32>::from_bits(cx, bits(2.0f));
+        auto f4 = Float_T<ClearCtx, 32>::from_bits(cx, bits(4.0f));
+        auto fz = Float_T<ClearCtx, 32>::from_bits(cx, bits(0.0f));
+        auto fn = Float_T<ClearCtx, 32>::from_bits(cx, bits(-1.5f));
         chk("float +", tofl(read_bits<32>(fa + fb)) == 3.75f);
         chk("float *", tofl(read_bits<32>(fa * fb)) == 3.375f);
         chk("float -", tofl(read_bits<32>(fb - fa)) == 0.75f);
@@ -89,35 +108,77 @@ int main() {
         chk("float abs", tofl(read_bits<32>(fn.abs())) == 1.5f);
         chk("float neg", tofl(read_bits<32>(-fa)) == -1.5f);
         chk("float copysign", tofl(read_bits<32>(fa.copysign(fn))) == -1.5f);
-        chk("float select T", tofl(read_bits<32>(fa.select(Bit<ClearContext>::constant(cx, true), fb))) == 2.25f);
-        chk("float select F", tofl(read_bits<32>(fa.select(Bit<ClearContext>::constant(cx, false), fb))) == 1.5f);
+        chk("float select T", tofl(read_bits<32>(fa.select(Bit_T<ClearCtx>::constant(cx, true), fb))) == 2.25f);
+        chk("float select F", tofl(read_bits<32>(fa.select(Bit_T<ClearCtx>::constant(cx, false), fb))) == 1.5f);
 
         // host clear codec (FloatTraits) + constant()
-        std::vector<bool> e = Float<ClearContext, 32>::encode(3.75f);
+        std::vector<bool> e = Float_T<ClearCtx, 32>::encode(3.75f);
         bool eb[32]; for (int i = 0; i < 32; ++i) eb[i] = e[i];
-        chk("float codec roundtrip", Float<ClearContext, 32>::decode(eb) == 3.75f);
-        auto ca = Float<ClearContext, 32>::constant(cx, 1.5f);
-        auto cb = Float<ClearContext, 32>::constant(cx, 2.25f);
+        chk("float codec roundtrip", Float_T<ClearCtx, 32>::decode(eb) == 3.75f);
+        auto ca = Float_T<ClearCtx, 32>::constant(cx, 1.5f);
+        auto cb = Float_T<ClearCtx, 32>::constant(cx, 2.25f);
         auto cc = ca + cb;
         bool cbits[32]; for (int i = 0; i < 32; ++i) cbits[i] = cc.w[i] & 1;
-        chk("float constant + host decode", Float<ClearContext, 32>::decode(cbits) == 3.75f);
+        chk("float constant + host decode", Float_T<ClearCtx, 32>::decode(cbits) == 3.75f);
+    }
+
+    // ---- shifts / rotates / slice / concat / extend (pure wiring) ----
+    {
+        const uint32_t V = 0x12345678u;
+        auto u = UInt_T<ClearCtx, 32>::constant(cx, V);
+        chk("uint <<",  read_bits<32>(u << 4)  == (uint32_t)(V << 4));
+        chk("uint >>",  read_bits<32>(u >> 4)  == (V >> 4));
+        chk("uint <<31", read_bits<32>(u << 31) == (uint32_t)(V << 31));
+        chk("uint >>40 (over-shift = 0)", read_bits<32>(u >> 40) == 0u);
+        auto rotr8 = [](uint32_t x, int n) { return (x >> n) | (x << (32 - n)); };
+        auto rotl8 = [](uint32_t x, int n) { return (x << n) | (x >> (32 - n)); };
+        chk("uint rotr", read_bits<32>(u.rotr(8)) == rotr8(V, 8));
+        chk("uint rotl", read_bits<32>(u.rotl(8)) == rotl8(V, 8));
+        chk("uint slice<8,24>", read_bits<16>(u.slice<8, 24>()) == (uint16_t)((V >> 8) & 0xFFFF));
+        chk("uint trunc<16>",   read_bits<16>(u.trunc<16>())    == (uint16_t)(V & 0xFFFF));
+        chk("uint zext<48>",    read_bits<48>(u.zext<48>())     == (uint64_t)V);
+        auto lo = UInt_T<ClearCtx, 16>::constant(cx, 0xBEEFu);
+        auto hi = UInt_T<ClearCtx, 16>::constant(cx, 0xDEADu);
+        chk("uint concat", read_bits<32>(lo.concat(hi)) == 0xDEADBEEFu);
+
+        // Int_T: arithmetic >> sign-extends; << logical; sext.
+        const int32_t S = -1234567;
+        auto si = Int_T<ClearCtx, 32>::constant(cx, S);
+        chk("int <<",  (int32_t)read_bits<32>(si << 3) == (int32_t)((uint32_t)S << 3));
+        chk("int >> (arith)", (int32_t)read_bits<32>(si >> 4) == (S >> 4));
+        chk("int sext<48>", (read_bits<48>(si.sext<48>()) == ((uint64_t)(int64_t)S & ((1ull << 48) - 1))));
+    }
+
+    // ---- Bits_T<Ctx,N>: bit-vector value (block I/O + assembly) ----
+    {
+        std::array<bool, 8> v{}; for (int i = 0; i < 8; ++i) v[i] = (0xB5u >> i) & 1;  // 0xB5
+        auto b = Bits_T<ClearCtx, 8>::constant(cx, v);
+        chk("bits []",    (b[0].w & 1) == 1 && (b[1].w & 1) == 0);   // 0xB5 = 1011'0101
+        chk("bits as_uint", read_bits<8>(b.as_uint()) == 0xB5u);
+        chk("bits constant() sugar", read_bits<8>(b.constant(v).as_uint()) == 0xB5u);   // member sugar returns Bits_T
+        chk("bits slice<0,4>", read_bits<4>(b.slice<0, 4>().as_uint()) == 0x5u);
+        std::array<bool, 4> hv{}; for (int i = 0; i < 4; ++i) hv[i] = (0xAu >> i) & 1;
+        auto hb = Bits_T<ClearCtx, 4>::constant(cx, hv);
+        chk("bits concat", read_bits<8>(b.slice<0, 4>().concat(hb).as_uint()) == (uint32_t)((0xA << 4) | 0x5));
+        bool eb[8]; auto e = Bits_T<ClearCtx, 8>::encode(v); for (int i = 0; i < 8; ++i) eb[i] = e[i];
+        chk("bits codec roundtrip", Bits_T<ClearCtx, 8>::decode(eb) == v);
     }
 
     // ---- record a typed UInt circuit, replay it on real inputs ----
     {
-        RecordContext rc;
+        RecordCtx rc;
         uint32_t base = rc.external_input(64);
         uint32_t aw[32], bw[32];
         for (int i = 0; i < 32; ++i) { aw[i] = base + i; bw[i] = base + 32 + i; }
-        auto ra = UInt<RecordContext, 32>::from_wires(rc, aw);
-        auto rb = UInt<RecordContext, 32>::from_wires(rc, bw);
+        auto ra = UInt_T<RecordCtx, 32>::from_wires(rc, aw);
+        auto rb = UInt_T<RecordCtx, 32>::from_wires(rc, bw);
         auto rsum = ra + rb;
         uint32_t outw[32]; rsum.pack_wires(outw);
         ckt::BooleanProgram prog = rc.finish(std::span<const uint32_t>(outw, 32));
 
         std::array<uint8_t, 64> in{};
         for (int i = 0; i < 32; ++i) { in[i] = (A >> i) & 1; in[32 + i] = (B >> i) & 1; }
-        ClearContext cx2;
+        ClearCtx cx2;
         std::vector<uint8_t> out = execute_program(cx2, prog, std::span<const uint8_t>(in.data(), 64));
         uint32_t res = 0; for (int i = 0; i < 32; ++i) res |= (uint32_t)(out[i] & 1) << i;
         chk("record/replay uint +", res == (uint32_t)(A + B));

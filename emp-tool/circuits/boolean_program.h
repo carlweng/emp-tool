@@ -6,8 +6,9 @@
 // every other wire is produced by exactly one gate, in topological (emission)
 // order; the return value is the explicit `outputs` wire list. The IR knows
 // nothing about parties, owners, argument boundaries, labels, MACs, or any
-// protocol — those live in the layers that produce/consume it (the typed
-// frontend carries argument shapes; a protocol backend carries ownership).
+// protocol — those live in the layers that produce/consume it (the compiled
+// Circuit's signature carries per-argument widths; a protocol backend carries
+// ownership).
 //
 // Execution is split into one primitive and one wrapper:
 //   for_each_gate(prog, visitor)  — the single place that owns the exhaustive

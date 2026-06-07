@@ -17,12 +17,13 @@
 #include <vector>
 
 using namespace emp;
+using namespace emp::legacy;
 namespace ckt = emp::circuit;
 
 static int bad = 0;
 
 // Run `live` (a kernel built over the global ClearBackend) and the recorded
-// builtin replayed through ClearContext on the same random input; require equal.
+// builtin replayed through ClearCtx on the same random input; require equal.
 static void check_builtin(const char* name, int nin, int nout,
                           const std::function<void(const std::vector<bool>&, std::vector<uint8_t>&)>& live) {
     static uint64_t s = 0x9E3779B97F4A7C15ull;
@@ -41,14 +42,14 @@ static void check_builtin(const char* name, int nin, int nout,
     }
     std::vector<uint8_t> rin(nin);
     for (int i = 0; i < nin; ++i) rin[i] = in[i];
-    ClearContext cx;
+    ClearCtx cx;
     std::vector<uint8_t> rout = execute_program(cx, prog, std::span<const uint8_t>(rin.data(), nin));
 
     int diff = 0;
     for (int i = 0; i < nout; ++i) if ((rout[i] & 1) != live_out[i]) ++diff;
 
     // scheduled (bulk, AND-layer-batched) replay must match the scalar one
-    ClearContext cx2;
+    ClearCtx cx2;
     std::vector<uint8_t> sout = scheduled_execute_program(cx2, prog, std::span<const uint8_t>(rin.data(), nin));
     int sdiff = 0;
     for (int i = 0; i < nout; ++i) if ((sout[i] & 1) != (rout[i] & 1)) ++sdiff;

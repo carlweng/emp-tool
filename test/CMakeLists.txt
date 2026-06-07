@@ -69,7 +69,7 @@ add_test_case(test_sha3_circuit)
 add_test_case(test_sha3_256)
 add_test_case(test_sha256_circuit)
 add_test_case(test_circuit_types)
-add_test_case_cxx20(test_circuit_fn) # C++20: compile-once / run-on-any-context frontend (shapes)
+add_test_case_cxx20(test_circuit_fn) # C++20: compile-once / run-on-any-context frontend (rec:: value types)
 add_test_case_cxx20(test_context)    # C++20: BooleanContext concept + contexts cross-check
 add_test_case_cxx20(test_builtin_circuits)   # C++20: AES/SHA/SHA3 IR-replay == live kernels
 add_test_case_cxx20(test_typed)              # C++20: typed values (Bit/UInt/SignedInt/Float) over Ctx
@@ -86,11 +86,12 @@ set(_neg_msg
     "not callable with prvalue circuit-value arguments"   # 2  compile + lvalue-ref
     "must RETURN BY VALUE"                                 # 3  run + ref return
     "must RETURN BY VALUE"                                 # 4  compile + ref return
-    "each input must be a SHAPE"                           # 5  compile<int> (not a shape)
+    "each arg must be a circuit value"                     # 5  compile<int> (not a circuit value)
     "not a plain value"                                    # 6  run + plain return
     "not void"                                             # 7  run + void return
-    "callable in BOTH")                                    # 8  compile + both-forms ambiguity
-foreach(neg RANGE 1 8)
+    "callable in BOTH"                                     # 8  compile + both-forms ambiguity
+    "circuit value over RecordCtx")                        # 9  compile arg not over RecordCtx
+foreach(neg RANGE 1 9)
     add_executable(circuit_fn_contract_neg_${neg} EXCLUDE_FROM_ALL circuit_fn_contract_probes.cpp)
     target_link_libraries(circuit_fn_contract_neg_${neg} PRIVATE emp-tool::emp-tool)
     target_compile_features(circuit_fn_contract_neg_${neg} PRIVATE cxx_std_20)

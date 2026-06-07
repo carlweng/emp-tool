@@ -15,7 +15,7 @@ int hash_in_circuit(){
   for (size_t i = 0; i < 2000; ++i) {
     input[i] = i % 200;
   }
-  emp::sha3_256(output_bytes, input, 2000);
+  emp::legacy::sha3_256(output_bytes, input, 2000);
 
   BitVec integers[2000];
   for (int64_t i = 0; i < 2000; ++i) {

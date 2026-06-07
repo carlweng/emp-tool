@@ -14,6 +14,7 @@
 #include <iostream>
 
 namespace emp {
+namespace legacy {
 
 // Calculate the sha3 hash of arbitrary bytes in memory using OpenSSL.
 // (length refers to the number of elements of type T in the array "input".
@@ -193,5 +194,6 @@ class SHA3_256_Calculator_T {
 		}
 };
 
+}  // namespace legacy
 }  // namespace emp
 #endif

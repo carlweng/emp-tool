@@ -12,6 +12,7 @@
 // Use the standard block-wire circuit aliases in this test translation unit.
 using namespace emp::block_types;
 using namespace emp;
+using namespace emp::legacy;
 
 static const unsigned char AES_SBOX_TABLE[256] = {
 	0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,

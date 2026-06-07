@@ -6,6 +6,7 @@
 using namespace emp::block_types;
 using namespace std;
 using namespace emp;
+using namespace emp::legacy;
 
 class AbandonIO: public IOChannel { public:
 	void send_data_internal(const void * /*data*/, int64_t /*len*/) override {}

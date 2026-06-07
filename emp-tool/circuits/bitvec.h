@@ -14,6 +14,7 @@
 #include <algorithm>
 
 namespace emp {
+namespace legacy {
 
 // Runtime-width vector of wires. Carries no arithmetic semantics — for
 // numeric work use UnsignedInt_T / SignedInt_T which inherit from this.
@@ -104,5 +105,6 @@ class BitVec_T : public CircuitValue { public:
 
 #include "emp-tool/circuits/bitvec.hpp"
 
+}  // namespace legacy
 }  // namespace emp
 #endif

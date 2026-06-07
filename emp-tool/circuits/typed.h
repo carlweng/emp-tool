@@ -9,16 +9,16 @@
 // Large ops (Float arithmetic) replay the recorded .empbc through the context.
 //
 // Every value provides three contracts:
-//   context:     context() -> Ctx*, context_type, shape (its context-free family)
+//   context:     context() -> Ctx*, context_type, rebind<C2> (its family over C2)
 //   wire layout: width(), pack_wires(out), from_wires(ctx, in)
 //   clear codec: encode(clear) -> bits (LSB-first), decode(bits) -> clear
-//                (forwarded to the value's shape; see circuits/shape.h)
+//                (the canonical codec lives inline on each value; value_traits.h
+//                 exposes it uniformly)
 // so a session can do input<T>(owner, clear) / reveal<T>(val, recipient) and the
 // frontend can compile/replay generically. C++20.
 
 #include "emp-tool/circuits/context.h"
-#include "emp-tool/circuits/float.h"   // FloatTraits<W> host codec + circuit::float_circuit
-#include "emp-tool/circuits/shape.h"   // BitShape/UIntShape/IntShape/FloatShape (+ codec)
+#include "emp-tool/circuits/float_traits.h"   // FloatTraits<W> host codec + circuit::float_circuit (no legacy)
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -29,7 +29,7 @@
 
 namespace emp {
 
-// Float replays the fp<W>_<op>.empbc builtins via circuit::float_circuit
+// Float_T replays the fp<W>_<op>.empbc builtins via circuit::float_circuit
 // (declared in float.h, defined in float_circuit_files.cpp) and uses
 // FloatTraits<W> (in float.h) for its host clear codec.
 
@@ -49,9 +49,14 @@ namespace emp {
 template <class A, class B>
 inline void check_same_context(const A& l, const B& r) {
 #if EMP_CONTEXT_CHECKS
+    // A null context means a default-constructed (uninitialized) value reached an
+    // operator — catch it clearly instead of dereferencing null. (Two defaults
+    // would otherwise both be null and "match".)
+    if (!l.context() || !r.context()) error("typed value: operand is uninitialized (default-constructed, no context)");
     if (l.context() != r.context()) error("typed value: operands belong to different contexts");
+#else
+    (void)l; (void)r;   // -DEMP_CONTEXT_CHECKS=0 fully disables the check (even in debug)
 #endif
-    assert(l.context() == r.context());
 }
 
 // ============================ keep-templated kernels =======================
@@ -216,77 +221,83 @@ inline void div_full(Ctx& c, typename Ctx::Wire* vquot, typename Ctx::Wire* vrem
 
 }  // namespace kernel
 
-// ================================ Bit<Ctx> =================================
+// ================================ Bit_T<Ctx> ===============================
 template <BooleanContext Ctx>
-class Bit {
+class Bit_T {
 public:
     using Wire         = typename Ctx::Wire;
     using context_type = Ctx;
-    using shape        = BitShape;
-    using clear_t      = shape::clear_t;
+    using clear_t      = bool;
+    template <BooleanContext C2> using rebind = Bit_T<C2>;
     Wire w{};
 
-    Bit() = default;
-    Bit(Ctx& c, Wire wire) : ctx_(&c), w(wire) {}
-    static Bit constant(Ctx& c, bool v) { return Bit(c, c.public_bit(v)); }
+    // Default ctor: UNINITIALIZED — null context, no usable wire — so that
+    // `Bit_T<Ctx> arr[N];` (or std::array) works; assign / from_wires before any
+    // op. Operating on a default-constructed value is UB, like a moved-from one.
+    // (Same contract for UInt_T / Int_T / Float_T / Bits_T below.)
+    Bit_T() = default;
+    Bit_T(Ctx& c, Wire wire) : ctx_(&c), w(wire) {}
+    static Bit_T constant(Ctx& c, bool v) { return Bit_T(c, c.public_bit(v)); }
 
     Ctx* context() const { return ctx_; }
-    Bit  constant(bool v) const { return constant(*ctx_, v); }   // same-context sugar
+    Bit_T  constant(bool v) const { return constant(*ctx_, v); }   // same-context sugar
 
-    Bit operator&(const Bit& o) const { check_same_context(*this, o); return Bit(*ctx_, ctx_->and_gate(w, o.w)); }
-    Bit operator^(const Bit& o) const { check_same_context(*this, o); return Bit(*ctx_, ctx_->xor_gate(w, o.w)); }
-    Bit operator|(const Bit& o) const { return *this ^ o ^ (*this & o); }
-    Bit operator!() const              { return Bit(*ctx_, ctx_->not_gate(w)); }
+    Bit_T operator&(const Bit_T& o) const { check_same_context(*this, o); return Bit_T(*ctx_, ctx_->and_gate(w, o.w)); }
+    Bit_T operator^(const Bit_T& o) const { check_same_context(*this, o); return Bit_T(*ctx_, ctx_->xor_gate(w, o.w)); }
+    Bit_T operator|(const Bit_T& o) const { return *this ^ o ^ (*this & o); }
+    Bit_T operator!() const                { return Bit_T(*ctx_, ctx_->not_gate(w)); }
+    Bit_T operator==(const Bit_T& o) const { return !(*this ^ o); }   // XNOR
+    Bit_T operator!=(const Bit_T& o) const { return *this ^ o; }      // XOR
     // sel ? t : *this
-    Bit select(const Bit& sel, const Bit& t) const {
+    Bit_T select(const Bit_T& sel, const Bit_T& t) const {
         check_same_context(*this, sel); check_same_context(*this, t);
-        return Bit(*ctx_, kernel::mux(*ctx_, sel.w, t.w, w));
+        return Bit_T(*ctx_, kernel::mux(*ctx_, sel.w, t.w, w));
     }
 
-    static constexpr int width() { return shape::width; }
+    static constexpr int width() { return 1; }
     void pack_wires(Wire* out) const { out[0] = w; }
-    static Bit from_wires(Ctx& c, const Wire* in) { return Bit(c, in[0]); }
-    static std::vector<bool> encode(bool v) { return shape::encode(v); }
-    static bool decode(const bool* bits)    { return shape::decode(bits); }
+    static Bit_T from_wires(Ctx& c, const Wire* in) { return Bit_T(c, in[0]); }
+    static std::vector<bool> encode(bool v) { return std::vector<bool>{v}; }
+    static bool decode(const bool* b)       { return b[0]; }
 
 private:
     Ctx* ctx_ = nullptr;
 };
 
-// =============================== UInt<Ctx,N> ==============================
+// =============================== UInt_T<Ctx,N> ============================
 template <BooleanContext Ctx, int N>
-class UInt {
+class UInt_T {
 public:
     using Wire         = typename Ctx::Wire;
     using context_type = Ctx;
-    using shape        = UIntShape<N>;
-    using clear_t      = typename shape::clear_t;
+    using clear_t      = uint64_t;
+    template <BooleanContext C2> using rebind = UInt_T<C2, N>;
     std::array<Wire, N> w{};
 
-    UInt() = default;
-    explicit UInt(Ctx& c) : ctx_(&c) {}
+    UInt_T() = default;
+    explicit UInt_T(Ctx& c) : ctx_(&c) {}
 
-    static UInt constant(Ctx& c, uint64_t v) {
-        static_assert(N <= 64, "UInt::constant uint64 carrier limited to N <= 64 (TODO: limb type)");
-        UInt r(c);
+    static UInt_T constant(Ctx& c, uint64_t v) {
+        static_assert(N <= 64, "UInt_T::constant uint64 carrier limited to N <= 64 (TODO: limb type)");
+        UInt_T r(c);
         for (int i = 0; i < N; ++i) r.w[i] = c.public_bit((v >> i) & 1);
         return r;
     }
-    static UInt from_wires(Ctx& c, const Wire* in) {
-        UInt r(c); for (int i = 0; i < N; ++i) r.w[i] = in[i]; return r;
+    static UInt_T from_wires(Ctx& c, const Wire* in) {
+        UInt_T r(c); for (int i = 0; i < N; ++i) r.w[i] = in[i]; return r;
     }
 
     Ctx* context() const { return ctx_; }
-    UInt constant(uint64_t v) const { return constant(*ctx_, v); }   // same-context sugar
+    UInt_T constant(uint64_t v) const { return constant(*ctx_, v); }   // same-context sugar
 
-    Bit<Ctx> operator[](int i) const { return Bit<Ctx>(*ctx_, w[i]); }
+    Bit_T<Ctx> operator[](int i) const { return Bit_T<Ctx>(*ctx_, w[i]); }
 
-    UInt operator+(const UInt& o) const { check_same_context(*this, o); UInt r(*ctx_); kernel::ripple_add<Ctx, N>(*ctx_, w.data(), o.w.data(), r.w.data()); return r; }
-    UInt operator-(const UInt& o) const { check_same_context(*this, o); UInt r(*ctx_); kernel::ripple_sub<Ctx, N>(*ctx_, w.data(), o.w.data(), r.w.data()); return r; }
-    UInt operator&(const UInt& o) const { check_same_context(*this, o); UInt r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->and_gate(w[i], o.w[i]); return r; }
-    UInt operator^(const UInt& o) const { check_same_context(*this, o); UInt r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->xor_gate(w[i], o.w[i]); return r; }
-    UInt operator|(const UInt& o) const { check_same_context(*this, o); UInt r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = (*this)[i].operator|(o[i]).w; return r; }
-    UInt operator~() const               { UInt r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->not_gate(w[i]); return r; }
+    UInt_T operator+(const UInt_T& o) const { check_same_context(*this, o); UInt_T r(*ctx_); kernel::ripple_add<Ctx, N>(*ctx_, w.data(), o.w.data(), r.w.data()); return r; }
+    UInt_T operator-(const UInt_T& o) const { check_same_context(*this, o); UInt_T r(*ctx_); kernel::ripple_sub<Ctx, N>(*ctx_, w.data(), o.w.data(), r.w.data()); return r; }
+    UInt_T operator&(const UInt_T& o) const { check_same_context(*this, o); UInt_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->and_gate(w[i], o.w[i]); return r; }
+    UInt_T operator^(const UInt_T& o) const { check_same_context(*this, o); UInt_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->xor_gate(w[i], o.w[i]); return r; }
+    UInt_T operator|(const UInt_T& o) const { check_same_context(*this, o); UInt_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = (*this)[i].operator|(o[i]).w; return r; }
+    UInt_T operator~() const                { UInt_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->not_gate(w[i]); return r; }
 
     // mul/div/mod budget note (templated kernel vs IR replay): multiply is an
     // O(N^2) shift-add and stays a templated kernel comfortably. Division/mod is
@@ -296,108 +307,231 @@ public:
     // are no integer builtins recorded. Revisit (record uintN_div) if a fixed
     // width dominates. Float keeps the opposite policy: all nontrivial ops replay.
     // Division by zero saturates (see kernel::div_full).
-    UInt operator*(const UInt& o) const { check_same_context(*this, o); UInt r(*ctx_); kernel::mul_full<Ctx, N>(*ctx_, r.w.data(), w.data(), o.w.data()); return r; }
-    UInt operator/(const UInt& o) const { check_same_context(*this, o); UInt r(*ctx_); kernel::div_full<Ctx, N>(*ctx_, r.w.data(), nullptr, w.data(), o.w.data()); return r; }
-    UInt operator%(const UInt& o) const { check_same_context(*this, o); UInt r(*ctx_); kernel::div_full<Ctx, N>(*ctx_, nullptr, r.w.data(), w.data(), o.w.data()); return r; }
+    UInt_T operator*(const UInt_T& o) const { check_same_context(*this, o); UInt_T r(*ctx_); kernel::mul_full<Ctx, N>(*ctx_, r.w.data(), w.data(), o.w.data()); return r; }
+    UInt_T operator/(const UInt_T& o) const { check_same_context(*this, o); UInt_T r(*ctx_); kernel::div_full<Ctx, N>(*ctx_, r.w.data(), nullptr, w.data(), o.w.data()); return r; }
+    UInt_T operator%(const UInt_T& o) const { check_same_context(*this, o); UInt_T r(*ctx_); kernel::div_full<Ctx, N>(*ctx_, nullptr, r.w.data(), w.data(), o.w.data()); return r; }
 
-    Bit<Ctx> operator==(const UInt& o) const { check_same_context(*this, o); return Bit<Ctx>(*ctx_, kernel::equal<Ctx, N>(*ctx_, w.data(), o.w.data())); }
-    Bit<Ctx> operator<(const UInt& o)  const { check_same_context(*this, o); return Bit<Ctx>(*ctx_, kernel::less_than<Ctx, N>(*ctx_, w.data(), o.w.data())); }
-    Bit<Ctx> operator>(const UInt& o)  const { return o < *this; }
+    Bit_T<Ctx> operator==(const UInt_T& o) const { check_same_context(*this, o); return Bit_T<Ctx>(*ctx_, kernel::equal<Ctx, N>(*ctx_, w.data(), o.w.data())); }
+    Bit_T<Ctx> operator!=(const UInt_T& o) const { return !(*this == o); }
+    Bit_T<Ctx> operator<(const UInt_T& o)  const { check_same_context(*this, o); return Bit_T<Ctx>(*ctx_, kernel::less_than<Ctx, N>(*ctx_, w.data(), o.w.data())); }
+    Bit_T<Ctx> operator>(const UInt_T& o)  const { return o < *this; }
+    Bit_T<Ctx> operator<=(const UInt_T& o) const { return !(*this > o); }
+    Bit_T<Ctx> operator>=(const UInt_T& o) const { return !(*this < o); }
 
-    UInt select(const Bit<Ctx>& sel, const UInt& t) const {
+    UInt_T select(const Bit_T<Ctx>& sel, const UInt_T& t) const {
         check_same_context(*this, sel); check_same_context(*this, t);
-        UInt r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = kernel::mux(*ctx_, sel.w, t.w[i], w[i]); return r;
+        UInt_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = kernel::mux(*ctx_, sel.w, t.w[i], w[i]); return r;
     }
 
-    static constexpr int width() { return shape::width; }
+    // --- shifts / rotates by a PUBLIC constant amount (pure wiring, no gates).
+    //     Shift amount must be >= 0; logical (zero-fill) for both directions. ---
+    UInt_T operator<<(int s) const {
+        if (s < 0) error("UInt_T::operator<<: shift amount must be >= 0");
+        UInt_T r(*ctx_); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < N; ++i) r.w[i] = (i >= s) ? w[i - s] : z;
+        return r;
+    }
+    UInt_T operator>>(int s) const {
+        if (s < 0) error("UInt_T::operator>>: shift amount must be >= 0");
+        UInt_T r(*ctx_); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < N; ++i) r.w[i] = (i + s < N) ? w[i + s] : z;
+        return r;
+    }
+    UInt_T rotl(int s) const { UInt_T r(*ctx_); s = ((s % N) + N) % N; for (int i = 0; i < N; ++i) r.w[i] = w[((i - s) % N + N) % N]; return r; }
+    UInt_T rotr(int s) const { UInt_T r(*ctx_); s = ((s % N) + N) % N; for (int i = 0; i < N; ++i) r.w[i] = w[(i + s) % N]; return r; }
+
+    // --- width-changing views (pure wiring): slice [Lo,Hi), concat (this is the
+    //     LOW half), zero-extend, truncate. Widths are compile-time for type
+    //     safety. ---
+    template <int Lo, int Hi> UInt_T<Ctx, Hi - Lo> slice() const {
+        static_assert(0 <= Lo && Lo <= Hi && Hi <= N, "UInt_T::slice<Lo,Hi>: out of range");
+        UInt_T<Ctx, Hi - Lo> r(*ctx_); for (int i = 0; i < Hi - Lo; ++i) r.w[i] = w[Lo + i]; return r;
+    }
+    template <int Base, int Width> UInt_T<Ctx, Width> extract() const { return slice<Base, Base + Width>(); }
+    template <int M> UInt_T<Ctx, N + M> concat(const UInt_T<Ctx, M>& hi) const {
+        check_same_context(*this, hi);
+        UInt_T<Ctx, N + M> r(*ctx_);
+        for (int i = 0; i < N; ++i) r.w[i] = w[i];
+        for (int i = 0; i < M; ++i) r.w[N + i] = hi.w[i];
+        return r;
+    }
+    template <int M> UInt_T<Ctx, M> zext() const {
+        static_assert(M >= N, "UInt_T::zext<M>: M must be >= width");
+        UInt_T<Ctx, M> r(*ctx_); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < M; ++i) r.w[i] = (i < N) ? w[i] : z;
+        return r;
+    }
+    template <int M> UInt_T<Ctx, M> trunc() const {
+        static_assert(M <= N, "UInt_T::trunc<M>: M must be <= width");
+        UInt_T<Ctx, M> r(*ctx_); for (int i = 0; i < M; ++i) r.w[i] = w[i]; return r;
+    }
+
+    static constexpr int width() { return N; }
     void pack_wires(Wire* out) const { for (int i = 0; i < N; ++i) out[i] = w[i]; }
-    static std::vector<bool> encode(uint64_t v) { return shape::encode(v); }
-    static uint64_t decode(const bool* bits)    { return shape::decode(bits); }
+    static std::vector<bool> encode(uint64_t v) {
+        static_assert(N <= 64, "UInt_T clear codec limited to N<=64 (TODO: limb type)");
+        std::vector<bool> b(N); for (int i = 0; i < N; ++i) b[i] = (v >> i) & 1; return b;
+    }
+    static uint64_t decode(const bool* bits) {
+        static_assert(N <= 64, "UInt_T clear codec limited to N<=64 (TODO: limb type)");
+        uint64_t v = 0; for (int i = 0; i < N; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i; return v;
+    }
 
 private:
     Ctx* ctx_ = nullptr;
 };
 
-// ============================== Int<Ctx,N> =========================
-// Two's complement: +,- share UInt's ripple kernels; comparison is signed.
+// ============================== Int_T<Ctx,N> =======================
+// Two's complement: +,- share UInt_T's ripple kernels; comparison is signed.
 template <BooleanContext Ctx, int N>
-class Int {
+class Int_T {
 public:
     using Wire         = typename Ctx::Wire;
     using context_type = Ctx;
-    using shape        = IntShape<N>;
-    using clear_t      = typename shape::clear_t;
+    using clear_t      = int64_t;
+    template <BooleanContext C2> using rebind = Int_T<C2, N>;
     std::array<Wire, N> w{};
 
-    Int() = default;
-    explicit Int(Ctx& c) : ctx_(&c) {}
-    static Int constant(Ctx& c, int64_t v) {
-        static_assert(N <= 64, "Int::constant int64 carrier limited to N <= 64 (TODO: limb type)");
+    Int_T() = default;
+    explicit Int_T(Ctx& c) : ctx_(&c) {}
+    static Int_T constant(Ctx& c, int64_t v) {
+        static_assert(N <= 64, "Int_T::constant int64 carrier limited to N <= 64 (TODO: limb type)");
         // shift the bit pattern as unsigned (signed >> is implementation-defined)
         uint64_t u = (uint64_t)v;
-        Int r(c); for (int i = 0; i < N; ++i) r.w[i] = c.public_bit((u >> i) & 1); return r;
+        Int_T r(c); for (int i = 0; i < N; ++i) r.w[i] = c.public_bit((u >> i) & 1); return r;
     }
-    static Int from_wires(Ctx& c, const Wire* in) {
-        Int r(c); for (int i = 0; i < N; ++i) r.w[i] = in[i]; return r;
+    static Int_T from_wires(Ctx& c, const Wire* in) {
+        Int_T r(c); for (int i = 0; i < N; ++i) r.w[i] = in[i]; return r;
     }
 
     Ctx* context() const { return ctx_; }
-    Int  constant(int64_t v) const { return constant(*ctx_, v); }   // same-context sugar
+    Int_T  constant(int64_t v) const { return constant(*ctx_, v); }   // same-context sugar
 
-    Int operator+(const Int& o) const { check_same_context(*this, o); Int r(*ctx_); kernel::ripple_add<Ctx, N>(*ctx_, w.data(), o.w.data(), r.w.data()); return r; }
-    Int operator-(const Int& o) const { check_same_context(*this, o); Int r(*ctx_); kernel::ripple_sub<Ctx, N>(*ctx_, w.data(), o.w.data(), r.w.data()); return r; }
-    Int operator-() const { return Int::constant(*ctx_, 0) - *this; }
+    Int_T operator+(const Int_T& o) const { check_same_context(*this, o); Int_T r(*ctx_); kernel::ripple_add<Ctx, N>(*ctx_, w.data(), o.w.data(), r.w.data()); return r; }
+    Int_T operator-(const Int_T& o) const { check_same_context(*this, o); Int_T r(*ctx_); kernel::ripple_sub<Ctx, N>(*ctx_, w.data(), o.w.data(), r.w.data()); return r; }
+    Int_T operator-() const { return Int_T::constant(*ctx_, 0) - *this; }
 
     // signed a < b: lt = (a[N-1] != b[N-1]) ? a[N-1] : borrow(a-b).
-    Bit<Ctx> operator<(const Int& o) const {
+    Bit_T<Ctx> operator<(const Int_T& o) const {
         check_same_context(*this, o);
         using W = typename Ctx::Wire;
         W ub = kernel::less_than<Ctx, N>(*ctx_, w.data(), o.w.data());   // unsigned a<b borrow
         W sa = w[N - 1], sb = o.w[N - 1];
         W diff = ctx_->xor_gate(sa, sb);
         // signed_lt = diff ? sa : ub
-        return Bit<Ctx>(*ctx_, kernel::mux(*ctx_, diff, sa, ub));
+        return Bit_T<Ctx>(*ctx_, kernel::mux(*ctx_, diff, sa, ub));
     }
-    Bit<Ctx> operator>(const Int& o) const { return o < *this; }
+    Bit_T<Ctx> operator>(const Int_T& o) const { return o < *this; }
+    // equality is sign-agnostic (bitwise), same kernel as UInt_T.
+    Bit_T<Ctx> operator==(const Int_T& o) const { check_same_context(*this, o); return Bit_T<Ctx>(*ctx_, kernel::equal<Ctx, N>(*ctx_, w.data(), o.w.data())); }
+    Bit_T<Ctx> operator!=(const Int_T& o) const { return !(*this == o); }
+    Bit_T<Ctx> operator<=(const Int_T& o) const { return !(*this > o); }
+    Bit_T<Ctx> operator>=(const Int_T& o) const { return !(*this < o); }
 
-    static constexpr int width() { return shape::width; }
+    // Low N bits of the two's-complement product equal the unsigned product, so
+    // multiply reuses UInt_T's kernel; bitwise ops are per-bit.
+    Int_T operator*(const Int_T& o) const { check_same_context(*this, o); Int_T r(*ctx_); kernel::mul_full<Ctx, N>(*ctx_, r.w.data(), w.data(), o.w.data()); return r; }
+    Int_T operator&(const Int_T& o) const { check_same_context(*this, o); Int_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->and_gate(w[i], o.w[i]); return r; }
+    Int_T operator^(const Int_T& o) const { check_same_context(*this, o); Int_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->xor_gate(w[i], o.w[i]); return r; }
+    Int_T operator|(const Int_T& o) const { check_same_context(*this, o); Int_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ((*this)[i] | o[i]).w; return r; }
+    Int_T operator~() const               { Int_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->not_gate(w[i]); return r; }
+    Bit_T<Ctx> operator[](int i) const    { return Bit_T<Ctx>(*ctx_, w[i]); }
+
+    // Signed division / remainder (truncate toward zero; remainder takes the
+    // dividend's sign): divide the magnitudes, then fix signs. (Division by zero
+    // saturates via the unsigned kernel; the most-negative operand is a UB
+    // precondition, as in the legacy signed int.)
+    Int_T operator/(const Int_T& o) const {
+        check_same_context(*this, o);
+        Bit_T<Ctx> sa = (*this)[N - 1], sb = o[N - 1];
+        Int_T ua = this->select(sa, -*this), ub = o.select(sb, -o);   // magnitudes
+        Int_T uq(*ctx_); kernel::div_full<Ctx, N>(*ctx_, uq.w.data(), nullptr, ua.w.data(), ub.w.data());
+        return uq.select(sa != sb, -uq);
+    }
+    Int_T operator%(const Int_T& o) const {
+        check_same_context(*this, o);
+        Bit_T<Ctx> sa = (*this)[N - 1], sb = o[N - 1];
+        Int_T ua = this->select(sa, -*this), ub = o.select(sb, -o);
+        Int_T ur(*ctx_); kernel::div_full<Ctx, N>(*ctx_, nullptr, ur.w.data(), ua.w.data(), ub.w.data());
+        return ur.select(sa, -ur);
+    }
+
+    // sel ? t : *this
+    Int_T select(const Bit_T<Ctx>& sel, const Int_T& t) const {
+        check_same_context(*this, sel); check_same_context(*this, t);
+        Int_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = kernel::mux(*ctx_, sel.w, t.w[i], w[i]); return r;
+    }
+
+    // --- shifts by a PUBLIC constant amount (s >= 0): logical left, ARITHMETIC
+    //     right (sign-extending), and width-changing sign-extend / truncate. ---
+    Int_T operator<<(int s) const {
+        if (s < 0) error("Int_T::operator<<: shift amount must be >= 0");
+        Int_T r(*ctx_); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < N; ++i) r.w[i] = (i >= s) ? w[i - s] : z;
+        return r;
+    }
+    Int_T operator>>(int s) const {                 // arithmetic: fill with sign bit
+        if (s < 0) error("Int_T::operator>>: shift amount must be >= 0");
+        Int_T r(*ctx_); Wire sgn = w[N - 1];
+        for (int i = 0; i < N; ++i) r.w[i] = (i + s < N) ? w[i + s] : sgn;
+        return r;
+    }
+    template <int M> Int_T<Ctx, M> sext() const {
+        static_assert(M >= N, "Int_T::sext<M>: M must be >= width");
+        Int_T<Ctx, M> r(*ctx_); for (int i = 0; i < M; ++i) r.w[i] = (i < N) ? w[i] : w[N - 1]; return r;
+    }
+    template <int M> Int_T<Ctx, M> trunc() const {
+        static_assert(M <= N, "Int_T::trunc<M>: M must be <= width");
+        Int_T<Ctx, M> r(*ctx_); for (int i = 0; i < M; ++i) r.w[i] = w[i]; return r;
+    }
+
+    static constexpr int width() { return N; }
     void pack_wires(Wire* out) const { for (int i = 0; i < N; ++i) out[i] = w[i]; }
-    static std::vector<bool> encode(int64_t v) { return shape::encode(v); }
-    static int64_t decode(const bool* bits)    { return shape::decode(bits); }
+    static std::vector<bool> encode(int64_t v) {
+        static_assert(N <= 64, "Int_T clear codec limited to N<=64 (TODO: limb type)");
+        uint64_t u = (uint64_t)v;
+        std::vector<bool> b(N); for (int i = 0; i < N; ++i) b[i] = (u >> i) & 1; return b;
+    }
+    static int64_t decode(const bool* bits) {
+        static_assert(N <= 64, "Int_T clear codec limited to N<=64 (TODO: limb type)");
+        uint64_t v = 0; for (int i = 0; i < N; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i;
+        if (N < 64 && ((v >> (N - 1)) & 1)) v |= ~((uint64_t(1) << N) - 1);
+        return (int64_t)v;
+    }
 
 private:
     Ctx* ctx_ = nullptr;
 };
 
-// ================================ Float<Ctx,W> ===========================
+// ================================ Float_T<Ctx,W> =========================
 // IEEE binary{16,32,64}. Arithmetic replays the recorded fp<W>_<op>.empbc
 // through the context (the "big circuits -> IR replay" rule). Clear codec uses
 // the host scalar (float for fp16/fp32, double for fp64) via FloatTraits<W>
 // (memcpy/bit_cast; software RNE for fp16); raw-bit helpers are also provided.
 template <BooleanContext Ctx, int W>
-class Float {
+class Float_T {
 public:
     using Wire         = typename Ctx::Wire;
     using context_type = Ctx;
-    using shape        = FloatShape<W>;
     using host_t       = typename FloatTraits<W>::host_t;
     using clear_t      = host_t;
+    template <BooleanContext C2> using rebind = Float_T<C2, W>;
     std::array<Wire, W> w{};
 
-    Float() = default;
-    explicit Float(Ctx& c) : ctx_(&c) {}
-    static Float from_bits(Ctx& c, uint64_t bits) {
-        Float r(c); for (int i = 0; i < W; ++i) r.w[i] = c.public_bit((bits >> i) & 1); return r;
+    Float_T() = default;
+    explicit Float_T(Ctx& c) : ctx_(&c) {}
+    static Float_T from_bits(Ctx& c, uint64_t bits) {
+        Float_T r(c); for (int i = 0; i < W; ++i) r.w[i] = c.public_bit((bits >> i) & 1); return r;
     }
-    static Float from_wires(Ctx& c, const Wire* in) {
-        Float r(c); for (int i = 0; i < W; ++i) r.w[i] = in[i]; return r;
+    static Float_T from_wires(Ctx& c, const Wire* in) {
+        Float_T r(c); for (int i = 0; i < W; ++i) r.w[i] = in[i]; return r;
     }
 
     // Construct from a host value (e.g. 1.5f) via the per-width bit pattern.
-    static Float constant(Ctx& c, host_t v) { return from_bits(c, FloatTraits<W>::to_bits(v)); }
+    static Float_T constant(Ctx& c, host_t v) { return from_bits(c, FloatTraits<W>::to_bits(v)); }
 
-    Ctx*  context() const { return ctx_; }
-    Float constant(host_t v) const { return constant(*ctx_, v); }   // same-context sugar
+    Ctx*    context() const { return ctx_; }
+    Float_T constant(host_t v) const { return constant(*ctx_, v); }   // same-context sugar
 
     // ---- IR-replay helpers over the fp<W>_<op>.empbc builtins ----
     // unary/binary/ternary return W bits; compare/classify circuits emit 8 bits
@@ -409,7 +543,7 @@ public:
     // next replay_<K> call — every caller copies it into a Float/Bit immediately,
     // and the workspace is single-threaded, so sequential ops never overlap.
     template <int K>
-    const std::vector<Wire>& replay_(const char* op, const std::array<const Float*, K>& ops) const {
+    const std::vector<Wire>& replay_(const char* op, const std::array<const Float_T*, K>& ops) const {
         static thread_local ProgramWorkspace<Wire> ws;
         ws.tmp_inputs.resize((size_t)K * W);
         for (int k = 0; k < K; ++k)
@@ -417,68 +551,81 @@ public:
         return execute_program(*ctx_, circuit::float_circuit(W, op),
                                std::span<const Wire>(ws.tmp_inputs.data(), (size_t)K * W), ws);
     }
-    Float unary_(const char* op) const {
+    Float_T unary_(const char* op) const {
         const auto& out = replay_<1>(op, {this});
-        Float r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = out[i]; return r;
+        Float_T r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = out[i]; return r;
     }
-    Float binop_(const char* op, const Float& o) const {
+    Float_T binop_(const char* op, const Float_T& o) const {
         check_same_context(*this, o);
         const auto& out = replay_<2>(op, {this, &o});
-        Float r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = out[i]; return r;
+        Float_T r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = out[i]; return r;
     }
-    Float ternary_(const char* op, const Float& b, const Float& c) const {
+    Float_T ternary_(const char* op, const Float_T& b, const Float_T& c) const {
         check_same_context(*this, b); check_same_context(*this, c);
         const auto& out = replay_<3>(op, {this, &b, &c});
-        Float r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = out[i]; return r;
+        Float_T r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = out[i]; return r;
     }
-    Bit<Ctx> cmp_(const char* op, const Float& o) const {
+    Bit_T<Ctx> cmp_(const char* op, const Float_T& o) const {
         check_same_context(*this, o);
-        return Bit<Ctx>(*ctx_, replay_<2>(op, {this, &o})[0]);
+        return Bit_T<Ctx>(*ctx_, replay_<2>(op, {this, &o})[0]);
     }
-    Bit<Ctx> classify_(const char* op) const {
-        return Bit<Ctx>(*ctx_, replay_<1>(op, {this})[0]);
+    Bit_T<Ctx> classify_(const char* op) const {
+        return Bit_T<Ctx>(*ctx_, replay_<1>(op, {this})[0]);
     }
 
     // ---- arithmetic ----
-    Float operator+(const Float& o) const { return binop_("add", o); }
-    Float operator-(const Float& o) const { return binop_("sub", o); }
-    Float operator*(const Float& o) const { return binop_("mul", o); }
-    Float operator/(const Float& o) const { return binop_("div", o); }
-    Float min(const Float& o) const { return binop_("min", o); }
-    Float max(const Float& o) const { return binop_("max", o); }
-    Float sqr()   const { return unary_("square"); }
-    Float sqrt()  const { return unary_("sqrt"); }
-    Float recip() const { return unary_("recip"); }
-    Float rsqrt() const { return unary_("rsqrt"); }
-    Float fma(const Float& b, const Float& c) const { return ternary_("fma", b, c); }
+    Float_T operator+(const Float_T& o) const { return binop_("add", o); }
+    Float_T operator-(const Float_T& o) const { return binop_("sub", o); }
+    Float_T operator*(const Float_T& o) const { return binop_("mul", o); }
+    Float_T operator/(const Float_T& o) const { return binop_("div", o); }
+    Float_T min(const Float_T& o) const { return binop_("min", o); }
+    Float_T max(const Float_T& o) const { return binop_("max", o); }
+    Float_T sqr()   const { return unary_("square"); }
+    Float_T sqrt()  const { return unary_("sqrt"); }
+    Float_T recip() const { return unary_("recip"); }
+    Float_T rsqrt() const { return unary_("rsqrt"); }
+    Float_T fma(const Float_T& b, const Float_T& c) const { return ternary_("fma", b, c); }
 
-    // ---- comparisons / classifiers -> Bit ----
-    Bit<Ctx> equal(const Float& o)         const { return cmp_("eq", o); }
-    Bit<Ctx> not_equal(const Float& o)     const { return cmp_("ne", o); }
-    Bit<Ctx> less_than(const Float& o)     const { return cmp_("lt", o); }
-    Bit<Ctx> less_equal(const Float& o)    const { return cmp_("le", o); }
-    Bit<Ctx> greater_than(const Float& o)  const { return cmp_("gt", o); }
-    Bit<Ctx> greater_equal(const Float& o) const { return cmp_("ge", o); }
-    Bit<Ctx> is_nan()  const { return classify_("isnan"); }
-    Bit<Ctx> is_inf()  const { return classify_("isinf"); }
-    Bit<Ctx> is_zero() const { return classify_("iszero"); }
+    // ---- comparisons / classifiers -> Bit_T ----
+    Bit_T<Ctx> equal(const Float_T& o)         const { return cmp_("eq", o); }
+    Bit_T<Ctx> not_equal(const Float_T& o)     const { return cmp_("ne", o); }
+    Bit_T<Ctx> less_than(const Float_T& o)     const { return cmp_("lt", o); }
+    Bit_T<Ctx> less_equal(const Float_T& o)    const { return cmp_("le", o); }
+    Bit_T<Ctx> greater_than(const Float_T& o)  const { return cmp_("gt", o); }
+    Bit_T<Ctx> greater_equal(const Float_T& o) const { return cmp_("ge", o); }
+    // Operator spellings (NaN-aware, via the fp<W>_* circuits).
+    Bit_T<Ctx> operator==(const Float_T& o) const { return equal(o); }
+    Bit_T<Ctx> operator!=(const Float_T& o) const { return not_equal(o); }
+    Bit_T<Ctx> operator<(const Float_T& o)  const { return less_than(o); }
+    Bit_T<Ctx> operator<=(const Float_T& o) const { return less_equal(o); }
+    Bit_T<Ctx> operator>(const Float_T& o)  const { return greater_than(o); }
+    Bit_T<Ctx> operator>=(const Float_T& o) const { return greater_equal(o); }
+    Bit_T<Ctx> is_nan()  const { return classify_("isnan"); }
+    Bit_T<Ctx> is_inf()  const { return classify_("isinf"); }
+    Bit_T<Ctx> is_zero() const { return classify_("iszero"); }
 
     // ---- sign-bit ops + select: pure wiring, realized locally (MSB = bit W-1) ----
-    Float abs() const        { Float r(*this); r.w[W - 1] = ctx_->public_bit(false); return r; }
-    Float operator-() const  { Float r(*this); r.w[W - 1] = ctx_->not_gate(w[W - 1]); return r; }
-    Float copysign(const Float& o) const { check_same_context(*this, o); Float r(*this); r.w[W - 1] = o.w[W - 1]; return r; }
+    Float_T abs() const        { Float_T r(*this); r.w[W - 1] = ctx_->public_bit(false); return r; }
+    Float_T operator-() const  { Float_T r(*this); r.w[W - 1] = ctx_->not_gate(w[W - 1]); return r; }
+    Float_T copysign(const Float_T& o) const { check_same_context(*this, o); Float_T r(*this); r.w[W - 1] = o.w[W - 1]; return r; }
     // sel ? o : *this, per bit.
-    Float select(const Bit<Ctx>& sel, const Float& o) const {
+    Float_T select(const Bit_T<Ctx>& sel, const Float_T& o) const {
         check_same_context(*this, sel); check_same_context(*this, o);
-        Float r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = kernel::mux(*ctx_, sel.w, o.w[i], w[i]); return r;
+        Float_T r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = kernel::mux(*ctx_, sel.w, o.w[i], w[i]); return r;
     }
-    Bit<Ctx> operator[](int i) const { return Bit<Ctx>(*ctx_, w[i]); }
+    Bit_T<Ctx> operator[](int i) const { return Bit_T<Ctx>(*ctx_, w[i]); }
 
-    static constexpr int width() { return shape::width; }
+    static constexpr int width() { return W; }
     void pack_wires(Wire* out) const { for (int i = 0; i < W; ++i) out[i] = w[i]; }
-    // Clear codec: host scalar <-> W bits (LSB-first), via the shape.
-    static std::vector<bool> encode(host_t v) { return shape::encode(v); }
-    static host_t decode(const bool* bits)    { return shape::decode(bits); }
+    // Clear codec: host scalar <-> W bits (LSB-first), via FloatTraits<W>.
+    static std::vector<bool> encode(host_t v) {
+        uint64_t bits = FloatTraits<W>::to_bits(v);
+        std::vector<bool> b(W); for (int i = 0; i < W; ++i) b[i] = (bits >> i) & 1; return b;
+    }
+    static host_t decode(const bool* bits) {
+        uint64_t v = 0; for (int i = 0; i < W; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i;
+        return FloatTraits<W>::from_bits(v);
+    }
     // Raw-bit helpers (when you want the IEEE pattern directly).
     static std::vector<bool> encode_bits(uint64_t bits) {
         std::vector<bool> b(W); for (int i = 0; i < W; ++i) b[i] = (bits >> i) & 1; return b;
@@ -491,15 +638,64 @@ private:
     Ctx* ctx_ = nullptr;
 };
 
-// Round-trip guards: a value names its shape, and the shape binds back to it.
-static_assert(std::is_same_v<BitShape::bind<ClearContext>,        Bit<ClearContext>>);
-static_assert(std::is_same_v<UIntShape<32>::bind<ClearContext>,   UInt<ClearContext, 32>>);
-static_assert(std::is_same_v<IntShape<32>::bind<ClearContext>,    Int<ClearContext, 32>>);
-static_assert(std::is_same_v<FloatShape<32>::bind<ClearContext>,  Float<ClearContext, 32>>);
-static_assert(std::is_same_v<Bit<ClearContext>::shape,            BitShape>);
-static_assert(std::is_same_v<UInt<ClearContext, 32>::shape,       UIntShape<32>>);
-static_assert(std::is_same_v<Int<ClearContext, 32>::shape,        IntShape<32>>);
-static_assert(std::is_same_v<Float<ClearContext, 32>::shape,      FloatShape<32>>);
+// =============================== Bits_T<Ctx,N> ===========================
+// A fixed-width bit vector: the natural value for crypto blocks (AES/SHA I/O) and
+// for assembling / disassembling wider values bit by bit. clear_t is the N bools.
+// It is interconvertible with UInt_T<Ctx,N> (same wires, zero gates).
+template <BooleanContext Ctx, int N>
+class Bits_T {
+public:
+    using Wire         = typename Ctx::Wire;
+    using context_type = Ctx;
+    using clear_t      = std::array<bool, N>;
+    template <BooleanContext C2> using rebind = Bits_T<C2, N>;
+    std::array<Wire, N> w{};
+
+    Bits_T() = default;                          // uninitialized (null ctx) until assigned/from_wires
+    explicit Bits_T(Ctx& c) : ctx_(&c) {}
+    static Bits_T constant(Ctx& c, const clear_t& v) {
+        Bits_T r(c); for (int i = 0; i < N; ++i) r.w[i] = c.public_bit(v[i]); return r;
+    }
+    // Assemble from N Bit_T<Ctx> (e.g. a kernel's output bits).
+    static Bits_T from_bit_values(Ctx& c, const Bit_T<Ctx>* b) {
+        Bits_T r(c); for (int i = 0; i < N; ++i) r.w[i] = b[i].w; return r;
+    }
+    static Bits_T from_wires(Ctx& c, const Wire* in) { Bits_T r(c); for (int i = 0; i < N; ++i) r.w[i] = in[i]; return r; }
+
+    Ctx* context() const { return ctx_; }
+    Bits_T constant(const clear_t& v) const { return constant(*ctx_, v); }   // same-context sugar
+    Bit_T<Ctx> operator[](int i) const { return Bit_T<Ctx>(*ctx_, w[i]); }
+
+    // Reinterpret the same wires as an unsigned integer (zero gates).
+    UInt_T<Ctx, N> as_uint() const { return UInt_T<Ctx, N>::from_wires(*ctx_, w.data()); }
+
+    template <int Lo, int Hi> Bits_T<Ctx, Hi - Lo> slice() const {
+        static_assert(0 <= Lo && Lo <= Hi && Hi <= N, "Bits_T::slice<Lo,Hi>: out of range");
+        Bits_T<Ctx, Hi - Lo> r(*ctx_); for (int i = 0; i < Hi - Lo; ++i) r.w[i] = w[Lo + i]; return r;
+    }
+    template <int M> Bits_T<Ctx, N + M> concat(const Bits_T<Ctx, M>& hi) const {  // this is the LOW half
+        check_same_context(*this, hi);
+        Bits_T<Ctx, N + M> r(*ctx_);
+        for (int i = 0; i < N; ++i) r.w[i] = w[i];
+        for (int i = 0; i < M; ++i) r.w[N + i] = hi.w[i];
+        return r;
+    }
+
+    static constexpr int width() { return N; }
+    void pack_wires(Wire* out) const { for (int i = 0; i < N; ++i) out[i] = w[i]; }
+    static std::vector<bool> encode(const clear_t& v) { return std::vector<bool>(v.begin(), v.end()); }
+    static clear_t decode(const bool* b) { clear_t v{}; for (int i = 0; i < N; ++i) v[i] = b[i]; return v; }
+
+private:
+    Ctx* ctx_ = nullptr;
+};
+
+// Round-trip guards: rebinding a value to its own context is the identity.
+static_assert(std::is_same_v<Bit_T<ClearCtx>::rebind<ClearCtx>,          Bit_T<ClearCtx>>);
+static_assert(std::is_same_v<UInt_T<ClearCtx, 32>::rebind<ClearCtx>,     UInt_T<ClearCtx, 32>>);
+static_assert(std::is_same_v<Int_T<ClearCtx, 32>::rebind<ClearCtx>,      Int_T<ClearCtx, 32>>);
+static_assert(std::is_same_v<Float_T<ClearCtx, 32>::rebind<ClearCtx>,    Float_T<ClearCtx, 32>>);
+static_assert(std::is_same_v<Bits_T<ClearCtx, 128>::rebind<ClearCtx>,    Bits_T<ClearCtx, 128>>);
 
 }  // namespace emp
 #endif  // EMP_CIRCUIT_TYPED_H__

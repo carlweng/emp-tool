@@ -20,7 +20,7 @@ inline constexpr std::size_t runtime_width = 0;
 //     namespace emp::my_wire_types {
 //     EMP_CIRCUIT_TYPES_ALL(MyBackend::wire_type);            // the whole set
 //     }
-//     // -> using Bit = emp::Bit_T<MyBackend::wire_type>; ...
+//     // -> using Bit = emp::legacy::Bit_T<MyBackend::wire_type>; ...
 //
 // EMP_CIRCUIT_TYPES_ALL_AS appends a suffix so two wires can coexist:
 //
@@ -60,9 +60,12 @@ inline constexpr std::size_t runtime_width = 0;
 	APPLY(CTX, WIRE, SUFFIX, SHA3_256_Calculator, SHA3_256_Calculator_T<WIRE>) \
 	APPLY(CTX, WIRE, SUFFIX, SHA256_Calculator, SHA256_Calculator_T<WIRE>)
 
-// One alias row: using <Name><Suffix> = emp::<TemplateSpecialization>;
+// One alias row: using <Name><Suffix> = emp::legacy::<TemplateSpecialization>;
+// The Wire-based circuit class templates live in emp::legacy; the alias names
+// they bind to (Bit, UInt32, ...) are created in whatever namespace this macro
+// is invoked in.
 #define EMP_CIRCUIT_TYPE_ALIAS(_CTX, _WIRE, SUFFIX, NAME, ...) \
-	using EMP_CAT(NAME, SUFFIX) = emp::__VA_ARGS__;
+	using EMP_CAT(NAME, SUFFIX) = emp::legacy::__VA_ARGS__;
 
 // Public: bind the whole standard primitive set in the current namespace.
 // `Float` is a convenience alias for Float32 (Float_T<WIRE, 32>), appended here
@@ -81,7 +84,10 @@ inline constexpr std::size_t runtime_width = 0;
 #define EMP_EXTERN_TEMPLATE(...)      extern template class __VA_ARGS__;
 #define EMP_INSTANTIATE_TEMPLATE(...)        template class __VA_ARGS__;
 
-#define EMP_CIRCUIT_CLASS_ENTRY(ACTION, _WIRE, _SUFFIX, _NAME, ...) ACTION(__VA_ARGS__)
+// The class specialization is qualified with emp::legacy:: so the explicit
+// extern/instantiate declarations name the templates in their real namespace
+// even when this list is expanded inside a bare `namespace emp { ... }`.
+#define EMP_CIRCUIT_CLASS_ENTRY(ACTION, _WIRE, _SUFFIX, _NAME, ...) ACTION(emp::legacy::__VA_ARGS__)
 
 #define EMP_CIRCUIT_CLASS_LIST(ACTION, WIRE) \
 	EMP_CIRCUIT_TYPE_LIST(EMP_CIRCUIT_CLASS_ENTRY, ACTION, WIRE, )

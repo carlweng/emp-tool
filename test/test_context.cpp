@@ -4,6 +4,7 @@
 
 #include "emp-tool/emp-tool.h"
 #include "emp-tool/circuits/context.h"
+#include "emp-tool/circuits/backend_ctx.h"   // BackendCtx (global-backend bridge)
 #include "emp-tool/circuits/circuit_artifact.h"
 #include "emp-tool/execution/clear_backend.h"
 #include <array>
@@ -35,8 +36,8 @@ static void check(const char* what, bool ok) {
     if (!ok) { printf("  [FAIL] %s\n", what); ++bad; }
 }
 
-// A kernel that REUSES a constant (public_bit(false) twice). RecordContext and
-// DigestContext both have Wire = uint32_t, so one body serves both. Used to
+// A kernel that REUSES a constant (public_bit(false) twice). RecordCtx and
+// DigestCtx both have Wire = uint32_t, so one body serves both. Used to
 // check digest_program(recorded) == digest_source(same body).
 template <class Ctx>
 static void const_reuse_kernel(Ctx& ctx, const std::vector<uint32_t>& in, std::vector<uint32_t>& out) {
@@ -52,7 +53,7 @@ int main() {
     const uint16_t REF = (uint16_t)(A + B);
 
     // --- record the canonical circuit ---
-    RecordContext rc;
+    RecordCtx rc;
     uint32_t base = rc.external_input(32);
     std::array<uint32_t, 16> ra{}, rb{}, ro{};
     for (int i = 0; i < 16; ++i) { ra[i] = base + i; rb[i] = base + 16 + i; }
@@ -73,9 +74,9 @@ int main() {
         (g.op == ckt::Op::And ? pa : g.op == ckt::Op::Xor ? px
          : g.op == ckt::Op::Not ? pn : pc)++;
 
-    // --- CountContext: a templated run must match the recorded gate counts ---
+    // --- CountCtx: a templated run must match the recorded gate counts ---
     {
-        CountContext cc;
+        CountCtx cc;
         std::array<uint8_t, 16> a{}, b{}, o{};
         add16(cc, a.data(), b.data(), o.data());
         check("count: AND", cc.ands == pa);
@@ -92,10 +93,10 @@ int main() {
     };
     std::array<uint8_t, 16> a8{}, b8{}; bits16(A, a8); bits16(B, b8);
 
-    // --- ClearContext (static) direct run ---
+    // --- ClearCtx (static) direct run ---
     uint16_t clear_res = 0;
     {
-        ClearContext cx;
+        ClearCtx cx;
         std::array<uint8_t, 16> o{};
         add16(cx, a8.data(), b8.data(), o.data());
         clear_res = recon16(o);
@@ -104,7 +105,7 @@ int main() {
 
     // --- value-return replay bridge over the recorded program ---
     {
-        ClearContext cx;
+        ClearCtx cx;
         std::array<uint8_t, 32> in{};
         for (int i = 0; i < 16; ++i) { in[i] = a8[i]; in[16 + i] = b8[i]; }
         std::vector<uint8_t> o = execute_program(cx, prog,
@@ -113,16 +114,16 @@ int main() {
         check("bridge == clear", recon16(o) == clear_res);
     }
 
-    // --- DigestContext: faithful wire numbering (inputs [0,n), gates from n);
+    // --- DigestCtx: faithful wire numbering (inputs [0,n), gates from n);
     //     deterministic replay yields a stable digest ---
     {
-        auto digest_add16 = [](DigestContext& d) {
+        auto digest_add16 = [](DigestCtx& d) {
             uint32_t in = d.external_input(32);              // reserve inputs [0,32)
             std::array<uint32_t, 16> a{}, b{}, o{};
             for (int i = 0; i < 16; ++i) { a[i] = in + i; b[i] = in + 16 + i; }
             add16(d, a.data(), b.data(), o.data());
         };
-        DigestContext d1, d2;
+        DigestCtx d1, d2;
         digest_add16(d1);
         digest_add16(d2);
         check("digest: deterministic", d1.digest == d2.digest);
@@ -132,21 +133,21 @@ int main() {
     // --- canonical digest: digest_program(recorded) == digest_source(same body),
     //     including const dedup (the body reuses const0 twice) ---
     {
-        RecordContext rc;
+        RecordCtx rc;
         uint32_t base = rc.external_input(2);
         std::vector<uint32_t> rin = {base, base + 1}, rout;
         const_reuse_kernel(rc, rin, rout);
         ckt::BooleanProgram prog = rc.finish(std::span<const uint32_t>(rout.data(), rout.size()));
-        uint64_t ds = digest_source(2, [](DigestContext& d, const std::vector<uint32_t>& in) {
+        uint64_t ds = digest_source(2, [](DigestCtx& d, const std::vector<uint32_t>& in) {
             std::vector<uint32_t> o; const_reuse_kernel(d, in, o);
         });
         check("digest_program == digest_source (const reuse)", digest_program(prog) == ds);
     }
 
-    // --- BackendContext<ClearWire> legacy bridge (+ wire_bytes guard) ---
+    // --- BackendCtx<ClearWire> legacy bridge (+ wire_bytes guard) ---
     {
         setup_clear_backend("");
-        BackendContext<ClearWire> bc(backend);     // guard: sizeof(ClearWire)==wire_bytes()
+        BackendCtx<ClearWire> bc(backend);     // guard: sizeof(ClearWire)==wire_bytes()
         std::array<ClearWire, 16> ain{}, bin{}, out{};
         for (int i = 0; i < 16; ++i) { backend->public_label(&ain[i], a8[i]);
                                        backend->public_label(&bin[i], b8[i]); }

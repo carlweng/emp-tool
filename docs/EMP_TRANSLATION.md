@@ -1,29 +1,31 @@
 # Translating C++ / Python to EMP secure circuits
 
 A reference for AI agents asked to take ordinary code and produce a
-boolean-circuit equivalent that runs on **emp-tool**'s circuit frontend
-(`Bit_T` / `BitVec_T` / `UnsignedInt_T` / `SignedInt_T` / `Float_T`)
-backed by a `Backend` from `emp-tool/execution/`.
+boolean-circuit equivalent that runs on **emp-tool**'s circuit layer. You
+write the logic over the context-bound typed values
+(`Bit_T<Ctx>` / `UInt_T<Ctx,N>` / `Int_T<Ctx,N>` / `Float_T<Ctx,W>`,
+[typed.h](../emp-tool/circuits/typed.h)) — usually as a
+`template<class Ctx>` circuit body — and the same code runs on any
+`BooleanContext`: `ClearCtx` (plaintext), the garbled `SH2PCCtx`, etc.
 
 If you read only one section, read **§1 The hard rule** and **§4
 Translation patterns**. The rest is type detail.
 
 This doc covers *writing* the circuit logic. To *run* it as a reusable
-function — call it live, or compile it once and replay it through any
-backend — see [frontend.md](frontend.md).
+function — call it live, or compile it once and replay it on any context —
+see [frontend.md](frontend.md).
 
 ---
 
 ## 0. Mental model in three sentences
 
 EMP evaluates a fixed boolean circuit (AND / XOR / NOT gates over wires)
-once. Each input wire is owned by exactly one party — `ALICE`, `BOB`, or
-`PUBLIC` (everyone agrees) — and each output wire is revealed to a
-chosen party. The same source code runs on every backend
-(`ClearBackend` for plaintext / circuit dumping, `HalfGateGen` /
-`HalfGateEva` for garbled 2PC, plus the protocol-driver layers in
-`emp-sh2pc` / `emp-ag2pc` / `emp-agmpc` that wrap input OT around the
-gate engine); nothing about the circuit changes per backend.
+once. Each input is owned by exactly one party — `ALICE`, `BOB`, or
+`PUBLIC` (everyone agrees) — and each output is revealed to a chosen
+party. The same circuit body runs on every `BooleanContext` — `ClearCtx`
+for plaintext / cost analysis, the garbled `SH2PCCtx` (from emp-sh2pc) for
+semi-honest 2PC, and other protocol contexts — with nothing about the
+circuit changing per context.
 
 ---
 
@@ -45,7 +47,7 @@ return secret_value;                 // early-exit branch
 
 The circuit is *static*. Both branches of every conditional must be
 evaluated; the choice between them happens via an oblivious mux
-(`.select(sel, rhs)` / `If(sel).Then(a).Else(b)`). Loops must have public bounds.
+(`a.select(sel, b)` returns `sel ? b : a`). Loops must have public bounds.
 Arrays at secret indices must be linearly enumerated. See §4.
 
 If your input C++ / Python relies on early exit or data-dependent loop
@@ -56,43 +58,45 @@ report that the program cannot be translated as-written**.
 
 ## 2. Type mapping
 
+The widths `N` / `W` are template parameters, so each source width maps to a
+distinct C++ type. `Ctx` is the `BooleanContext` the body is written over.
+
 | Source type                       | EMP type                              | Notes |
 |-----------------------------------|----------------------------------------|---|
-| `bool`                            | `Bit`                                  | `Bit(value, party)` |
-| `uint8_t … uint64_t`, `unsigned`  | `UnsignedInt(W, value, party)`         | W = bit width, must match exactly |
-| `int8_t … int64_t`, `int`         | `SignedInt(W, value, party)`           | two's complement |
-| `__uint128_t`, `__int128`         | `UnsignedInt(128, …)` / `SignedInt(128, …)` | constructor accepts 128-bit literals |
-| `float` (IEEE 754 binary32)       | `Float` / `Float32`                    | also `Float16` (binary16) and `Float64` (binary64) |
-| `double` (IEEE 754 binary64)      | `Float64`                              | correctly-rounded; same op set as `Float32` |
-| fixed-size bit array / packed flags | `BitVec(W, value, party)`            | no arithmetic, only `& \| ^ ~ << >>` and slice / concat |
-| Python `int` (arbitrary precision)| `SignedInt(W, …)` after **you** pick W | translator must commit to a width |
-| Python `bool`                     | `Bit`                                  | |
-| Python `float`                    | `Float`                                | |
-| `std::string`, `bytes`, `bytearray` | array of `BitVec(8, …)` of fixed length | length is public; pad to max |
+| `bool`                            | `Bit_T<Ctx>`                           | clear type `bool` |
+| `uint8_t … uint64_t`, `unsigned`  | `UInt_T<Ctx,N>`                        | N = bit width; wraps mod 2^N |
+| `int8_t … int64_t`, `int`         | `Int_T<Ctx,N>`                         | two's complement |
+| `float` (IEEE 754 binary32)       | `Float_T<Ctx,32>`                      | also `Float_T<Ctx,16>` / `<Ctx,64>` |
+| `double` (IEEE 754 binary64)      | `Float_T<Ctx,64>`                      | correctly-rounded; same op set |
+| fixed-size bit array / packed flags | `UInt_T<Ctx,N>` (use `& \| ^ ~`)     | bitwise ops; no slice/concat sugar |
+| Python `int` (arbitrary precision)| `Int_T<Ctx,N>` after **you** pick N    | translator must commit to a width |
+| Python `bool`                     | `Bit_T<Ctx>`                           | |
+| Python `float`                    | `Float_T<Ctx,32>`                      | |
+| `std::string`, `bytes`, `bytearray` | array of `UInt_T<Ctx,8>` of fixed length | length is public; pad to max |
 | `std::vector<T>` (fixed size)     | `std::vector<EMPType>` of public length | |
-| `std::vector<T>` (secret size)    | **not supported** — pad to public max length and carry a `valid` `Bit` per slot |
+| `std::vector<T>` (secret size)    | **not supported** — pad to public max length and carry a `valid` `Bit_T<Ctx>` per slot |
 | `std::map`, `std::unordered_map`  | **not supported** — flatten to parallel arrays + linear scan |
-| `std::optional<T>`                | `pair<T, Bit_valid>`                   | |
+| `std::optional<T>`                | `pair<T, Bit_T<Ctx> valid>`            | |
 | pointers / references to host data| not represented; only the *value* matters |
 
-The class definitions in `emp-tool/circuits/*.h` are templated on a
-`Wire` type; the standard `block`-wire aliases (`Bit`, `BitVec`,
-`UnsignedInt`, `SignedInt`, `Float`) live in `emp::block_types` after
-including `emp-tool/emp-tool.h`. Use those aliases in application or test
-`.cpp` files. Only reach for `Bit_T<MyWire>` etc. if you are also writing
-a custom `Backend` or protocol-specific wire binding.
+The value types are templated on a `BooleanContext`. In a reusable circuit
+body, leave `Ctx` generic (`template<class Ctx>` or a lambda taking
+`auto`-typed arguments) so the same body `compile`s and `run`s on any context;
+when you operate on already-live values, `Ctx` is the concrete context type
+(`ClearCtx`, `SH2PCCtx`, …).
 
-### 2.1. Width is mandatory
+### 2.1. Width is a type parameter
 
-`SignedInt(value, ...)` does **not** exist. Every integer needs an
-explicit bit width:
+The width is part of the type — there is no run-time width argument. Make a
+public constant with `T::constant(ctx, v)` (or `a.constant(v)` from an
+existing value of the same family/context):
 
 ```cpp
-SignedInt   a(32, -7, ALICE);     // not SignedInt(-7, ALICE)
-UnsignedInt b(64, 0xDEADBEEFull, BOB);
+auto a = Int_T<ClearCtx,32>::constant(cx, -7);
+auto b = UInt_T<ClearCtx,64>::constant(cx, 0xDEADBEEFull);
 ```
 
-When translating, pick W from the source type:
+When translating, pick N from the source type:
 
 * `int32_t` → 32, `int64_t` → 64, `int` → 32 (assuming LP64), `size_t`
   → 64 on 64-bit hosts, etc.
@@ -102,74 +106,73 @@ When translating, pick W from the source type:
 
 ### 2.2. Mixing widths
 
-Operands of `+ - * / % & | ^ < <= > >= == !=` **must have equal
-width**. If they differ, use `.resize(W)` *first*:
-
-```cpp
-SignedInt a(32, x, ALICE);
-SignedInt b(64, y, BOB);
-SignedInt sum = a.resize(64) + b;            // both 64-bit
-```
-
-`resize` on `SignedInt` sign-extends; on `UnsignedInt` it zero-extends;
-truncation drops high bits. Resize is structural — costs no AND gates.
+Operands of `+ - * / % & | ^ < <= > >= == !=` **must have equal width** — it
+is enforced by the type (`UInt_T<Ctx,32>` and `UInt_T<Ctx,64>` are different
+types). Decide widths up front and feed inputs at the matching width.
 
 ### 2.3. Mixing signed and unsigned
 
-`SignedInt` and `UnsignedInt` are different types. To convert, use the
-explicit bit-cast:
-
-```cpp
-UnsignedInt u = s.as_unsigned();   // 0 gates, just a type tag flip
-SignedInt   s = u.as_signed();
-```
-
-Width is preserved. Bits are reinterpreted exactly as in C
-(`(uint32_t)int32_x`, `(int32_t)uint32_x`).
+`Int_T<Ctx,N>` and `UInt_T<Ctx,N>` are different types. They share bit layout
+and the low-N bits of `+`/`-`/`*` are identical; what differs is comparison
+(`<` etc.) and division/remainder sign handling. Choose the type that matches
+the source's signedness; to reinterpret a bit pattern, repack the wires into
+the other family (`from_wires`/`pack_wires`) — no gates.
 
 ---
 
 ## 3. Inputs, outputs, parties
 
-### 3.1. Constructing input wires
+I/O is the **context's** job, around the circuit body. A pure circuit body
+takes its inputs as arguments and returns its output; it does no `input` /
+`reveal` of its own. The caller feeds inputs and reveals outputs on the
+context.
+
+### 3.1. Feeding input values
 
 ```cpp
-SignedInt   a(32, alice_value, ALICE);   // owned by Alice; Bob sees garbage at run time
-UnsignedInt b(32, bob_value,   BOB);     // owned by Bob
-SignedInt   k(32, 17,          PUBLIC);  // both parties agree on the literal
+using S32 = Int_T<SH2PCCtx,32>;
+using U32 = UInt_T<SH2PCCtx,32>;
+auto a = ctx.input<S32>(ALICE,  alice_value);   // owned by Alice
+auto b = ctx.input<U32>(BOB,    bob_value);     // owned by Bob
+auto k = ctx.input<S32>(PUBLIC, 17);            // both parties agree on the literal
 ```
 
-The `value` argument on a non-`PUBLIC` party is **only read on that
-party's process**. The other party's program passes a dummy of the
-correct type; the protocol routes the real bits through OT.
+`ctx.input<T>(owner, clear)` is called by both parties; the `clear` argument
+on a non-`PUBLIC` owner is **only read on that party's process**. The other
+party passes a dummy of the same type; the protocol routes the real bits
+through OT. A `PUBLIC` constant inside a body uses `T::constant(ctx, v)`
+instead.
 
 ### 3.2. Revealing outputs
 
 ```cpp
-int32_t  r = result.reveal<int32_t>(PUBLIC);   // both parties see the int
-uint64_t r = result.reveal<uint64_t>(ALICE);   // only Alice
-bool     b = predicate.reveal<bool>(PUBLIC);
-std::string bits = bv.reveal<std::string>(PUBLIC);  // MSB-first bit string
+uint64_t r = (uint64_t)ctx.reveal(result, PUBLIC);  // both parties see it
+auto     s = ctx.reveal(result, ALICE);             // only Alice
 ```
 
-`reveal` is the *only* way to get a host-language value back from a
-circuit value. Calling `reveal<bool>(PUBLIC)` on a secret comparison
-**leaks that bit to both parties**. This is sometimes intentional and
-sometimes a security bug — the translator must not insert reveals it
-wasn't asked for.
+`ctx.reveal(value, recipient)` is the *only* way to get a host-language value
+back from a circuit value. Revealing a secret comparison to `PUBLIC` **leaks
+that bit to both parties**. This is sometimes intentional and sometimes a
+security bug — the translator must not insert reveals it wasn't asked for.
 
 ### 3.3. Single binary
 
-In emp-tool the same source file is compiled once and run as both
-parties (e.g. `./prog 1 12345` for Alice, `./prog 2 12345` for Bob).
-The party identity is a runtime int, typically read from `argv[1]`.
-Both invocations pass *both* `ALICE` and `BOB` constructors — each
-process supplies its own real value where it owns the input and a
-placeholder elsewhere. Translators should preserve this symmetry.
+The same source file is compiled once and run as both parties (e.g.
+`./prog 1 12345` for Alice, `./prog 2 12345` for Bob). The party identity is a
+runtime int, typically read from `argv[1]`, and passed to the context
+constructor (`SH2PCCtx ctx(&io, party)`). Both invocations call the same
+`ctx.input<T>(ALICE, …)` / `ctx.input<T>(BOB, …)` — each process supplies its
+own real value where it owns the input and a placeholder elsewhere.
+Translators should preserve this symmetry.
 
 ---
 
 ## 4. Translation patterns
+
+The oblivious mux is `base.select(sel, alt)` — it returns `alt` when `sel`
+is true, `base` otherwise. (`sel` is a `Bit_T<Ctx>`; `base`/`alt` are the
+same value type.) That single primitive expresses every conditional below;
+both branches are always evaluated.
 
 ### 4.1. `if / else` on a secret value
 
@@ -177,15 +180,11 @@ placeholder elsewhere. Translators should preserve this symmetry.
 // C++ source:
 int max = (a > b) ? a : b;
 
-// EMP:
-SignedInt max = If(a > b).Then(a).Else(b);     // fluent builder from sortable.h
-// or, equivalently, the underlying method form
-// (b.select(sel, rhs) returns sel ? rhs : b):
-SignedInt max = b.select(a > b, a);
+// EMP: b.select(a > b, a) == (a > b) ? a : b
+auto max = b.select(a > b, a);
 ```
 
-`a > b` returns `Bit`. `If(cond).Then(x).Else(y)` returns `x` when
-`cond` is true, `y` otherwise. Both branches are always evaluated.
+`a > b` returns `Bit_T<Ctx>`.
 
 ### 4.2. `if (cond) x = y;` (mutation form)
 
@@ -193,20 +192,20 @@ SignedInt max = b.select(a > b, a);
 // Source:
 if (cond) x = y;
 
-// EMP:
-x = If(cond_bit).Then(y).Else(x);    // identity on the false side
+// EMP: identity on the false side
+x = x.select(cond_bit, y);
 ```
 
 ### 4.3. Comparisons
 
-`< <= > >= == !=` on `UnsignedInt`, `SignedInt`, `Float`, and `BitVec`
-return a `Bit_T<Wire>`. They do **not** return host `bool`. You can
-only use one in host-language `if`/`while` after a `reveal` — which
-leaks. Keep comparisons inside the circuit by feeding the resulting
-`Bit` into `If`, `select`, `&`, `|`, `!`.
+`< <= > >= == !=` on `UInt_T`, `Int_T`, and `Float_T` return a
+`Bit_T<Ctx>` — **not** host `bool`. You can only use one in host-language
+`if`/`while` after a `reveal`, which leaks. Keep comparisons inside the
+circuit by feeding the resulting `Bit` into `select`, `&`, `|`, `!`.
 
-`UnsignedInt` comparisons are unsigned; `SignedInt` comparisons are
-signed (sign-extend by 1, subtract, look at the top bit).
+`UInt_T` comparisons are unsigned; `Int_T` comparisons are signed (the top
+bit handles the sign). `Float_T` comparisons are NaN-aware (they replay the
+`fp<W>_*` circuits).
 
 ### 4.4. Loops
 
@@ -226,12 +225,14 @@ state:
 //   while (n > 0) { acc += step(n); n--; }   // n is secret
 
 // EMP, with public upper bound MAX:
-Bit running(true, PUBLIC);
+auto zero = U32::constant(ctx, 0);
+auto one  = U32::constant(ctx, 1);
+Bit_T<Ctx> running = Bit_T<Ctx>::constant(ctx, true);
 for (size_t i = 0; i < MAX; ++i) {
-    Bit alive = running & (n > UnsignedInt(W, 0, PUBLIC));
-    UnsignedInt next_acc = acc + step(n);
-    acc = If(alive).Then(next_acc).Else(acc);
-    n   = If(alive).Then(n - UnsignedInt(W, 1, PUBLIC)).Else(n);
+    Bit_T<Ctx> alive = running & (zero < n);              // n > 0
+    auto next_acc = acc + step(n);
+    acc = acc.select(alive, next_acc);
+    n   = n.select(alive, n - one);
     running = alive;
 }
 ```
@@ -245,10 +246,10 @@ If MAX is unknown, the program is not translatable.
 //   y = arr[idx];   // idx secret, arr public-length
 
 // EMP: linear mux. Cost is O(len(arr)) in AND gates.
-SignedInt y(W, 0, PUBLIC);
+auto y = T::constant(ctx, 0);
 for (size_t k = 0; k < arr.size(); ++k) {
-    Bit eq = (idx == UnsignedInt(IDX_W, k, PUBLIC));
-    y = If(eq).Then(arr[k]).Else(y);
+    Bit_T<Ctx> eq = (idx == UIdx::constant(ctx, k));
+    y = y.select(eq, arr[k]);
 }
 ```
 
@@ -257,8 +258,8 @@ for (size_t k = 0; k < arr.size(); ++k) {
 ```cpp
 // arr[idx] = v;
 for (size_t k = 0; k < arr.size(); ++k) {
-    Bit eq = (idx == UnsignedInt(IDX_W, k, PUBLIC));
-    arr[k] = If(eq).Then(v).Else(arr[k]);
+    Bit_T<Ctx> eq = (idx == UIdx::constant(ctx, k));
+    arr[k] = arr[k].select(eq, v);
 }
 ```
 
@@ -269,96 +270,71 @@ itself ships no ORAM.
 ### 4.7. Min / max over an array
 
 ```cpp
-SignedInt best = a[0];
+auto best = a[0];
 for (size_t i = 1; i < a.size(); ++i)
-    best = If(a[i] < best).Then(a[i]).Else(best);
+    best = best.select(a[i] < best, a[i]);
 ```
 
 ### 4.8. Counting matches (popcount-style)
 
 ```cpp
-UnsignedInt count(W, 0u, PUBLIC);
+auto count = U32::constant(ctx, 0);
+auto one   = U32::constant(ctx, 1);
+auto zero  = U32::constant(ctx, 0);
 for (size_t i = 0; i < a.size(); ++i)
-    count = count + If(a[i] == target).Then(UnsignedInt(W, 1u, PUBLIC))
-                                      .Else(UnsignedInt(W, 0u, PUBLIC));
-// or, more idiomatic when N fits in one BitVec: assemble matches into a
-// width-N BitVec, view it as UnsignedInt, and call `.hamming_weight()`.
+    count = count + zero.select(a[i] == target, one);
 ```
 
 ### 4.9. Bit-level packing / unpacking
 
-`BitVec` supplies `slice(lo, hi)` for `[lo, hi)` and `concat(hi)` for
-`lo | (hi << this->size())`:
-
-```cpp
-BitVec all = lo.concat(hi);          // size = lo.size() + hi.size()
-BitVec byte0 = word.slice(0, 8);     // low byte
-```
-
-Index `0` is the LSB everywhere in emp-tool. `bv.reveal<std::string>()`
-returns MSB-first.
+Index `0` is the LSB everywhere in emp-tool. Operate bitwise (`& | ^ ~`) and
+index single bits with `v[i]` (returns a `Bit_T<Ctx>`); assemble or split
+values by packing/unpacking their wires (`pack_wires` / `from_wires`), which
+emits no gates.
 
 ### 4.10. Sorting (oblivious)
 
-`emp-tool/circuits/sortable.h` ships a Batcher bitonic sort that works
-for any class implementing `geq` / `equal` / `select` — which means
-`UnsignedInt`, `SignedInt`, `Float`, and `Bit` all qualify:
+A bitonic sort is a public network of compare-swaps, each
+`(x, y) -> (min, max)` built from one comparison and two `select`s:
 
 ```cpp
-UnsignedInt arr[N];
-// ... fill ...
-sort(arr, N);                        // ascending; pass Bit(false, PUBLIC) for descending
+auto swap = [](auto& x, auto& y) {        // ascending compare-swap
+    Bit_T<Ctx> gt = x > y;
+    auto lo = x.select(gt, y);
+    auto hi = y.select(gt, x);
+    x = lo; y = hi;
+};
 ```
 
-Cost is O(N log² N) compare-swaps; each compare-swap is O(W) gates.
+Drive it from a fixed (public) Batcher schedule. Cost is O(N log² N)
+compare-swaps; each is O(W) gates.
 
 ### 4.11. Floats
 
-emp-tool ships IEEE 754 `Float16`, `Float32` / `Float`, and `Float64`.
-They supply `+ - * / unary-`, `sqr`, `sqrt`, `recip`, `rsqrt`, `fma`,
-`min`, `max`, `abs`, `copysign`, classifiers (`is_nan`, `is_inf`,
-`is_zero`), and named comparisons (`equal`, `not_equal`, `less_than`,
-`less_equal`, `greater_than`, `greater_equal`). Transcendentals
-(`sin`/`cos`/`exp`/`log`/...) are not provided; use fixed-point or an
-explicit approximation circuit if a source program needs them.
+`Float_T<Ctx,W>` is IEEE binary{16,32,64}. It supplies `+ - * / unary-`,
+`sqr`, `sqrt`, `recip`, `rsqrt`, `fma`, `min`, `max`, `abs`, `copysign`,
+classifiers (`is_nan`, `is_inf`, `is_zero`), and comparisons (`equal`,
+`not_equal`, `less_than`, `less_equal`, `greater_than`, `greater_equal`, and
+the `< <= > >= == !=` operators). Transcendentals (`sin`/`cos`/`exp`/`log`/…)
+are not provided; use fixed-point or an explicit approximation circuit if a
+source program needs them.
 
-Float circuits are large (thousands of AND gates for a single mul).
-For ML-style fixed-point work, prefer `SignedInt` with a chosen scale.
+Float ops are large (thousands of AND gates for a single mul) — each
+nontrivial op replays the recorded `fp<W>_<op>.empbc` builtin. For ML-style
+fixed-point work, prefer `Int_T` with a chosen scale.
 
 ### 4.12. Crypto primitives (AES-128, SHA3-256)
 
-Don't hand-roll AES or SHA3 in `Bit`/`BitVec` ops. emp-tool ships
-pre-built circuits wrapped in calculator classes:
+Don't hand-roll AES or SHA3 in `Bit`/integer ops. emp-tool ships pre-built
+circuits as native `.empbc` programs; load one and replay it on your context
+(see [frontend.md](frontend.md) and the `.empbc` section of the README), or
+`compile` a body that calls them. Each input/output bit is a wire — there are
+no host-side crypto branches inside. Cost is ≈6800 ANDs for one AES block,
+≈37k for one Keccak-f permutation.
 
-```cpp
-// SHA3-256 over a secret byte string of public length 2000.
-BitVec input[2000];        // each entry is BitVec(8, ..., ALICE/BOB/PUBLIC)
-BitVec output;             // sha3_256 resizes this to 256 bits internally
-SHA3_256_Calculator sha3;
-sha3.sha3_256(&output, input, /*input_count=*/2000);
-uint8_t hash[32];
-output.reveal(hash, PUBLIC);                // raw byte reveal
-
-// AES-128-CTR with a secret key over secret data, public nonce / length.
-// (See test/test_aes_128_ctr.cpp — it walks both the in-circuit and the
-// reference OpenSSL paths, useful as a template.)
-AES_128_CTR_Calculator aes;
-// ... see header for full signature ...
-```
-
-The Calculator classes are wrappers around AES-128 and Keccak-f
-circuits embedded into the binary at compile time. Cost is
-≈6800 ANDs for one AES block, ≈37k for one Keccak-f permutation.
-
-Because both circuits *are* circuits, every byte of input is an
-emp-tool wire (`BitVec(8, byte, party)`), every byte of output is a
-wire that you reveal to a chosen party. There are no host-side
-crypto branches inside.
-
-`emp::aes_128_ctr(...)` and `emp::sha3_256(...)` (free functions, no
-`_Calculator` suffix) are **non-circuit** OpenSSL-backed helpers for
-ground-truth comparisons in tests. Use those to verify the calculator
-output, not as part of the circuit.
+`emp::aes_128_ctr(...)` and `emp::sha3_256(...)` (free functions) are
+**non-circuit** OpenSSL-backed helpers for ground-truth comparisons in tests.
+Use those to verify the circuit output, not as part of the circuit.
 
 ---
 
@@ -368,120 +344,102 @@ These match **hardware** two's-complement semantics, not C standard
 "undefined behavior". A naive translator that reproduces the source's
 UB-avoidance dance will produce extra gates for no reason.
 
-* **Signed wrap**: `+`, `-`, `*` on `SignedInt` wrap mod 2^W. This
+* **Signed wrap**: `+`, `-`, `*` on `Int_T<Ctx,N>` wrap mod 2^N. This
   matches `int{N}_t` on x86 / arm. C calls signed overflow UB; emp-tool
   is deterministic. Don't insert `__builtin_add_overflow` checks.
-* **`INT_MIN / -1`**: returns `INT_MIN` (the bit pattern 2's-complement
-  division produces). C calls this UB. Don't guard.
-* **Division by zero**: undefined behavior of the *circuit*. The
-  caller must ensure the divisor is nonzero. If the divisor is secret,
-  guard with an `If` that picks a sentinel result and a "valid" `Bit`.
-* **Signed `%`**: sign of result follows the dividend (C99+).
-* **Shift amount ≥ width**: logical shifts produce 0; `SignedInt`
-  arithmetic right shift produces `0` for non-negative operands or
-  `-1` for negative ones (sign-fill). Both static-shamt and
-  dynamic-shamt forms exist; the dynamic form treats `shamt` as
-  unsigned.
-* **`>>` polarity**: logical on `BitVec` and `UnsignedInt`, arithmetic
-  on `SignedInt`. To do logical right-shift on a `SignedInt`:
-  `s.as_unsigned() >> k` (then `.as_signed()` if you need the type
-  back).
-* **`<<`**: always logical.
-* **`abs(INT_MIN)`**: returns `INT_MIN` as a bit pattern (the
-  unrepresentable case). The result type is `UnsignedInt`, where this
-  bit pattern is `2^(W-1)` and is faithful as a *magnitude*. No
-  exception.
-* **`==` / `!=` cost**: equal-test is cheap on `Bit` (one XOR), grows
+* **Division by zero saturates**: `a / 0` and `a % 0` return the
+  saturating result of the restoring-division circuit (it does **not**
+  follow C's UB). The caller should still ensure the divisor is nonzero
+  where the source program does; if the divisor is secret, guard with a
+  `select` that picks a sentinel result and a "valid" `Bit_T<Ctx>`.
+* **Signed `/` / `%`**: truncate toward zero; the remainder takes the
+  dividend's sign (C99+). The most-negative operand to signed division is
+  a UB precondition (as for `int{N}_t`).
+* **No shift / resize / abs on integers**: the integer value types expose
+  `+ - * / % & | ^ ~`, comparisons, `select`, and per-bit `v[i]`, but no
+  `<<` / `>>`, `.resize`, or `.abs`. A shift by a public amount is a
+  re-wiring of `pack_wires` / `from_wires` (no gates); a dynamic shift is
+  a `select` tree over public shift amounts.
+* **`==` / `!=` cost**: equal-test is cheap on `Bit_T` (one XOR), grows
   to a tree of XORs+ANDs on multi-bit types. `<` etc. are subtraction
   followed by a sign check, which is the dominant cost. Avoid
   redundant comparisons.
-* **`-x` on `UnsignedInt`**: well-defined as `~x + 1` mod 2^W
-  (i.e. `0u - x`). Matches C unsigned negation. The result is still
-  `UnsignedInt`.
+* **Unary `-` on `Int_T`**: two's-complement negate (`0 - x` mod 2^N).
+  `UInt_T` has no unary minus; subtract from a zero constant if you need
+  modular negation.
 
 ---
 
-## 6. Backend setup boilerplate
+## 6. Running the circuit on a context
 
-### 6.1. Plaintext / circuit-dump (for testing translations)
+The circuit body is written over a `BooleanContext`; you pick the context at
+the call site. I/O is the context's job, around the body.
+
+### 6.1. Plaintext (for testing translations)
+
+`ClearCtx` evaluates the circuit in cleartext — its `Wire` is the raw bit, so
+it sees both parties' "secret" inputs (there is only one process). Use it to
+verify a translation matches the original C++ / Python before standing up two
+real parties:
 
 ```cpp
-#include "emp-tool/emp-tool.h"
+#include "emp-tool/circuits/typed.h"
 using namespace emp;
-using namespace emp::block_types;
 
-int main() {
-    setup_clear_backend();              // optionally: setup_clear_backend("circuit.txt");
-    // ... circuit code ...
-    finalize_clear_backend();
-}
+ClearCtx cx;
+using U32 = UInt_T<ClearCtx,32>;
+auto a = U32::constant(cx, av);          // plaintext: feed values directly
+auto b = U32::constant(cx, bv);
+auto c = a + b;
+bool bits[32]; for (int i = 0; i < 32; ++i) bits[i] = c.w[i] & 1;
+uint64_t r = U32::decode(bits);
 ```
 
-`ClearBackend` evaluates the circuit in cleartext (it sees both
-parties' "secret" inputs because there's only one process). Use it to
-verify a translation produces the same output as the original C++ /
-Python before you stand up two real parties. Pass a filename to also
-capture the executed circuit as a native `.empbc` file on `finalize`
-(all secret feeds must precede any gate, so inputs are the leading wires).
+To count AND gates — the right metric for circuit cost (XOR / NOT are free in
+modern garbling) — write the body over `CountCtx` (it tallies gate calls), or
+count over a recorded `BooleanProgram` (`frontend/passes.h`). To capture the
+circuit as a native `.empbc` file, `compile` the body and serialize its
+program (see [frontend.md](frontend.md)).
 
-`backend->num_and()` returns the AND-gate count after a run — the
-right metric for circuit cost. (XOR / NOT are free in modern garbling
-schemes.)
+### 6.2. Semi-honest 2PC
 
-### 6.2. Real semi-honest 2PC
-
-The bare `HalfGate` / `PrivacyFree` classes in emp-tool are the
-gate-evaluation engine; they don't run a full protocol on their own (no
-OT for input wires). For end-to-end semi-honest 2PC use **emp-sh2pc**,
-which provides a native `SH2PCSession` (owns OT / Delta / PRG /
-half-gate state plus typed `input`/`reveal`) and an `SH2PCContext` (a
-`BooleanContext`). There is no global backend:
+For end-to-end semi-honest 2PC use **emp-sh2pc**'s `SH2PCCtx` — a single
+`BooleanContext` that owns all protocol state (OT / Delta / PRG / half-gate)
+and exposes typed `input` / `reveal`:
 
 ```cpp
 NetIO io(party == ALICE ? nullptr : "127.0.0.1", port);
-SH2PCSession sess(&io, party);                 // owns the protocol state
-SH2PCContext ctx(sess);
+SH2PCCtx ctx(&io, party);                       // owns the protocol state
 
-auto a = sess.input<UInt<SH2PCContext,32>>(ctx, ALICE,  av);   // private inputs
-auto b = sess.input<UInt<SH2PCContext,32>>(ctx, BOB,    bv);
-auto k = sess.input<UInt<SH2PCContext,32>>(ctx, PUBLIC, kv);   // public constant
-auto c = a + b + k;                                            // or frontend::run(ctx, circ, ...)
-uint32_t r = (uint32_t)sess.reveal(c, PUBLIC);
-sess.finalize();
+auto a = ctx.input<UInt_T<SH2PCCtx,32>>(ALICE,  av);   // private inputs
+auto b = ctx.input<UInt_T<SH2PCCtx,32>>(BOB,    bv);
+auto k = ctx.input<UInt_T<SH2PCCtx,32>>(PUBLIC, kv);   // public constant
+auto c = a + b + k;                                     // or frontend::run(ctx, circ, ...)
+uint32_t r = (uint32_t)ctx.reveal(c, PUBLIC);
+ctx.finalize();
 ```
 
-The circuit is written over the `SH2PCContext` `BooleanContext`, so the
-**same** circuit function (e.g. `[](auto a, auto b){ return a + b; }`)
-compiled once with `frontend::compile` runs unchanged on `ClearContext`
-(plaintext) and `SH2PCContext` (garbled). **This is the point** — write
-once, run on whichever context the caller wants. (The legacy
-`setup_semi_honest` / `finalize_semi_honest` global-backend installer has
-been removed.)
+Because the body is written over a generic context, the **same** circuit
+function (e.g. `[](auto a, auto b){ return a + b; }`) compiled once with
+`frontend::compile` runs unchanged on `ClearCtx` (plaintext) and `SH2PCCtx`
+(garbled). **This is the point** — write once, run on whichever context the
+caller wants. `ctx.num_and()` reports the ANDs garbled so far.
 
-`NetIO` (`"wb"` stdio + raw read on recv) satisfies the `IOChannel`
-contract and can be passed to any of the `setup_*` helpers. Not
-thread-safe — see [docs/io_channel.md](io_channel.md).
+`NetIO` satisfies the `IOChannel` contract; it is not thread-safe — see
+[docs/io_channel.md](io_channel.md).
 
 For malicious-secure 2PC use **emp-ag2pc**; for malicious-secure
 multi-party (n ≥ 3) use **emp-agmpc** (in `ref/`).
 
-### 6.3. Direct HalfGate (custom protocols)
+### 6.3. Classic / compatibility API (global backend)
 
-If you're writing your own 2PC protocol shell rather than using
-emp-sh2pc / emp-ag2pc, instantiate the gate engines directly:
-
-```cpp
-NetIO io(party == ALICE ? nullptr : "127.0.0.1", port);
-backend = (party == ALICE) ? (Backend*)new HalfGateGen(&io)
-                           : (Backend*)new HalfGateEva(&io);
-// ... circuit code ...
-delete backend; backend = nullptr;
-```
-
-You're now responsible for the OT-driven `feed` / `reveal` surrounding
-the circuit. `bench/bench_garble.cpp` is the closest in-tree example. Most
-users do **not** want this path — the higher-level libraries above
-already handle it.
+emp-tool also keeps an internal global-backend object API
+(`emp::legacy::*` types over a `Wire`, driving a process-wide `emp::backend`,
+plus the `setup_clear_backend()` / `HalfGateGen` / `HalfGateEva` installers).
+It backs the prebuilt `.empbc` recording sources and existing protocol code,
+**not** new translations — prefer the context-bound path above. If you must
+interoperate with that API, read the headers under `emp-tool/circuits/` and
+`emp-tool/execution/` directly.
 
 ---
 
@@ -508,15 +466,16 @@ Refuse, or flag for the user, when the source program does any of these:
    translated. The circuit is closed; you can't `call printf()` from
    inside.
 8. **Wide / arbitrary-precision integers** beyond what the source
-   actually uses. Python `int` is unbounded; you must commit to a W.
-   GMP / `mpz_t` operations have no direct EMP equivalent — they need
-   a custom multi-limb construction.
-9. **Float width**. emp-tool ships `Float16` / `Float32` / `Float64`
-   (IEEE binary16 / binary32 / binary64), all correctly-rounded. Map
-   `float` to `Float32` and `double` to `Float64`; pick `Float16` only
-   when the source is explicitly half-precision. Transcendentals
-   (`sin`/`cos`/`exp`/`log`/…) are not provided — fixed-point or a
-   polynomial approximation if the source needs them.
+   actually uses. Python `int` is unbounded; you must commit to an N
+   (the integer value types carry their clear value in a 64-bit codec, so
+   `N ≤ 64`). GMP / `mpz_t` operations have no direct EMP equivalent —
+   they need a custom multi-limb construction.
+9. **Float width**. emp-tool ships `Float_T<Ctx,16>` / `<Ctx,32>` /
+   `<Ctx,64>` (IEEE binary16 / binary32 / binary64), all correctly-rounded.
+   Map `float` to `Float_T<Ctx,32>` and `double` to `Float_T<Ctx,64>`; pick
+   width 16 only when the source is explicitly half-precision.
+   Transcendentals (`sin`/`cos`/`exp`/`log`/…) are not provided —
+   fixed-point or a polynomial approximation if the source needs them.
 10. **String operations whose result length depends on the input
     bytes** (`strlen` on secret data, `split`, regex). Translate only
     fixed-shape byte transformations; pad inputs and outputs to public
@@ -528,8 +487,9 @@ Refuse, or flag for the user, when the source program does any of these:
 
 Before declaring a translation done, verify each of:
 
-- [ ] Every input has an owning party (`ALICE`, `BOB`, or `PUBLIC`).
-- [ ] Every output is `reveal`'d to the intended recipient — and **no
+- [ ] Every input is fed via `ctx.input<T>(owner, …)` with an owning
+      party (`ALICE`, `BOB`, or `PUBLIC`).
+- [ ] Every output is `ctx.reveal`'d to the intended recipient — and **no
       one else**.
 - [ ] No host-language `if` / `while` / `for` / ternary branches on a
       value derived from a secret input. (Greppable: every `if` and
@@ -537,18 +497,18 @@ Before declaring a translation done, verify each of:
       revealed value.)
 - [ ] Every loop bound is a public constant or a runtime-public int.
 - [ ] Every array index that varies with a secret is implemented as a
-      linear `If`-mux.
+      linear `select`-mux.
 - [ ] All operands of every `+ - * / % & | ^ < <= > >= == !=` have
-      equal width. (Use `.resize(W)` to match.)
-- [ ] `SignedInt` and `UnsignedInt` are not silently mixed; conversions
-      are explicit `.as_signed()` / `.as_unsigned()`.
+      equal width N (it is part of the type).
+- [ ] `Int_T` and `UInt_T` are not silently mixed; pick the family that
+      matches the source's signedness.
 - [ ] No `reveal` inside the hot loop unless the leak is explicitly
       part of the protocol design.
-- [ ] Run under `setup_clear_backend()` and confirm output matches the
-      original program on a representative input set.
-- [ ] Print `backend->num_and()` and confirm the gate count is sane
-      (orders of magnitude: ~64 ANDs per 32-bit add, ~1500 per 32-bit
-      mul, ~5000 per 32-bit div, ~10⁴–10⁵ per Float op).
+- [ ] Run on `ClearCtx` and confirm output matches the original program
+      on a representative input set.
+- [ ] Count ANDs (via `CountCtx` or a recorded program) and confirm the
+      gate count is sane (orders of magnitude: ~31 ANDs per 32-bit add,
+      ~1000 per 32-bit mul, ~1000 per 32-bit div, ~10⁴–10⁵ per Float op).
 
 ---
 
@@ -565,175 +525,139 @@ def f(alice_xs, bob_y):
     return total                        # revealed to both
 ```
 
-**EMP translation (C++):**
+**EMP translation (C++), over the garbled `SH2PCCtx`:**
 
 ```cpp
 #include "emp-tool/emp-tool.h"
+#include "emp-tool/circuits/typed.h"
+#include "emp-sh2pc/emp-sh2pc.h"
 using namespace emp;
-using namespace emp::block_types;
 
 constexpr size_t N = 16;                       // public
-constexpr int W = 32;                          // x and y are int32
+using S32 = Int_T<SH2PCCtx, 32>;               // x and y are int32
 
-int32_t f(const int32_t alice_xs[N], int32_t bob_y_value, int party) {
-    SignedInt y(W, bob_y_value, BOB);
-    SignedInt total(W, 0, PUBLIC);
+int32_t f(SH2PCCtx& ctx, const int32_t alice_xs[N], int32_t bob_y_value) {
+    auto y     = ctx.input<S32>(BOB, bob_y_value);
+    auto total = S32::constant(ctx, 0);
+    auto zero  = S32::constant(ctx, 0);
 
     for (size_t i = 0; i < N; ++i) {
         // Each party feeds its own value; the other passes a dummy.
-        SignedInt x(W, alice_xs[i], ALICE);
-        Bit       gt   = (x > y);              // signed comparison, returns Bit
-        SignedInt addend = If(gt).Then(x).Else(SignedInt(W, 0, PUBLIC));
+        auto x      = ctx.input<S32>(ALICE, alice_xs[i]);
+        auto gt     = x > y;                     // signed comparison -> Bit_T
+        auto addend = zero.select(gt, x);        // gt ? x : 0
         total = total + addend;
     }
-    return total.reveal<int32_t>(PUBLIC);
+    return (int32_t)ctx.reveal(total, PUBLIC);
 }
 
 int main(int argc, char** argv) {
     int party = std::atoi(argv[1]);
     NetIO io(party == ALICE ? nullptr : "127.0.0.1", 12345);
-    // For semi-honest 2PC, write this circuit over an SH2PCContext instead
-    // (see §6.2 "Real semi-honest 2PC"); the global-backend swap was removed.
-    setup_clear_backend();                     // testing only (legacy global backend)
+    SH2PCCtx ctx(&io, party);
 
     int32_t alice_xs[N] = { /* Alice's real values; Bob's process passes 0s here */ };
     int32_t bob_y       = /* Bob's real value;       Alice's process passes 0   */;
 
-    int32_t r = f(alice_xs, bob_y, party);
+    int32_t r = f(ctx, alice_xs, bob_y);
+    ctx.finalize();
     std::cout << r << "\n";
-    finalize_clear_backend();
 }
 ```
 
 Notes on what changed:
 
-* `if x > bob_y: total += x` became `If(x > y).Then(x).Else(0)` then unconditional
-  `+`. Both branches happen for every `i`.
-* `total = 0` became `SignedInt(W, 0, PUBLIC)`. The accumulator is a
-  circuit value, not an `int`, after the first iteration.
-* The function returns an `int32_t` only because `reveal<int32_t>` was
-  called at the end. All intermediate state is `SignedInt`.
+* `if x > bob_y: total += x` became `zero.select(x > y, x)` (i.e.
+  `(x > y) ? x : 0`) then an unconditional `+`. Both branches happen for
+  every `i`.
+* `total = 0` became `S32::constant(ctx, 0)`. The accumulator is a circuit
+  value, not an `int`, after the first iteration.
+* The function returns an `int32_t` only because `ctx.reveal(total, PUBLIC)`
+  was called at the end. All intermediate state is `S32`.
 * `for x in alice_xs` works because `N` is public and known at
   translation time.
+* To test in plaintext first, write the loop body over a generic `Ctx` (or
+  `compile` it once) and run it on `ClearCtx` before standing up two parties.
 
 ---
 
 ## 10. Quick reference: API surface
 
+The value types are over a `BooleanContext` `Ctx`. Make a public constant with
+`T::constant(ctx, v)`; feed a secret with `ctx.input<T>(owner, v)`; open with
+`ctx.reveal(v, recipient)`.
+
 ```
-Bit(bool, party)                           // wire-level boolean
-  & | ^ ! != ==  -> Bit
-  select(sel, b) -> Bit
-  reveal<bool|string>(party)
+Bit_T<Ctx>                                 // wire-level boolean (clear: bool)
+  & | ^ ! == != -> Bit_T
+  select(sel, t) -> Bit_T                  // sel ? t : *this
+  constant(ctx, bool)
 
-BitVec(W, value, party)                    // raw W-bit vector, no arithmetic
-  & | ^ ~                                  // equal-width
-  << >> (size_t)                           // logical shifts
-  equal(rhs) -> Bit
-  concat(hi) -> wider BitVec
-  slice(lo, hi) -> sub BitVec
-  select(sel_bit, rhs) -> BitVec
-  operator[i] -> Bit&
-  reveal<integral|string>(party)
-  reveal(void* out, party)
+UInt_T<Ctx,N>                              // unsigned N-bit (clear: uint64_t, N<=64)
+  + - * / %                                // wraps mod 2^N; div/mod by 0 saturates
+  & | ^ ~                                  // bitwise
+  < <= > >= == != -> Bit_T                 // unsigned
+  select(sel, t) -> UInt_T                 // sel ? t : *this
+  operator[i] -> Bit_T (i in [0,N))
+  constant(ctx, uint64_t)
 
-UnsignedInt(W, value, party) : BitVec
-  + - * / %                                // wraps mod 2^W
-  - (unary)                                // = 0 - x mod 2^W
-  < <= > >= == != -> Bit                   // unsigned
-  & | ^ ~                                  // typed UnsignedInt
-  << >> (size_t / UnsignedInt)             // both logical
-  resize(W')                               // zero-extend / truncate
-  as_signed() -> SignedInt                 // bit-cast, no gates
-  leading_zeros(), hamming_weight()        // -> UnsignedInt
-  mod_exp(p, q) -> UnsignedInt
-  reveal<unsigned-integral|string>(party)
-
-SignedInt(W, value, party) : BitVec
-  + - * / %                                // wraps mod 2^W (matches int{W}_t HW)
+Int_T<Ctx,N>                               // signed N-bit (clear: int64_t, N<=64)
+  + - * / %                                // wraps mod 2^N (matches int{N}_t HW)
   - (unary)                                // two's-complement negate
-  < <= > >= == != -> Bit                   // signed
-  & | ^ ~                                  // typed SignedInt
-  << (size_t / UnsignedInt)                // logical
-  >> (size_t / UnsignedInt)                // arithmetic (sign-fill)
-  resize(W')                               // sign-extend / truncate
-  abs() -> UnsignedInt                     // abs(MIN) wraps to MIN bit pattern
-  as_unsigned() -> UnsignedInt             // bit-cast, no gates
-  reveal<signed-integral|string>(party)
+  & | ^ ~                                  // bitwise
+  < <= > >= == != -> Bit_T                 // signed
+  select(sel, t) -> Int_T                  // sel ? t : *this
+  operator[i] -> Bit_T (i in [0,N))
+  constant(ctx, int64_t)
 
-Float32(float, party) / Float(float, party) // IEEE 754 binary32
-Float64(double, party)                      // IEEE 754 binary64
-Float16(float, party)                       // IEEE 754 binary16 payload
+Float_T<Ctx,W>                             // IEEE binary{16,32,64} (clear: host float)
   + - * / unary-
   sqr sqrt recip rsqrt fma min max
-  equal/not_equal less/greater comparisons -> Bit
-  is_nan(), is_inf(), is_zero() -> Bit
-  abs(), copysign(rhs), select(sel, rhs)
-  operator[i] -> Bit& (i in [0, width))
-  reveal<float|double|string>(party)
-
-If(sel_bit).Then(x).Else(y) -> T           // fluent builder from sortable.h
-sort(arr, n, data=nullptr, acc=true)       // bitonic, in-place
-
-setup_clear_backend([filename])            // ClearBackend; optional .empbc capture
-finalize_clear_backend()
-backend->num_and()                         // AND-gate count
-
-// Pre-built crypto circuits (emp-tool/circuits/{aes_128_ctr,sha3_256}.h):
-SHA3_256_Calculator                         // Keccak-f-based SHA3-256
-  sha3_256(BitVec* out, BitVec* in, count)  //   wires-in, wires-out
-AES_128_CTR_Calculator                      // AES-128 in CTR mode
-  // see header for full signature
-
-// Non-circuit reference (OpenSSL-backed; for tests / ground truth):
-emp::sha3_256(uint8_t* out, const T* in, size_t len)
-emp::aes_128_ctr(__m128i key, __m128i iv, T* in, uint8_t* out, len, chunk)
+  equal/not_equal less_than/less_equal/greater_than/greater_equal -> Bit_T
+  also operators < <= > >= == != -> Bit_T  // NaN-aware
+  is_nan(), is_inf(), is_zero() -> Bit_T
+  abs(), copysign(rhs), select(sel, o)
+  operator[i] -> Bit_T (i in [0,W))
+  constant(ctx, host_float) / from_bits(ctx, bits)
 ```
 
-Constants in `emp::`: `PUBLIC = 0`, `ALICE = 1`, `BOB = 2`. Width and
-party arguments are plain `int` / `size_t`; no enum.
+Constants in `emp::`: `PUBLIC = 0`, `ALICE = 1`, `BOB = 2`. Party arguments
+are plain `int`; widths are template parameters.
 
-`backend` is the global `Backend*` (thread-local under
-`EMP_TOOL_THREADING`) that every LEGACY circuit op dispatches through.
-The `setup_*` helpers (e.g. `setup_clear_backend`, ...) construct one and
-assign it; the matching `finalize_*` deletes it. (emp-sh2pc no longer
-uses the global backend — it has a native `SH2PCSession` / `SH2PCContext`;
-see §6.2. The C++20 `BooleanContext` layer takes the context explicitly
-and uses no global backend at all.) Don't reference `backend` from
-legacy circuit code — use the wrapper types.
+The context is passed explicitly — there is no global backend in this path.
+`ClearCtx` (plaintext), `RecordCtx` (records a `BooleanProgram`), `CountCtx` /
+`DigestCtx` (gate-count / determinism analysis), and emp-sh2pc's `SH2PCCtx`
+(garbled 2PC) are all `BooleanContext`s; the same typed body runs on each.
+
+Pre-built crypto circuits (AES-128, SHA3-256, the `fp<W>_*` float suite) ship
+as native `.empbc` programs — load one and replay it on your context (see
+[frontend.md](frontend.md) and the `.empbc` section of the README), or
+`compile` a body that calls them. `emp::sha3_256(...)` / `emp::aes_128_ctr(...)`
+(free functions) are non-circuit OpenSSL references for tests.
 
 ---
 
 ## 11. Where to read more
 
-* `emp-tool/execution/backend.h` — the `Backend` interface every
-  protocol implements (`feed`, `reveal`, `and_gate`, `xor_gate`,
-  `not_gate`, `public_label`, plus bulk variants).
-* `emp-tool/execution/clear_backend.h` — plaintext / circuit-printer
-  reference backend. Read the comments at the top — they spell out the
-  free / non-free gate convention.
-* `emp-tool/execution/half_gate.h`, `privacy_free.h` — garbling
-  backends. `HalfGateGen` (Alice-side) and `HalfGateEva` (Bob-side)
-  are the concrete classes; `HalfGate` is the protocol-agnostic base.
-  Same shape for `PrivacyFreeGen` / `PrivacyFreeEva`.
-* `emp-tool/circuits/{bit,bitvec,unsigned_int,signed_int,float}.h`
-  — the user-facing circuit primitives. The headers are short; read
-  them.
-* `emp-tool/circuits/sortable.h` — `If(cond).Then(x).Else(y)` and
-  `sort(arr, n)`, plus the `Sortable` mixin every numeric type
-  inherits from.
-* `emp-tool/circuits/{aes_128_ctr,sha3_256}.h` — pre-built crypto
-  circuits with calculator classes; also the non-circuit OpenSSL
-  reference functions you'd use to verify them.
-* `test/test_{bit,bitvec,uint,int,float}.cpp` — each test file's
-  `example()` block is a tutorial for the corresponding primitive.
-  Particularly `test/test_int.cpp` for `SignedInt`.
-* `test/test_{aes_128_ctr,sha3_256}.cpp` — end-to-end examples of using
-  the crypto calculators from circuit code, including reveal back to
-  host bytes for a ground-truth check.
-* `test/test_gen_circuit.cpp` — minimal example of capturing a circuit as
-  a native `.empbc` file under `setup_clear_backend("filename")`, then
-  reloading and re-executing it via `load_empbc_file` / `execute_program`.
-* `AGENTS.md` (top of repo) — project conventions index, with topical
-  subdocs under `docs/` for the circuit-class layer, backend layer,
-  numeric semantics, and the IO channel thread-safety contract.
+* `emp-tool/circuits/typed.h` — the context-bound value types
+  (`Bit_T`/`UInt_T`/`Int_T`/`Float_T<Ctx>`) and the `emp::kernel`
+  arithmetic kernels. The header is the source of truth for the op set.
+* `emp-tool/circuits/context.h` — the `BooleanContext` concept and the
+  contexts (`ClearCtx`, `RecordCtx`, `CountCtx`, `DigestCtx`), plus
+  `execute_program(ctx, prog, inputs)` for replaying a loaded program.
+* `emp-tool/frontend/circuit_fn.h` + `frontend/rec.h` — `compile` / `run`
+  for pure circuit functions; see [frontend.md](frontend.md).
+* `emp-sh2pc/emp-sh2pc/sh2pc_session.h` — `SH2PCCtx`, the garbled 2PC
+  context with typed `input` / `reveal`.
+* `test/test_typed.cpp` — tutorial for the context-bound value types over
+  `ClearCtx`.
+* `test/test_circuit_fn.cpp` — compile-once / run-on-any-context, both body
+  forms, a nullary circuit, the 31-AND adder, deterministic recording.
+* `emp-sh2pc/test/test_circuit_fn_sh2pc.cpp` — the same compiled circuit run
+  two-party over `SH2PCCtx`.
+* `test/test_gen_circuit.cpp` — capturing a circuit as a native `.empbc`
+  file, then reloading and re-executing it via `load_empbc_file` /
+  `execute_program`.
+* [circuits.md](circuits.md) — the circuit value layer conventions (and the
+  internal `emp::legacy` Wire-bound layer); [numeric_semantics.md](numeric_semantics.md)
+  for wrap/division/comparison details.

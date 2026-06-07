@@ -7,8 +7,7 @@
 // and the executed circuit is written as a native .empbc BooleanProgram.
 // Here we capture, reload, validate, and re-execute the reloaded program on the
 // plaintext backend, checking it reproduces the original
-// outputs — including public-constant reveals (which become real Const gates,
-// not the old z/o-index XOR trailer).
+// outputs — including public-constant reveals (which are real Const gates).
 
 using namespace emp::block_types;
 using namespace emp;

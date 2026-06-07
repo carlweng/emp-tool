@@ -10,6 +10,7 @@
 #include <utility>
 
 namespace emp {
+namespace legacy {
 
 template<typename Wire, size_t N> class SignedInt_T;
 template<typename Wire, int W = 32> class Float_T;
@@ -180,5 +181,6 @@ template<typename Wire> using UInt64_T = UnsignedInt_T<Wire, 64>;
 
 #include "emp-tool/circuits/unsigned_int.hpp"
 
+}  // namespace legacy
 }  // namespace emp
 #endif

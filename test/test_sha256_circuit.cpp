@@ -15,6 +15,7 @@
 // Use the standard block-wire circuit aliases in this test translation unit.
 using namespace emp::block_types;
 using namespace emp;
+using namespace emp::legacy;
 
 // Reference digest via OpenSSL.
 static void openssl_sha256(const uint8_t* in, size_t n, uint8_t out[32]) {

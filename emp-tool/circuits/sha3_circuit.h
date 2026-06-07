@@ -6,6 +6,7 @@
 #include <cstdint>
 
 namespace emp {
+namespace legacy {
 
 // ===========================================================================
 // LEGACY Bit_T circuit kernel — RECORDING SOURCE, not the canonical layer.
@@ -156,6 +157,7 @@ public:
 	}
 };
 
+}  // namespace legacy
 }  // namespace emp
 
 #endif  // EMP_SHA3_CIRCUIT_H_
