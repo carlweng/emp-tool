@@ -57,6 +57,7 @@ set(emp_tool_sources
     emp-tool/circuits/circuit.cpp
     emp-tool/circuits/circuit_assets.cpp
     emp-tool/circuits/float_circuit_files.cpp
+    emp-tool/circuits/builtin_circuit_files.cpp
     emp-tool/crypto/ec.cpp)
 
 # ---------------------------------------------------------------------
@@ -82,7 +83,10 @@ set_target_properties(emp-tool PROPERTIES
     SOVERSION      ${PROJECT_VERSION_MAJOR}
     CXX_EXTENSIONS OFF)
 
-target_compile_features(emp-tool PUBLIC cxx_std_17)
+# The canonical BooleanContext surface (circuits/context.h, circuits/typed.h)
+# requires C++20 (concepts, std::regular, std::span), so emp-tool's public
+# contract is C++20 — consumers that include those headers must build as C++20.
+target_compile_features(emp-tool PUBLIC cxx_std_20)
 
 target_include_directories(emp-tool PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>

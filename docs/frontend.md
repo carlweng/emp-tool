@@ -1,183 +1,169 @@
 # Circuit frontend (`emp-tool/frontend/`)
 
-A small, optional layer for **running a pure circuit function through any
-backend**. You write the function in ordinary circuit-value code (`Bit`,
-`UInt32`, `SignedInt`, `Float`, etc. after choosing a wire binding); the
-frontend lets you call it directly, or compile it once into a reusable
-circuit object (with size/depth stats) and replay it — all through the same
-global `Backend`, so the identical code drives `ClearBackend`, AG2PC, or any
-future protocol with no frontend changes.
+A small, optional layer for **writing a pure circuit once and running it on any
+context** — plaintext, garbled 2PC, ZK, … . You write the circuit in ordinary
+typed circuit-value code (`Bit<Ctx>`, `UInt<Ctx,N>`, `Int<Ctx,N>`,
+`Float<Ctx,W>`); the frontend lets you call it live, or `compile` it once into a
+reusable, **context-free** `Circuit` and `run` it on whatever context you hold —
+with no global backend and no per-bit virtual dispatch.
 
-Everything lives in namespace **`emp::frontend`** (so the short names
-`run` / `compile` don't pollute `emp`). Header-only; compiles against
-emp-tool alone. Pull it in with `#include "emp-tool/frontend/frontend.h"`,
-which also injects suffixed `*_rec` aliases (`Bit_rec`, `UInt32_rec`, …) used
-only internally for recording.
+Everything lives in namespace **`emp::frontend`** (so `run` / `compile` don't
+pollute `emp`). Header-only over emp-tool; **C++20**. Pull it in with
+`#include "emp-tool/frontend/frontend.h"` (or directly
+`#include "emp-tool/frontend/circuit_fn.h"`).
 
-For the circuit-value interface this layer relies on, read
-[circuits.md § Circuit-value interface](circuits.md). For the backend seam it
-drives, read [backend.md](backend.md).
+This is the BooleanContext frontend. The legacy `Bit_T`/global-`Backend` frontend
+(`executor.h`, `TypedCircuit`, `setup_clear_backend` + `run`/`compile` over a
+global backend) is **retired**; `executor.h` is now a `#error` migration stub.
 
-## What a circuit is — a pure function
+For the typed values it builds on, read [circuits.md](circuits.md); for the
+context concept it targets, read the header of `circuits/context.h`.
 
-A frontend circuit takes EMP values as **arguments** and returns an EMP value;
-it does **no I/O of its own**:
+## What a circuit is — a pure function over a context
 
-- **No secret `feed` inside** — pass secret/party inputs as arguments.
-- **No `reveal` inside** — reveal the returned value *outside*, in direct mode.
-- **Literal public constants inside are fine** — `UInt32 iv(0x6a09e667,
-  PUBLIC)` folds to constant gates. But a public feed *bakes its value* into the
-  circuit, so only literals / values all parties agree on at compile time belong
-  inside; any public value that may differ across parties or runs must be an
-  **argument**, not fed inside.
+A circuit body takes typed circuit values as **arguments** and returns a typed
+value; it does **no I/O of its own** (no `input`/`reveal`/OT). This is enforced
+structurally: a body is recorded through a `RecordContext`, which has no I/O.
 
-**The calling contract** (one place, `circuit_fn_traits` in `executor.h`): a body
-must be **callable with prvalue circuit-value arguments** and **return a circuit
-value by value**. Arguments are passed as value copies, so a body cannot mutate
-them (a non-`const` lvalue-reference parameter is rejected), and the same body
-records and replays identically. Returning a **reference** (it would dangle into
-the argument copies), returning **void**, returning a **non-circuit** value, or
-taking a non-circuit argument are all compile-time errors with a precise message
-— in `run`, `compile<Ins...>`, and `compile(body, samples)` alike.
+- **No secret input inside** — pass secret/party inputs as arguments.
+- **No `reveal` inside** — reveal the returned value *outside*, on the session.
+- **Public constants inside are fine** — `a.constant(5)` (implicit form) or
+  `UInt<Ctx,N>::constant(ctx, 5)` (explicit form) fold to constant gates. A value
+  that may differ across parties or runs must be an **argument**.
 
-`compile` also **enforces** the no-I/O rule: a non-public `feed` or any
-`reveal` in the body is a hard error (`RecordBackend` rejects them). Live
-`run(body, args...)` calls the body directly, so it relies on the same caller
-discipline as ordinary direct-mode circuit code.
-
-Why: `compile` traces *one* execution of the body with placeholder values, so
-any **host** control flow that depended on a runtime value would be frozen into
-the trace (e.g. `if (x.reveal()) …` would always take the record-time branch).
-The pure-function rule removes that footgun: a circuit's *shape* cannot depend
-on input or revealed values. (Branching on a **public scalar** — a width, a loop
-bound, `party` — is fine; it shapes the circuit identically every run.)
-
-So I/O stays the caller's job, done in **direct mode** around the circuit:
-build the input circuit values, run the circuit, reveal the returned circuit
-values.
-
-## Running a circuit
+I/O stays the caller's job, around the circuit:
 
 ```cpp
-#include "emp-tool/emp-tool.h"
-#include "emp-tool/frontend/frontend.h"
-using namespace emp;
-using namespace emp::block_types;
-
-setup_clear_backend("");                            // or setup_ag2pc(...)
-auto add = [](auto a, auto b){ return a + b; };
-
-UInt32 x(32, 7, PUBLIC), y(32, 5, PUBLIC);          // inputs: direct mode
-UInt32 z  = frontend::run(add, x, y);               // LIVE: call the body
-auto   c  = frontend::compile<UInt32,UInt32>(add);  // COMPILE once (+ stats)
-UInt32 z2 = frontend::run(c, x, y);                 // replay; reuse c, fresh inputs
-bool   r  = z2[0].reveal<bool>(PUBLIC);             // reveal outside, direct mode
+auto a = sess.input<UInt<SH2PCContext,32>>(ctx, ALICE, av);   // session feeds inputs
+auto b = sess.input<UInt<SH2PCContext,32>>(ctx, BOB,   bv);
+auto c = frontend::run(ctx, circuit, a, b);                   // pure replay
+uint32_t r = sess.reveal(c, PUBLIC);                          // session reveals
 ```
 
-- **live** — `run(body, args…)` invokes the body and returns its typed result.
-- **compiled** — `compile(...)` records once into a circuit; `run(circuit, …)`
-  replays it. Both return live EMP values, so circuits **chain** (one result
-  feeds the next) and you reveal at the end. (Plain
-  `UInt32 x(...); x.reveal()` is *direct mode* — that's how you do I/O; it is
-  not "the frontend".)
+## Body forms
 
-## Bodies must be wire-generic
+A body comes in two forms; `compile`/`run` detect which is invocable. A body
+callable in **both** is a contract error (disambiguate).
 
-`run`/`compile` instantiate the body on the recording wire (`RecWire`) *and* on
-the live wire, so the body cannot pin a wire type. Three legal spellings:
+- **implicit context** (default) — the typed values carry their own context, so
+  the body needs none; make a constant from an argument with `a.constant(v)`:
 
-- `auto` generic lambda: `[](auto a, auto b){ return a + b; }`
-- templated functor (C++17): `struct F { template<class W>
-  UInt32_T<W> operator()(UInt32_T<W>, UInt32_T<W>) const; };`
-- C++20 template lambda: `[]<class W>(UInt32_T<W> a, UInt32_T<W> b){ … }`
+  ```cpp
+  auto add = [](auto a, auto b) { return a + b; };
+  ```
 
-A body pinned to a concrete wire (`[](UInt32 a, …)` with `UInt32 =
-…<AG2PCWire,32>`) compiles for the live `run(body, …)` only and fails `compile`.
+- **explicit context** (general) — the body takes `Ctx&` first. Required for
+  **nullary** circuits and for making a constant with no argument to anchor on:
 
-## `compile`: two ways to fix input shapes
+  ```cpp
+  auto bias = [](auto& ctx) {
+      using C = std::remove_reference_t<decltype(ctx)>;
+      return UInt<C,16>::constant(ctx, 4242);
+  };
+  ```
 
-- `compile<UInt32, UInt32>(body)` — input **types** as template args; the width
-  comes from the type (fixed-width types / `Bit` / `Float`). No dummy values.
-- `compile(body, a, b)` — sample **values**; only their shape is read (handy
-  when you already hold inputs, or for runtime-width `UnsignedInt` /
-  `SignedInt` values).
+### The calling contract
 
-Both capture the body's returned value as the circuit output. `compile` records
-via an internal `RecordBackend`, restoring the previous global `backend` on the
-normal path (it is not exception-safe — don't throw out of a body mid-record).
+One diagnostic site (`circuit_fn_traits` / `circuit_contract` in `circuit_fn.h`):
+a body must be **callable with prvalue circuit-value arguments** and **return a
+circuit value by value**. Arguments are passed by value, so a body cannot mutate
+them (a non-`const` lvalue-reference parameter is rejected). Returning a
+**reference**, returning **void**, returning a **non-circuit** value, taking a
+non-circuit argument, or being callable in **both** context forms are all
+compile-time errors with a precise message — in `compile<Shapes...>` and live
+`run` alike.
+
+## Shapes — context-free signatures
+
+A **shape** is "a typed value minus its context": its bit width, its host clear
+type + codec, and which value it `bind`s to per context. Shapes are how a
+compiled circuit's signature stays context-free.
+
+| value (per context)  | shape           |
+|----------------------|-----------------|
+| `Bit<Ctx>`           | `BitShape`      |
+| `UInt<Ctx,N>`        | `UIntShape<N>`  |
+| `Int<Ctx,N>`         | `IntShape<N>`   |
+| `Float<Ctx,W>`       | `FloatShape<W>` |
+
+`Shape::bind<Ctx>` re-attaches a context (`UIntShape<32>::bind<Ctx> ==
+UInt<Ctx,32>`); the clear codec lives on the shape and the value's
+`encode`/`decode` forward to it. See `circuits/shape.h`.
+
+## compile / run
+
+```cpp
+#include "emp-tool/frontend/circuit_fn.h"
+namespace cf = emp::frontend;
+
+auto add  = [](auto a, auto b) { return a + b; };
+auto circ = cf::compile<UIntShape<32>, UIntShape<32>>(add);   // record ONCE
+
+ClearContext cx;                                              // run on any context
+auto x = UInt<ClearContext,32>::constant(cx, 7);
+auto y = UInt<ClearContext,32>::constant(cx, 5);
+auto z = cf::run(cx, circ, x, y);                            // replay -> UInt<ClearContext,32>
+```
+
+- **compiled** — `compile<ArgShapes...>(body)` records the body once through a
+  `RecordContext` and returns a `Circuit<RetShape, ArgShapes...>`.
+  `run(ctx, circ, args...)` replays it on the live `ctx` (args **by const-ref**;
+  the context is **explicit** — no global backend). The same `Circuit` runs
+  identically on `ClearContext`, `SH2PCContext`, etc. — user circuits are as
+  portable as the built-in `.empbc` files.
+- **live** — `run(body, args...)` invokes the body directly on already-live typed
+  values (it recovers the context from the first argument). Same contract.
+
+`compile` is host-side and deterministic: all parties compile the identical
+program, then replay it in lockstep. (A `Float` body inlines its `fp<W>_*.empbc`
+gates into the recording, so a recorded float circuit is semantically — not
+necessarily gate-for-gate — equal to the standalone builtin.)
 
 ## The compiled circuit object
 
-`compile` returns a `TypedCircuit<Ret>`. Its `circuit` member is plain,
-backend-independent data — the recorded `BooleanProgram` (flat input wires,
-gates, output wire ids) plus stats computed once — while `TypedCircuit` also
-remembers the return type and per-argument widths used to bind live inputs on
-replay:
+`compile` returns a `Circuit<RetShape, ArgShapes...>` wrapping a
+`circuit::CircuitArtifact` (the flat `BooleanProgram` + a `CircuitSignature` of
+argument widths and the return width). The artifact is **private and immutable**;
+the constructor validates the program structurally *and* that the signature
+matches the declared shapes, so a stale or mis-typed loaded artifact is rejected
+at construction rather than silently mis-running. Accessors: `circ.program()`,
+`circ.signature()`.
 
-- `circuit.count` — `num_and`, `num_xor`, `num_not`, `num_wire`, input/output
-  bit counts.
-- `circuit.schedule.levels` — AND-depth and the gates grouped per level.
-- `circuit.liveness` / `circuit.layout` — last-use and per-gate frees, for slot
-  recycling.
-
-Because it's data, it's **reusable and inspectable**: build it once, read
-`circ.circuit.count.num_and` / `circ.circuit.schedule.levels.depth`, and
-`run(circ, …)` it as
-many times as you like with fresh inputs — the body's C++ isn't re-traversed on
-replay. The gate *shape* is value-free (it depends only on public structure, not
-on argument values), so all parties build the same `TypedCircuit` shape — provided the body
-obeys the contract above (no branch on a revealed value; public feeds are
-literals/agreed constants, not per-party runtime values).
-
-## Typed I/O and `rebind`
-
-A compiled body records on `RecWire` but replays on the live wire, so the
-returned circuit value must be rebuilt over the live wire. The IR/gates are
-**wire-free** and reused as-is; only the input/output *wrappers* are wire-typed.
-`rebind` is the compile-time map "same shape, different wire"
-(`UnsignedInt_T<RecWire,32> → UnsignedInt_T<W,32>`); it moves no data — the wires
-are carried by `pack`/`unpack`. It exists solely to hand back the exact
-`UnsignedInt`/`SignedInt`/`Bit`/`Float` type rather than an anonymous wire
-bundle. See
-[circuits.md § Circuit-value interface](circuits.md).
+No analyses are baked into the circuit — gate counts, liveness, and the AND-depth
+schedule are free functions over the program (`frontend/passes.h`,
+`circuits/context.h`), computed when wanted.
 
 ## What's inside (internals)
 
-- `boolean_program.h` — the protocol-neutral IR: `BooleanProgram` with flat
-  inputs `[0, num_inputs)`, `Gate` (`AND`/`XOR`/`NOT`/`CONST0`/`CONST1`), and
-  `outputs` (the return value's wire ids).
-- `record_backend.h` — `RecWire` + `RecordBackend` (a `Backend` that records
-  operations into a `BooleanProgram`; rejects secret `feed` and `reveal`).
-- `passes.h` — analysis over the IR: `count`, `liveness`, `schedule`
-  (AND-depth), `layout`.
-- `circuit.h` — `Circuit` (program + stats).
-- `executor.h` — `compile` (record + stats), `run` (live + compiled replay),
-  and the `make_external` / `record_typed_` helpers.
-
-## C++ standard
-
-The frontend headers are C++17. **Template-lambda bodies** (`[]<class W>(…)`)
-are C++20 — opt in per target only where used (e.g. the `add_test_case_cxx20`
-test macro); the library stays C++17 (its `cxx_std_17` is a floor, so a single
-C++20 target resolves cleanly).
+- `circuits/shape.h` — `Shape` concept + `BitShape`/`UIntShape<N>`/`IntShape<N>`/
+  `FloatShape<W>` (width, clear codec, `bind<Ctx>`).
+- `circuits/typed.h` — the typed values `Bit`/`UInt`/`Int`/`Float<Ctx>`.
+- `circuits/context.h` — `RecordContext` (records a `BooleanProgram`),
+  `execute_program(ctx, prog, inputs, ws)` (value-return replay over any
+  `BooleanContext`), `ProgramWorkspace`.
+- `circuits/circuit_artifact.h` — `CircuitArtifact` (program + signature) +
+  `validate_artifact`.
+- `frontend/circuit_fn.h` — the `CircuitValue` concept, `circuit_fn_traits` /
+  `circuit_contract`, `Circuit<RetShape,ArgShapes...>`, `compile`, `run`.
+- `frontend/passes.h` — analyses over the IR (`count`, `liveness`, `schedule`,
+  `layout`) as free functions.
 
 ## Adding a new backend
 
-Implement the `emp::Backend` virtuals and give it a wire type; the frontend
-(live `run`, `compile`, replay, every circuit type) then works with **no
-frontend changes** — that's the payoff of routing through the backend seam.
-
-The generic replay walks the gate list in recorded order issuing scalar
-`backend->{public_label,and,xor,not}` calls — that delivers **correctness** on
-any backend. It does **not** itself batch by round: a round-sensitive protocol
-(e.g. GMW) gets efficiency by *consuming the `Circuit`* (reading
-`schedule.levels`) through its own execution path, not via the generic replay.
-That backend-specific `Circuit` consumer is future work; the stats are recorded
-for it. See [backend.md](backend.md).
+Define a type satisfying the `BooleanContext` concept (a `std::regular` `Wire`
+plus value-return `public_bit`/`and_gate`/`xor_gate`/`not_gate`). Every compiled
+circuit then replays on it via `run(ctx, circ, …)` with no frontend changes — the
+generic replay walks the gate list issuing the context's gate ops. A
+round-sensitive protocol (e.g. GMW) gets efficiency by consuming the program's
+AND-depth schedule (a `BulkBooleanContext` + `scheduled_execute_program`), not the
+scalar replay.
 
 ## Tests
 
-- `test/test_frontend.cpp` (emp-tool) — live + compiled modes and mode-switching
-  on `ClearBackend` (plaintext), the standalone backend-neutral proof.
-- `emp-ag2pc/test/test_frontend*.cpp` — the same `compile`/`run` over a real
-  protocol (compiled replay, chaining, template-lambda body).
+- `emp-tool/test/test_circuit_fn.cpp` — compile-once / run-on-any-context on
+  `ClearContext` (incl. both body forms, a nullary circuit, `.constant()`, fp32),
+  plus the size-optimal 31-AND adder and deterministic recording.
+- `emp-tool/test/circuit_fn_contract_probes.cpp` — the contract's positive case +
+  the negative cases that must fail to compile with the expected message.
+- `emp-sh2pc/test/test_circuit_fn_sh2pc.cpp` — the same compiled `Circuit` run
+  two-party over the garbled `SH2PCContext` (uint32 + fp32).

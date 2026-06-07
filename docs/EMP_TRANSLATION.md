@@ -430,21 +430,33 @@ schemes.)
 
 ### 6.2. Real semi-honest 2PC
 
-The bare `HalfGate` / `PrivacyFree` classes in emp-tool don't run a
-full protocol on their own (no OT for input wires); they're the
-gate-evaluation engine that the protocol layers above plug in. For
-end-to-end semi-honest 2PC use **emp-sh2pc**:
+The bare `HalfGate` / `PrivacyFree` classes in emp-tool are the
+gate-evaluation engine; they don't run a full protocol on their own (no
+OT for input wires). For end-to-end semi-honest 2PC use **emp-sh2pc**,
+which provides a native `SH2PCSession` (owns OT / Delta / PRG /
+half-gate state plus typed `input`/`reveal`) and an `SH2PCContext` (a
+`BooleanContext`). There is no global backend:
 
 ```cpp
 NetIO io(party == ALICE ? nullptr : "127.0.0.1", port);
-setup_semi_honest(&io, party);          // from emp-sh2pc
-// ... circuit code, identical to the ClearBackend version ...
-finalize_semi_honest();
+SH2PCSession sess(&io, party);                 // owns the protocol state
+SH2PCContext ctx(sess);
+
+auto a = sess.input<UInt<SH2PCContext,32>>(ctx, ALICE,  av);   // private inputs
+auto b = sess.input<UInt<SH2PCContext,32>>(ctx, BOB,    bv);
+auto k = sess.input<UInt<SH2PCContext,32>>(ctx, PUBLIC, kv);   // public constant
+auto c = a + b + k;                                            // or frontend::run(ctx, circ, ...)
+uint32_t r = (uint32_t)sess.reveal(c, PUBLIC);
+sess.finalize();
 ```
 
-The circuit body is byte-for-byte the same as under `ClearBackend`.
-**This is the point** — translate once, run on whichever backend the
-caller wants.
+The circuit is written over the `SH2PCContext` `BooleanContext`, so the
+**same** circuit function (e.g. `[](auto a, auto b){ return a + b; }`)
+compiled once with `frontend::compile` runs unchanged on `ClearContext`
+(plaintext) and `SH2PCContext` (garbled). **This is the point** — write
+once, run on whichever context the caller wants. (The legacy
+`setup_semi_honest` / `finalize_semi_honest` global-backend installer has
+been removed.)
 
 `NetIO` (`"wb"` stdio + raw read on recv) satisfies the `IOChannel`
 contract and can be passed to any of the `setup_*` helpers. Not
@@ -580,8 +592,9 @@ int32_t f(const int32_t alice_xs[N], int32_t bob_y_value, int party) {
 int main(int argc, char** argv) {
     int party = std::atoi(argv[1]);
     NetIO io(party == ALICE ? nullptr : "127.0.0.1", 12345);
-    // For semi-honest 2PC, swap in setup_semi_honest(&io, party); from emp-sh2pc.
-    setup_clear_backend();                     // testing only
+    // For semi-honest 2PC, write this circuit over an SH2PCContext instead
+    // (see §6.2 "Real semi-honest 2PC"); the global-backend swap was removed.
+    setup_clear_backend();                     // testing only (legacy global backend)
 
     int32_t alice_xs[N] = { /* Alice's real values; Bob's process passes 0s here */ };
     int32_t bob_y       = /* Bob's real value;       Alice's process passes 0   */;
@@ -681,10 +694,13 @@ Constants in `emp::`: `PUBLIC = 0`, `ALICE = 1`, `BOB = 2`. Width and
 party arguments are plain `int` / `size_t`; no enum.
 
 `backend` is the global `Backend*` (thread-local under
-`EMP_TOOL_THREADING`) that every circuit op dispatches through. The
-`setup_*` helpers (`setup_clear_backend`, `setup_semi_honest`, ...)
-construct one and assign it; the matching `finalize_*` deletes it.
-Don't reference `backend` from circuit code — use the wrapper types.
+`EMP_TOOL_THREADING`) that every LEGACY circuit op dispatches through.
+The `setup_*` helpers (e.g. `setup_clear_backend`, ...) construct one and
+assign it; the matching `finalize_*` deletes it. (emp-sh2pc no longer
+uses the global backend — it has a native `SH2PCSession` / `SH2PCContext`;
+see §6.2. The C++20 `BooleanContext` layer takes the context explicitly
+and uses no global backend at all.) Don't reference `backend` from
+legacy circuit code — use the wrapper types.
 
 ---
 

@@ -1,33 +1,15 @@
 #ifndef EMP_FRONTEND_H__
 #define EMP_FRONTEND_H__
 
-// Umbrella for the protocol-neutral circuit frontend. A circuit is a PURE,
-// wire-generic function — typed EMP arguments in, an EMP value out, no I/O
-// inside. frontend::run(body, args...) calls it live; frontend::compile<...>(body)
-// records it once (with stats) and frontend::run(circuit, args...) replays it
-// through whatever Backend is installed. See docs/frontend.md.
+// Umbrella for the circuit-function frontend over the C++20 BooleanContext model:
+// write a PURE circuit body once, compile() it into a context-free Circuit<Sig>,
+// and run() it on ANY context (plaintext / garbled 2PC / ZK / ...), exactly like
+// the built-in .empbc circuits. Typed circuit values (Bit/UInt/Int/Float<Ctx>)
+// come from circuits/typed.h; context-free shapes from circuits/shape.h.
 //
-// Opt-in (NOT pulled by emp-tool.h). The suffixed `*_rec` aliases below are an
-// INTERNAL detail of recording (the wire a body is traced on); user code passes
-// ordinary live values and need not name them.
+// The legacy Bit_T / global-Backend frontend (frontend/executor.h) is RETIRED;
+// downstream protocols (ag2pc / agmpc / zk) migrate onto this surface.
 
-#include "emp-tool/frontend/boolean_program.h"
-#include "emp-tool/frontend/record_backend.h"
-#include "emp-tool/frontend/passes.h"
-#include "emp-tool/frontend/circuit.h"
-#include "emp-tool/frontend/executor.h"
-
-// Backend-independent circuit templates (Bit_T<Wire>, UnsignedInt_T<Wire,N>, …)
-// plus the EMP_CIRCUIT_TYPES_* binding macros.
-#include "emp-tool/circuits/circuit.h"
-#include "emp-tool/circuits/circuit_types.h"
-
-// Internal recording aliases bound to RecWire, suffixed with _rec so they never
-// clash with a protocol's bare Bit/integer aliases in the same translation unit.
-// These are the wire a body is traced on during compile(); ordinary user code
-// does not name them (it passes live values and gets a live value back).
-namespace emp {
-EMP_CIRCUIT_TYPES_ALL_AS(emp::frontend::RecWire, _rec)
-}  // namespace emp
+#include "emp-tool/frontend/circuit_fn.h"
 
 #endif  // EMP_FRONTEND_H__

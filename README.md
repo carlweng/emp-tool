@@ -254,35 +254,34 @@ to `setup_clear_backend("circuit.empbc")`; it is written on
 `finalize_clear_backend()`. (Capture requires all secret feeds before any
 gate — inputs are the leading wires.)
 
-### Circuit frontend: run and compile
+### Circuit frontend: compile once, run on any context
 
-Write a **pure circuit function** (inputs are arguments, the output is the
-return value — no `feed`/`reveal` inside) and run it through the installed
-backend: call it directly, or **compile it once into a reusable circuit**
-(carrying size/depth stats) and replay it with fresh inputs. I/O stays in
-direct mode, around the circuit. Add `#include <emp-tool/frontend/frontend.h>`
-for the frontend API and opt into `emp::block_types` for the standard block
-aliases.
+Write a **pure circuit function** (inputs are arguments, the output is the return
+value — no `input`/`reveal` inside) over the typed values `Bit/UInt/Int/Float<Ctx>`.
+Call it live, or **compile it once into a context-free `Circuit`** and `run` it on
+any context — plaintext, garbled 2PC, ZK — with no global backend. I/O is the
+session's job, around the circuit. Add `#include <emp-tool/frontend/circuit_fn.h>`.
 
 ```cpp
-#include <emp-tool/frontend/frontend.h>
-using namespace emp::block_types;
+#include <emp-tool/frontend/circuit_fn.h>
+using namespace emp;
+namespace cf = emp::frontend;
 
-setup_clear_backend();                           // any backend (here: cleartext)
-auto add = [](auto a, auto b){ return a + b; };
+auto add  = [](auto a, auto b){ return a + b; };             // pure circuit (implicit ctx)
+auto circ = cf::compile<UIntShape<32>, UIntShape<32>>(add);  // record ONCE -> Circuit
 
-UInt32 x(32, 7, PUBLIC), y(32, 5, PUBLIC);       // inputs: direct mode
-UInt32 z = frontend::run(add, x, y);             // run as a function -> 12
-
-auto circ = frontend::compile<UInt32, UInt32>(add);  // pre-built once (+ stats)
-UInt32 r1 = frontend::run(circ, x, y);                               // replay ...
-UInt32 r2 = frontend::run(circ, UInt32(32,100,PUBLIC), UInt32(32,23,PUBLIC)); // ... reused
-// inspect: circ.circuit.count.num_and, circ.circuit.schedule.levels.depth, ...
+ClearContext cx;                                             // ... then run on any context
+auto x = UInt<ClearContext,32>::constant(cx, 7);
+auto y = UInt<ClearContext,32>::constant(cx, 5);
+auto z = cf::run(cx, circ, x, y);                           // replay -> UInt<ClearContext,32> (== 12)
 ```
 
-Outputs are live wires, so results chain into more circuit code and are
-revealed whenever. The same `compile` / `run` drive any backend — the
-cleartext one above, or a protocol such as AG2PC. See
+The same `circ` runs identically on `ClearContext`, the garbled `SH2PCContext`, and
+future contexts — user circuits are as portable as the built-in `.empbc` files.
+Arguments are context-free **shapes** (`UIntShape<32>`, `BitShape`, `FloatShape<32>`,
+…); the compiled `Circuit` holds a validated `BooleanProgram` + signature. Bodies are
+C++20: an implicit-context form (`[](auto a, auto b){…}`, constants via `a.constant(v)`)
+and an explicit-context form (`[](auto& ctx, …){…}`, required for nullary circuits). See
 [docs/frontend.md](docs/frontend.md).
 
 ### Native circuit files (`.empbc`)

@@ -5,6 +5,16 @@
 
 namespace emp {
 
+// ===========================================================================
+// LEGACY Bit_T circuit kernel — RECORDING SOURCE, not the canonical layer.
+// Hand-written gate circuit over Bit_T<Wire> + the global emp::Backend, NOT the
+// BooleanContext typed layer (circuits/typed.h: Bit/UInt/Int/Float). Recorded
+// once into aes128.empbc (tools/record_builtins.cpp); the runtime path is IR
+// replay via execute_program(ctx, circuit::builtin_circuit("aes128")). Quarantined
+// (opt-in include, not in emp-tool.h) until the global-backend consumers
+// (ag2pc / agmpc) migrate to BooleanContext; port or retire then.
+// ===========================================================================
+
 // AES SBox (Boyar-Peralta 2010): 32 ANDs, 81 XORs, 4 NOTs.
 // Public bit convention: U[0]=LSB, U[7]=MSB; S[0]=LSB, S[7]=MSB.
 // (BP paper uses MSB-first; we flip indices once at entry/exit so the

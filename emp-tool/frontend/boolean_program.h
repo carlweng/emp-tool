@@ -4,8 +4,9 @@
 // The frontend builds on the canonical core IR (emp::circuit::BooleanProgram in
 // circuits/boolean_program.h) and re-exports its names here. The core IR is
 // flat: inputs are wires [0, num_inputs), there is no InputPort, no argument
-// boundaries, no num_and. The typed frontend carries argument shapes on
-// TypedCircuit (executor.h: arg_widths / return_width), NOT in the program.
+// boundaries, no num_and. The typed frontend carries argument shapes in the
+// compiled circuit's CircuitSignature (circuit_artifact.h: arg_widths /
+// return_width), NOT in the program.
 //
 // This header adds only the frontend-local analysis metadata that the passes
 // produce (LevelInfo, consumed by schedule_pass).

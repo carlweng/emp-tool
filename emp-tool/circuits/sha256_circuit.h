@@ -11,6 +11,16 @@
 
 namespace emp {
 
+// ===========================================================================
+// LEGACY Bit_T circuit kernel — RECORDING SOURCE, not the canonical layer.
+// Hand-written gate circuit over Bit_T<Wire> + the global emp::Backend, NOT the
+// BooleanContext typed layer (circuits/typed.h). Recorded once into
+// sha256_256.empbc (tools/record_builtins.cpp); the runtime path is IR replay
+// via execute_program(ctx, circuit::builtin_circuit("sha256_256")). Quarantined
+// (opt-in include, not in emp-tool.h) until the global-backend consumers
+// (ag2pc / agmpc) migrate to BooleanContext; port or retire then.
+// ===========================================================================
+
 // SHA-256 (FIPS 180-4) as hardcoded gates, in the style of aes_circuit.h /
 // sha3_circuit.h. Each 32-bit word is a UnsignedInt_T<Wire, 32>, so every
 // word operation reuses that type's existing gates:

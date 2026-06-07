@@ -7,6 +7,16 @@
 
 namespace emp {
 
+// ===========================================================================
+// LEGACY Bit_T circuit kernel — RECORDING SOURCE, not the canonical layer.
+// Hand-written gate circuit over Bit_T<Wire> + the global emp::Backend, NOT the
+// BooleanContext typed layer (circuits/typed.h). Recorded once into
+// sha3_256_256.empbc (tools/record_builtins.cpp); the runtime path is IR replay
+// via execute_program(ctx, circuit::builtin_circuit("sha3_256_256")). Quarantined
+// (opt-in include, not in emp-tool.h) until the global-backend consumers
+// (ag2pc / agmpc) migrate to BooleanContext; port or retire then.
+// ===========================================================================
+
 // Keccak-f[1600] permutation as hardcoded gates. State is 5x5 lanes of 64
 // bits = 1600 bits, laid out per FIPS-202: bit z of lane (x, y) lives at
 // state[64*(5*y + x) + z], with z=0 = LSB of the lane. Bit/byte ordering for
