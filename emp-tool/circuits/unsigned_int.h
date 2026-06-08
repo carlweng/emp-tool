@@ -1,186 +1,240 @@
-#ifndef EMP_UNSIGNED_INT_H__
-#define EMP_UNSIGNED_INT_H__
-#include "emp-tool/circuits/bitvec.h"
-#include "emp-tool/circuits/sortable.h"
+#ifndef EMP_CIRCUIT_UNSIGNED_INT_H__
+#define EMP_CIRCUIT_UNSIGNED_INT_H__
+
+// UInt_T<Ctx,N>: an unsigned integer over a BooleanContext. N > 0 is a fixed-width
+// value (a CircuitValue: compile-time width, clear codec, wire layout); N == 0
+// (== runtime_width) is a runtime-width value whose width lives in the wire vector
+// and is chosen at construction. Both share one set of operators: arithmetic
+// (+,-,*,/,%) over the runtime-sized numeric_kernels, comparisons returning
+// Bit_T<Ctx>, bitwise ops, and public-amount shifts/rotates (pure wiring). The
+// fixed-only surface (clear codec, compile-time width views slice/concat/zext,
+// secret-amount barrel shifts, popcount) is `requires (N > 0)`; the runtime-only
+// surface (width-taking ctor/constant, resize) is `requires (N == 0)`.
+
+#include "emp-tool/circuits/bit.h"
 #include "emp-tool/circuits/numeric_kernels.h"
-#include <cassert>
-#include <cmath>
-#include <stdexcept>
+#include "emp-tool/core/utils.h"
+#include <array>
+#include <cstdint>
 #include <type_traits>
-#include <utility>
+#include <vector>
 
 namespace emp {
-namespace legacy {
 
-template<typename Wire, size_t N> class SignedInt_T;
-template<typename Wire, int W = 32> class Float_T;
+// Width sentinel: UInt_T<Ctx, runtime_width> / Int_T<Ctx, runtime_width> are the
+// runtime-width forms.
+inline constexpr int runtime_width = 0;
 
-// Unsigned integer over `Wire`. Width is either fixed at compile time (N > 0)
-// or set at construction (N == 0, the default — runtime width). Wraps mod
-// 2^width on +/-/* (matches uint{N}_t exactly). Logical shifts; comparisons
-// are unsigned. resize() zero-extends. Bit ordering is LSB-first.
-//
-// When N > 0:
-//   - default ctor produces a width-N value
-//   - additional ctors `(value, party)` and `(data, party)` are unlocked
-//     (no width arg needed)
-//   - operators preserve width N (UnsignedInt_T<W,64> + UnsignedInt_T<W,64>
-//     -> UnsignedInt_T<W,64>)
-template<typename Wire, size_t N = 0>
-class UnsignedInt_T : public BitVec_T<Wire>,
-                     public Sortable<Wire, UnsignedInt_T<Wire, N>> { public:
-	using BitVec_T<Wire>::bits;
-	using BitVec_T<Wire>::size;
+template <BooleanContext Ctx, int N> class Int_T;   // for as_signed (defined in signed_int.h)
 
-	// Circuit-value interface: pack/unpack/pack_size inherited from BitVec_T;
-	// override `rebind` so generic code names UnsignedInt, not the base BitVec.
-	// wire_type is declared by both BitVec_T and Sortable bases — re-declare it
-	// here to resolve the otherwise-ambiguous lookup.
-	using wire_type = Wire;
-	template<typename NW> using rebind = UnsignedInt_T<NW, N>;
+template <BooleanContext Ctx, int N>
+class UInt_T {
+public:
+    using Wire         = typename Ctx::Wire;
+    using context_type = Ctx;
+    using clear_t      = uint64_t;
+    template <BooleanContext C2> using rebind = UInt_T<C2, N>;
+    static constexpr bool is_dynamic = (N == 0);
+    // Fixed width is an inline array; runtime width is a vector sized at construction.
+    using storage = std::conditional_t<is_dynamic, std::vector<Wire>, std::array<Wire, (N > 0 ? N : 1)>>;
+    storage w{};
 
-	UnsignedInt_T() {
-		if constexpr (N > 0) bits.resize(N);
-	}
+    UInt_T() = default;
+    explicit UInt_T(Ctx& c) : ctx_(&c) {}
+    // Runtime-width construction: width must be >= 1.
+    UInt_T(Ctx& c, int width) requires (N == 0) : ctx_(&c) { validate_width_(width); w.resize((std::size_t)width); }
 
-	// Runtime-width ctors — usable in either mode (N==0 picks width up
-	// here; N>0 still requires width==N — the fixed-width invariant on
-	// the underlying BitVec must hold). `party` has NO default: that's
-	// what disambiguates this overload from the fixed-width form below
-	// for calls like `UnsignedInt_T<W, 64>(uv, PUBLIC)`. Without this,
-	// on platforms where size_t and uint64_t are the same type both
-	// ctors are identity-rank matches and the call is ambiguous.
-	template<typename T,
-	         typename = std::enable_if_t<std::is_integral_v<T>
-	                                  || std::is_same_v<T, __uint128_t>
-	                                  || std::is_same_v<T, __int128>>>
-	UnsignedInt_T(size_t width, T value, int party)
-	    : BitVec_T<Wire>(resolved_runtime_width(width), value, party) {}
+    // Public constant. Bits beyond 64 zero-extend (the carrier is a uint64).
+    static UInt_T constant(Ctx& c, uint64_t v) requires (N > 0) {
+        UInt_T r(c);
+        for (int i = 0; i < N; ++i) r.w[i] = c.public_bit(i < 64 ? (v >> i) & 1 : 0);
+        return r;
+    }
+    static UInt_T constant(Ctx& c, int width, uint64_t v) requires (N == 0) {
+        UInt_T r(c, width);
+        for (int i = 0; i < width; ++i) r.w[i] = c.public_bit(i < 64 ? (v >> i) & 1 : 0);
+        return r;
+    }
+    static UInt_T from_wires(Ctx& c, const Wire* in) requires (N > 0) {
+        UInt_T r(c); for (int i = 0; i < N; ++i) r.w[i] = in[i]; return r;
+    }
+    static UInt_T from_wires(Ctx& c, const Wire* in, int n) requires (N == 0) {
+        UInt_T r(c, n); for (int i = 0; i < n; ++i) r.w[i] = in[i]; return r;
+    }
 
-	UnsignedInt_T(size_t width, const void* data, int party)
-	    : BitVec_T<Wire>(enforced_data_width(width), data, party) {}
+    Ctx* context() const { return ctx_; }
+    const Wire* data() const { return w.data(); }
+    Wire* data() { return w.data(); }
+    UInt_T constant(uint64_t v) const requires (N > 0) { return constant(*ctx_, v); }   // same-context sugar
 
-	// Fixed-width ctors: only available when N > 0 (SFINAE-gated). Width is
-	// implicit from the type, so callers don't pass it. `party` has NO
-	// default — see BitVec_T for the rationale.
-	template<typename T,
-	         size_t M = N,
-	         typename = std::enable_if_t<(M > 0) && (std::is_integral_v<T>
-	                                  || std::is_same_v<T, __uint128_t>
-	                                  || std::is_same_v<T, __int128>)>>
-	UnsignedInt_T(T value, int party)
-	    : BitVec_T<Wire>(N, value, party) {}
+    Bit_T<Ctx> operator[](int i) const { return Bit_T<Ctx>(*ctx_, w[i]); }
 
-	template<size_t M = N, typename = std::enable_if_t<(M > 0)>>
-	UnsignedInt_T(const void* data, int party)
-	    : BitVec_T<Wire>(N, data, party) {}
+    UInt_T operator+(const UInt_T& o) const { check_same_context(*this, o); same_width_(o); UInt_T r = blank_(); kernel::ripple_add<Ctx>(*ctx_, w.data(), o.w.data(), r.w.data(), n_()); return r; }
+    UInt_T operator-(const UInt_T& o) const { check_same_context(*this, o); same_width_(o); UInt_T r = blank_(); kernel::ripple_sub<Ctx>(*ctx_, w.data(), o.w.data(), r.w.data(), n_()); return r; }
+    UInt_T operator&(const UInt_T& o) const { check_same_context(*this, o); same_width_(o); UInt_T r = blank_(); for (int i = 0; i < n_(); ++i) r.w[i] = ctx_->and_gate(w[i], o.w[i]); return r; }
+    UInt_T operator^(const UInt_T& o) const { check_same_context(*this, o); same_width_(o); UInt_T r = blank_(); for (int i = 0; i < n_(); ++i) r.w[i] = ctx_->xor_gate(w[i], o.w[i]); return r; }
+    UInt_T operator|(const UInt_T& o) const { check_same_context(*this, o); same_width_(o); UInt_T r = blank_(); for (int i = 0; i < n_(); ++i) r.w[i] = kernel::or_gate(*ctx_, w[i], o.w[i]); return r; }
+    UInt_T operator~() const                { UInt_T r = blank_(); for (int i = 0; i < n_(); ++i) r.w[i] = ctx_->not_gate(w[i]); return r; }
 
-	explicit UnsignedInt_T(const BitVec_T<Wire>& bv)
-	    : BitVec_T<Wire>(enforce_bv_width(bv)) {}
-	explicit UnsignedInt_T(BitVec_T<Wire>&& bv)
-	    : BitVec_T<Wire>(std::move(enforce_bv_width(bv))) {}
+    // Multiply is an O(N^2) shift-add; division/mod is restoring division (the
+    // largest kernel here). Division by zero saturates (see kernel::div_full).
+    UInt_T operator*(const UInt_T& o) const { check_same_context(*this, o); same_width_(o); UInt_T r = blank_(); kernel::mul_full<Ctx>(*ctx_, r.w.data(), w.data(), o.w.data(), n_()); return r; }
+    UInt_T operator/(const UInt_T& o) const { check_same_context(*this, o); same_width_(o); UInt_T r = blank_(); kernel::div_full<Ctx>(*ctx_, r.w.data(), nullptr, w.data(), o.w.data(), n_()); return r; }
+    UInt_T operator%(const UInt_T& o) const { check_same_context(*this, o); same_width_(o); UInt_T r = blank_(); kernel::div_full<Ctx>(*ctx_, nullptr, r.w.data(), w.data(), o.w.data(), n_()); return r; }
 
-	// Bit-cast to SignedInt with the same width and bits.
-	SignedInt_T<Wire, N> as_signed() const;
+    Bit_T<Ctx> operator==(const UInt_T& o) const { check_same_context(*this, o); same_width_(o); return Bit_T<Ctx>(*ctx_, kernel::equal<Ctx>(*ctx_, w.data(), o.w.data(), n_())); }
+    Bit_T<Ctx> operator!=(const UInt_T& o) const { return !(*this == o); }
+    Bit_T<Ctx> operator<(const UInt_T& o)  const { check_same_context(*this, o); same_width_(o); return Bit_T<Ctx>(*ctx_, kernel::less_than<Ctx>(*ctx_, w.data(), o.w.data(), n_())); }
+    Bit_T<Ctx> operator>(const UInt_T& o)  const { return o < *this; }
+    Bit_T<Ctx> operator<=(const UInt_T& o) const { return !(*this > o); }
+    Bit_T<Ctx> operator>=(const UInt_T& o) const { return !(*this < o); }
 
-	// Zero-extend (or truncate) to new_width. Always returns a runtime-width
-	// UnsignedInt (N=0); width changes can't be expressed in the static type.
-	UnsignedInt_T<Wire, 0> resize(size_t new_width) const;
+    // sel ? t : *this. The selector's context is debug-checked alongside t.
+    UInt_T select(const Bit_T<Ctx>& sel, const UInt_T& t) const {
+        check_same_context(*this, sel); check_same_context(*this, t); same_width_(t);
+        UInt_T r = blank_(); for (int i = 0; i < n_(); ++i) r.w[i] = kernel::mux(*ctx_, sel.w, t.w[i], w[i]); return r;
+    }
 
-	// Arithmetic — both operands must have equal width.
-	UnsignedInt_T operator+(const UnsignedInt_T& rhs) const;
-	UnsignedInt_T operator-(const UnsignedInt_T& rhs) const;
-	UnsignedInt_T operator-() const;
-	UnsignedInt_T operator*(const UnsignedInt_T& rhs) const;
-	UnsignedInt_T operator/(const UnsignedInt_T& rhs) const;
-	UnsignedInt_T operator%(const UnsignedInt_T& rhs) const;
+    // --- shifts / rotates by a PUBLIC constant amount (pure wiring, no gates).
+    //     Shift amount must be >= 0; logical (zero-fill) for both directions. ---
+    UInt_T operator<<(int s) const {
+        if (s < 0) error("UInt_T::operator<<: shift amount must be >= 0");
+        UInt_T r = blank_(); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < n_(); ++i) r.w[i] = (i >= s) ? w[i - s] : z;
+        return r;
+    }
+    UInt_T operator>>(int s) const {
+        if (s < 0) error("UInt_T::operator>>: shift amount must be >= 0");
+        UInt_T r = blank_(); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < n_(); ++i) r.w[i] = (i + s < n_()) ? w[i + s] : z;
+        return r;
+    }
+    UInt_T rotl(int s) const { int n = n_(); UInt_T r = blank_(); s = ((s % n) + n) % n; for (int i = 0; i < n; ++i) r.w[i] = w[((i - s) % n + n) % n]; return r; }
+    UInt_T rotr(int s) const { int n = n_(); UInt_T r = blank_(); s = ((s % n) + n) % n; for (int i = 0; i < n; ++i) r.w[i] = w[(i + s) % n]; return r; }
 
-	// Bitwise overrides preserve UnsignedInt typing.
-	UnsignedInt_T operator&(const UnsignedInt_T& rhs) const;
-	UnsignedInt_T operator|(const UnsignedInt_T& rhs) const;
-	UnsignedInt_T operator^(const UnsignedInt_T& rhs) const;
-	UnsignedInt_T operator~() const;
+    // --- shifts by a SECRET amount (barrel shifter, fixed width only): log-depth
+    //     muxes over the low ceil(log2 N) bits of `shamt`; any higher set bit
+    //     zeroes the result. ---
+    UInt_T operator<<(const UInt_T& shamt) const requires (N > 0) {
+        check_same_context(*this, shamt);
+        UInt_T res(*this);
+        constexpr int use = (N <= 1) ? 0 : kernel::clog2_ceil(N);
+        for (int i = 0; i < use; ++i) res = res.select(shamt[i], res << (1 << i));
+        Bit_T<Ctx> overflow = Bit_T<Ctx>::constant(*ctx_, false);
+        for (int i = use; i < N; ++i) overflow = overflow | shamt[i];
+        return res.select(overflow, UInt_T::constant(*ctx_, 0));
+    }
+    UInt_T operator>>(const UInt_T& shamt) const requires (N > 0) {
+        check_same_context(*this, shamt);
+        UInt_T res(*this);
+        constexpr int use = (N <= 1) ? 0 : kernel::clog2_ceil(N);
+        for (int i = 0; i < use; ++i) res = res.select(shamt[i], res >> (1 << i));
+        Bit_T<Ctx> overflow = Bit_T<Ctx>::constant(*ctx_, false);
+        for (int i = use; i < N; ++i) overflow = overflow | shamt[i];
+        return res.select(overflow, UInt_T::constant(*ctx_, 0));
+    }
 
-	UnsignedInt_T operator<<(size_t shamt) const;
-	UnsignedInt_T operator>>(size_t shamt) const;
+    // --- bit counting: popcount sums the set bits; hamming_weight picks the
+    //     natural result width; leading_zeros counts the high zero run. ---
+    template <int R> UInt_T<Ctx, R> popcount() const requires (N > 0) {
+        UInt_T<Ctx, R> acc = UInt_T<Ctx, R>::constant(*ctx_, 0);
+        for (int i = 0; i < N; ++i) {
+            UInt_T<Ctx, R> b = UInt_T<Ctx, R>::constant(*ctx_, 0);
+            b.w[0] = w[i];
+            acc = acc + b;
+        }
+        return acc;
+    }
+    UInt_T<Ctx, kernel::bits_for(N)> hamming_weight() const requires (N > 0) { return popcount<kernel::bits_for(N)>(); }
+    UInt_T<Ctx, kernel::bits_for(N)> leading_zeros() const requires (N > 0) {
+        UInt_T sat(*this);
+        for (int i = N - 2; i >= 0; --i) sat.w[i] = kernel::or_gate(*ctx_, sat.w[i + 1], sat.w[i]);
+        for (int i = 0; i < N; ++i) sat.w[i] = ctx_->not_gate(sat.w[i]);   // 1 = leading-zero region
+        return sat.hamming_weight();
+    }
 
-	UnsignedInt_T operator<<(const UnsignedInt_T& shamt) const;
-	UnsignedInt_T operator>>(const UnsignedInt_T& shamt) const;
+    // base^p mod q by square-and-multiply over p's bits (q != 0 assumed).
+    template <int M> UInt_T mod_exp(const UInt_T<Ctx, M>& p, const UInt_T& q) const requires (N > 0) {
+        UInt_T base(*this), res = UInt_T::constant(*ctx_, 1);
+        for (int i = 0; i < M; ++i) {
+            UInt_T tmp = (res * base) % q;
+            res = res.select(p[i], tmp);
+            base = (base * base) % q;
+        }
+        return res;
+    }
 
-	// Sortable mixin hooks.
-	Bit_T<Wire>      geq(const UnsignedInt_T& rhs) const;
-	Bit_T<Wire>      equal(const UnsignedInt_T& rhs) const;
-	UnsignedInt_T    select(const Bit_T<Wire>& sel, const UnsignedInt_T& rhs) const;
+    // Reinterpret the same wires as a two's-complement signed integer (zero gates).
+    Int_T<Ctx, N> as_signed() const requires (N > 0);
+    Int_T<Ctx, 0> as_signed() const requires (N == 0);
 
-	UnsignedInt_T<Wire, 0> leading_zeros() const;
-	UnsignedInt_T<Wire, 0> hamming_weight() const;
-	UnsignedInt_T<Wire, 0> mod_exp(UnsignedInt_T<Wire, 0> p,
-	                               UnsignedInt_T<Wire, 0> q) const;
+    // --- width-changing views. Fixed: compile-time slice/concat/zext/trunc.
+    //     Runtime: resize (zero-extend or truncate) to a runtime width. ---
+    template <int Lo, int Hi> UInt_T<Ctx, Hi - Lo> slice() const requires (N > 0) {
+        static_assert(0 <= Lo && Lo <= Hi && Hi <= N, "UInt_T::slice<Lo,Hi>: out of range");
+        UInt_T<Ctx, Hi - Lo> r(*ctx_); for (int i = 0; i < Hi - Lo; ++i) r.w[i] = w[Lo + i]; return r;
+    }
+    template <int Base, int Width> UInt_T<Ctx, Width> extract() const requires (N > 0) { return slice<Base, Base + Width>(); }
+    template <int M> UInt_T<Ctx, N + M> concat(const UInt_T<Ctx, M>& hi) const requires (N > 0) {
+        check_same_context(*this, hi);
+        UInt_T<Ctx, N + M> r(*ctx_);
+        for (int i = 0; i < N; ++i) r.w[i] = w[i];
+        for (int i = 0; i < M; ++i) r.w[N + i] = hi.w[i];
+        return r;
+    }
+    template <int M> UInt_T<Ctx, M> zext() const requires (N > 0) {
+        static_assert(M >= N, "UInt_T::zext<M>: M must be >= width");
+        UInt_T<Ctx, M> r(*ctx_); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < M; ++i) r.w[i] = (i < N) ? w[i] : z;
+        return r;
+    }
+    template <int M> UInt_T<Ctx, M> trunc() const requires (N > 0) {
+        static_assert(M <= N, "UInt_T::trunc<M>: M must be <= width");
+        UInt_T<Ctx, M> r(*ctx_); for (int i = 0; i < M; ++i) r.w[i] = w[i]; return r;
+    }
+    // Fixed -> runtime, runtime -> fixed<M>, and runtime resize.
+    UInt_T<Ctx, 0> to_dynamic() const requires (N > 0) { return UInt_T<Ctx, 0>::from_wires(*ctx_, w.data(), N); }
+    template <int M> UInt_T<Ctx, M> to_fixed() const requires (N == 0) {
+        static_assert(M > 0, "UInt_T::to_fixed<M>: M must be > 0");
+        UInt_T<Ctx, M> r(*ctx_); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < M; ++i) r.w[i] = (i < n_()) ? w[i] : z;
+        return r;
+    }
+    UInt_T resize(int m) const requires (N == 0) {
+        validate_width_(m);
+        UInt_T r(*ctx_, m); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < m; ++i) r.w[i] = (i < n_()) ? w[i] : z;
+        return r;
+    }
+    UInt_T hamming_weight() const requires (N == 0) {
+        int rw = kernel::bits_for(n_());
+        UInt_T acc = constant(*ctx_, rw, 0);
+        for (int i = 0; i < n_(); ++i) { UInt_T b = constant(*ctx_, rw, 0); b.w[0] = w[i]; acc = acc + b; }
+        return acc;
+    }
 
-	// Encode the unsigned magnitude (interpreted as a fixed-point value with
-	// `s` fractional bits) as IEEE-754 binary<W> (default binary32). Definition
-	// in float.hpp; requires float.h to be included at the call site. Returns
-	// +0.0 for an all-zero input. Caller must ensure the value fits in the
-	// target's representable range.
-	template<int W = 32> Float_T<Wire, W> to_float(size_t s) const;
+    // CircuitValue contract (fixed width only — N == 0 is intentionally not a CircuitValue).
+    static constexpr int width() requires (N > 0) { return N; }
+    int width() const requires (N == 0) { return (int)w.size(); }
+    void pack_wires(Wire* out) const requires (N > 0) { for (int i = 0; i < N; ++i) out[i] = w[i]; }
+    static std::vector<bool> encode(uint64_t v) requires (N > 0) {
+        static_assert(N <= 64, "UInt_T clear codec limited to N<=64 (TODO: limb type)");
+        std::vector<bool> b(N); for (int i = 0; i < N; ++i) b[i] = (v >> i) & 1; return b;
+    }
+    static uint64_t decode(const bool* bits) requires (N > 0) {
+        static_assert(N <= 64, "UInt_T clear codec limited to N<=64 (TODO: limb type)");
+        uint64_t v = 0; for (int i = 0; i < N; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i; return v;
+    }
 
 private:
-	// Fixed-width-N invariant guard for the runtime-width *value* ctor
-	// (T value, not pointer). When N > 0 the base BitVec must be exactly
-	// N bits; passing any other width through to BitVec_T(width, …)
-	// silently produces a value whose static type lies about its runtime
-	// size — the call site keeps thinking UInt32, the bits vector is 16
-	// long, downstream width-equality asserts (e.g. operator+) fire much
-	// later. Debug: abort. Release: normalize to N so production stays
-	// consistent with the type. The value already lives in a T-typed
-	// local, so widening costs nothing.
-	static size_t resolved_runtime_width(size_t width) {
-		if constexpr (N > 0) {
-			assert(width == N &&
-			       "UnsignedInt_T<N>: runtime ctor width must equal N");
-			return N;
-		}
-		return width;
-	}
-
-	// Strict variant for the (size_t, const void*, int) ctor. We can't
-	// silently normalize to N here: doing so would either read past the
-	// caller's buffer (width < N) or drop bits the caller meant to feed
-	// (width > N). Either way, the right answer is to surface the
-	// programmer error. Fatal in all build types.
-	static size_t enforced_data_width(size_t width) {
-		if constexpr (N > 0) {
-			if (width != N)
-				throw std::runtime_error(
-				    "UnsignedInt_T<N>(width, data, party): width must equal N");
-		}
-		return width;
-	}
-
-	// Strict variant for the (BitVec_T) converting ctors. A 16-bit
-	// BitVec slotted into a UInt32-typed wrapper would propagate a
-	// width-lying value to every operator that asserts size equality,
-	// so reject it at the conversion point. Forwarding overload so the
-	// rvalue ctor still moves.
-	template<typename Bv>
-	static Bv&& enforce_bv_width(Bv&& bv) {
-		if constexpr (N > 0) {
-			if (bv.size() != N)
-				throw std::runtime_error(
-				    "UnsignedInt_T<N>(BitVec): bv.size() must equal N");
-		}
-		return std::forward<Bv>(bv);
-	}
+    Ctx* ctx_ = nullptr;
+    int n_() const { return (int)w.size(); }
+    static void validate_width_(int width) { if (width < 1) error("UInt_T: runtime width must be >= 1"); }
+    UInt_T blank_() const { UInt_T r(*ctx_); if constexpr (N == 0) r.w.resize(w.size()); return r; }
+    void same_width_(const UInt_T& o) const {
+        if constexpr (N == 0) if (w.size() != o.w.size()) error("UInt_T: operands have different runtime widths");
+    }
 };
 
-// Convenience aliases for common fixed widths.
-template<typename Wire> using UInt8_T  = UnsignedInt_T<Wire, 8>;
-template<typename Wire> using UInt16_T = UnsignedInt_T<Wire, 16>;
-template<typename Wire> using UInt32_T = UnsignedInt_T<Wire, 32>;
-template<typename Wire> using UInt64_T = UnsignedInt_T<Wire, 64>;
-
-#include "emp-tool/circuits/unsigned_int.hpp"
-
-}  // namespace legacy
 }  // namespace emp
-#endif
+#endif  // EMP_CIRCUIT_UNSIGNED_INT_H__

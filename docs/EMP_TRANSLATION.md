@@ -329,12 +329,12 @@ Don't hand-roll AES or SHA3 in `Bit`/integer ops. emp-tool ships pre-built
 circuits as native `.empbc` programs; load one and replay it on your context
 (see [frontend.md](frontend.md) and the `.empbc` section of the README), or
 `compile` a body that calls them. Each input/output bit is a wire — there are
-no host-side crypto branches inside. Cost is ≈6800 ANDs for one AES block,
-≈37k for one Keccak-f permutation.
+no host-side crypto branches inside. Cost is 6400 ANDs for one AES-128 block,
+24744 for one SHA-256 compression, 38400 for one Keccak-f permutation.
 
-`emp::aes_128_ctr(...)` and `emp::sha3_256(...)` (free functions) are
-**non-circuit** OpenSSL-backed helpers for ground-truth comparisons in tests.
-Use those to verify the circuit output, not as part of the circuit.
+The BooleanContext-native kernels live in `emp::circuit::crypto`
+(`circuits/crypto/aes128.h` / `sha256.h` / `keccak.h`). For ground-truth comparisons in
+tests, use known published vectors or a `ClearCtx` replay of the same circuit.
 
 ---
 
@@ -397,7 +397,7 @@ uint64_t r = U32::decode(bits);
 
 To count AND gates — the right metric for circuit cost (XOR / NOT are free in
 modern garbling) — write the body over `CountCtx` (it tallies gate calls), or
-count over a recorded `BooleanProgram` (`frontend/passes.h`). To capture the
+count over a recorded `BooleanProgram` (`ir/passes.h`). To capture the
 circuit as a native `.empbc` file, `compile` the body and serialize its
 program (see [frontend.md](frontend.md)).
 
@@ -430,16 +430,6 @@ caller wants. `ctx.num_and()` reports the ANDs garbled so far.
 
 For malicious-secure 2PC use **emp-ag2pc**; for malicious-secure
 multi-party (n ≥ 3) use **emp-agmpc** (in `ref/`).
-
-### 6.3. Classic / compatibility API (global backend)
-
-emp-tool also keeps an internal global-backend object API
-(`emp::legacy::*` types over a `Wire`, driving a process-wide `emp::backend`,
-plus the `setup_clear_backend()` / `HalfGateGen` / `HalfGateEva` installers).
-It backs the prebuilt `.empbc` recording sources and existing protocol code,
-**not** new translations — prefer the context-bound path above. If you must
-interoperate with that API, read the headers under `emp-tool/circuits/` and
-`emp-tool/execution/` directly.
 
 ---
 
@@ -624,16 +614,16 @@ Float_T<Ctx,W>                             // IEEE binary{16,32,64} (clear: host
 Constants in `emp::`: `PUBLIC = 0`, `ALICE = 1`, `BOB = 2`. Party arguments
 are plain `int`; widths are template parameters.
 
-The context is passed explicitly — there is no global backend in this path.
+The context is passed explicitly — there is no global backend.
 `ClearCtx` (plaintext), `RecordCtx` (records a `BooleanProgram`), `CountCtx` /
 `DigestCtx` (gate-count / determinism analysis), and emp-sh2pc's `SH2PCCtx`
 (garbled 2PC) are all `BooleanContext`s; the same typed body runs on each.
 
-Pre-built crypto circuits (AES-128, SHA3-256, the `fp<W>_*` float suite) ship
-as native `.empbc` programs — load one and replay it on your context (see
-[frontend.md](frontend.md) and the `.empbc` section of the README), or
-`compile` a body that calls them. `emp::sha3_256(...)` / `emp::aes_128_ctr(...)`
-(free functions) are non-circuit OpenSSL references for tests.
+The crypto circuits live in `emp::circuit::crypto` (`circuits/crypto/aes128.h` /
+`sha256.h` / `keccak.h`) as context-generic kernels; the `fp<W>_*` float suite and
+the fixed-width AES/SHA assets also ship as native `.empbc` programs you can load
+and replay on your context (see [frontend.md](frontend.md) and the `.empbc` section
+of the README).
 
 ---
 
@@ -642,7 +632,7 @@ as native `.empbc` programs — load one and replay it on your context (see
 * `emp-tool/circuits/typed.h` — the context-bound value types
   (`Bit_T`/`UInt_T`/`Int_T`/`Float_T<Ctx>`) and the `emp::kernel`
   arithmetic kernels. The header is the source of truth for the op set.
-* `emp-tool/circuits/context.h` — the `BooleanContext` concept and the
+* `emp-tool/context/context.h` — the `BooleanContext` concept and the
   contexts (`ClearCtx`, `RecordCtx`, `CountCtx`, `DigestCtx`), plus
   `execute_program(ctx, prog, inputs)` for replaying a loaded program.
 * `emp-tool/frontend/circuit_fn.h` + `frontend/rec.h` — `compile` / `run`
@@ -655,9 +645,9 @@ as native `.empbc` programs — load one and replay it on your context (see
   forms, a nullary circuit, the 31-AND adder, deterministic recording.
 * `emp-sh2pc/test/test_circuit_fn_sh2pc.cpp` — the same compiled circuit run
   two-party over `SH2PCCtx`.
-* `test/test_gen_circuit.cpp` — capturing a circuit as a native `.empbc`
-  file, then reloading and re-executing it via `load_empbc_file` /
-  `execute_program`.
-* [circuits.md](circuits.md) — the circuit value layer conventions (and the
-  internal `emp::legacy` Wire-bound layer); [numeric_semantics.md](numeric_semantics.md)
-  for wrap/division/comparison details.
+* `test/test_builtin_circuits.cpp` — the prebuilt `.empbc` crypto builtins
+  replayed through `ClearCtx` and checked against the native kernels.
+* `test/test_crypto_{aes,sha256,keccak}.cpp` — the BooleanContext-native AES /
+  SHA-256 / Keccak circuits vs known vectors, record/replay, and gate counts.
+* [circuits.md](circuits.md) — the circuit value layer conventions;
+  [numeric_semantics.md](numeric_semantics.md) for wrap/division/comparison details.

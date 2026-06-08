@@ -4,13 +4,22 @@
 
 #include "emp-tool/emp-tool.h"
 #include "emp-tool/circuits/typed.h"
+#include "emp-tool/context/context.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <span>
+#include <type_traits>
 
 using namespace emp;
 namespace ckt = emp::circuit;
+
+// Round-trip guards: rebinding a value to its own context is the identity.
+static_assert(std::is_same_v<Bit_T<ClearCtx>::rebind<ClearCtx>,         Bit_T<ClearCtx>>);
+static_assert(std::is_same_v<UInt_T<ClearCtx, 32>::rebind<ClearCtx>,    UInt_T<ClearCtx, 32>>);
+static_assert(std::is_same_v<Int_T<ClearCtx, 32>::rebind<ClearCtx>,     Int_T<ClearCtx, 32>>);
+static_assert(std::is_same_v<Float_T<ClearCtx, 32>::rebind<ClearCtx>,   Float_T<ClearCtx, 32>>);
+static_assert(std::is_same_v<BitVec_T<ClearCtx, 128>::rebind<ClearCtx>, BitVec_T<ClearCtx, 128>>);
 
 static int bad = 0;
 static void chk(const char* what, bool ok) { if (!ok) { printf("  [FAIL] %s\n", what); ++bad; } }
@@ -149,19 +158,19 @@ int main() {
         chk("int sext<48>", (read_bits<48>(si.sext<48>()) == ((uint64_t)(int64_t)S & ((1ull << 48) - 1))));
     }
 
-    // ---- Bits_T<Ctx,N>: bit-vector value (block I/O + assembly) ----
+    // ---- BitVec_T<Ctx,N>: bit-vector value (block I/O + assembly) ----
     {
         std::array<bool, 8> v{}; for (int i = 0; i < 8; ++i) v[i] = (0xB5u >> i) & 1;  // 0xB5
-        auto b = Bits_T<ClearCtx, 8>::constant(cx, v);
+        auto b = BitVec_T<ClearCtx, 8>::constant(cx, v);
         chk("bits []",    (b[0].w & 1) == 1 && (b[1].w & 1) == 0);   // 0xB5 = 1011'0101
         chk("bits as_uint", read_bits<8>(b.as_uint()) == 0xB5u);
-        chk("bits constant() sugar", read_bits<8>(b.constant(v).as_uint()) == 0xB5u);   // member sugar returns Bits_T
+        chk("bits constant() sugar", read_bits<8>(b.constant(v).as_uint()) == 0xB5u);   // member sugar returns BitVec_T
         chk("bits slice<0,4>", read_bits<4>(b.slice<0, 4>().as_uint()) == 0x5u);
         std::array<bool, 4> hv{}; for (int i = 0; i < 4; ++i) hv[i] = (0xAu >> i) & 1;
-        auto hb = Bits_T<ClearCtx, 4>::constant(cx, hv);
+        auto hb = BitVec_T<ClearCtx, 4>::constant(cx, hv);
         chk("bits concat", read_bits<8>(b.slice<0, 4>().concat(hb).as_uint()) == (uint32_t)((0xA << 4) | 0x5));
-        bool eb[8]; auto e = Bits_T<ClearCtx, 8>::encode(v); for (int i = 0; i < 8; ++i) eb[i] = e[i];
-        chk("bits codec roundtrip", Bits_T<ClearCtx, 8>::decode(eb) == v);
+        bool eb[8]; auto e = BitVec_T<ClearCtx, 8>::encode(v); for (int i = 0; i < 8; ++i) eb[i] = e[i];
+        chk("bits codec roundtrip", BitVec_T<ClearCtx, 8>::decode(eb) == v);
     }
 
     // ---- record a typed UInt circuit, replay it on real inputs ----

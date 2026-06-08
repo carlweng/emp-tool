@@ -56,23 +56,21 @@ add_test_case(test_ro)
 add_test_case_with_run(test_netio)
 add_test_case_with_run(test_tlsio)
 add_test_case(test_boolean_program)
-add_test_case(test_bit)
-add_test_case(test_bitvec)
-add_test_case(test_uint)
-add_test_case(test_int)
-add_test_case(test_float)
-add_test_case(test_gen_circuit)
-add_test_case(test_halfgate)
-add_test_case(test_aes_circuit)
-add_test_case(test_aes_128_ctr)
-add_test_case(test_sha3_circuit)
-add_test_case(test_sha3_256)
-add_test_case(test_sha256_circuit)
-add_test_case(test_circuit_types)
+add_test_case_cxx20(test_bit)        # per-type value headers over ClearCtx
+add_test_case_cxx20(test_bitvec)
+add_test_case_cxx20(test_uint)
+add_test_case_cxx20(test_int)
+add_test_case_cxx20(test_float)
+add_test_case_cxx20(test_sort)       # data-oblivious sort over circuit values
+add_test_case_cxx20(test_runtime_int) # runtime-width UInt_T<Ctx,0> / Int_T<Ctx,0>
+add_test_case(test_halfgate)         # half-gate garble/eval free functions
 add_test_case_cxx20(test_circuit_fn) # C++20: compile-once / run-on-any-context frontend (rec:: value types)
 add_test_case_cxx20(test_context)    # C++20: BooleanContext concept + contexts cross-check
 add_test_case_cxx20(test_builtin_circuits)   # C++20: AES/SHA/SHA3 IR-replay == live kernels
 add_test_case_cxx20(test_typed)              # C++20: typed values (Bit/UInt/SignedInt/Float) over Ctx
+add_test_case_cxx20(test_crypto_aes)         # C++20: AES-128 block over the value layer (vector/record/count)
+add_test_case_cxx20(test_crypto_sha256)      # C++20: SHA-256 compression + full-hash wrapper
+add_test_case_cxx20(test_crypto_keccak)      # C++20: Keccak-f[1600] + SHA3-256 wrapper
 
 # Circuit-function contract probes. The positive case compiles + runs; the eight
 # negative cases must fail to compile with the EXPECTED contract diagnostic.

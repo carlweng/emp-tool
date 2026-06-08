@@ -1,147 +1,171 @@
-#ifndef EMP_NUMERIC_KERNELS_H__
-#define EMP_NUMERIC_KERNELS_H__
-#include "emp-tool/circuits/bit.h"
-#include <algorithm>
+#ifndef EMP_CIRCUIT_NUMERIC_KERNELS_H__
+#define EMP_CIRCUIT_NUMERIC_KERNELS_H__
+
+// Bare-wire structured arithmetic kernels over a BooleanContext: the small,
+// inlineable, compiler-fusible primitives the value types build on (ripple
+// add/sub, mux/select, comparators, multiply, restoring division). They operate
+// on Ctx::Wire arrays directly (no per-bit context pointer). LSB-first throughout.
+
+#include "emp-tool/context/concept.h"
+#include "emp-tool/core/utils.h"
 #include <vector>
 
-// Bit-array-level arithmetic kernels shared by UnsignedInt_T and SignedInt_T.
-// All operate on legacy::Bit_T<Wire>* bit arrays of the caller's chosen length.
-// Sign semantics live one level up: signed division is unsigned div with
-// pre/post condNeg, signed comparison is sign-extended subtraction, etc.
-//
-// Bit ordering everywhere is LSB-first.
-
 namespace emp {
+namespace kernel {
 
-// dest <- op1 + op2 + carryIn (mod 2^size). carryOut may be null.
-// Reference: obliv-c / oblivious-IR add_full.
-template<typename Wire>
-inline void add_full(legacy::Bit_T<Wire>* dest, legacy::Bit_T<Wire>* carryOut,
-                     const legacy::Bit_T<Wire>* op1, const legacy::Bit_T<Wire>* op2,
-                     const legacy::Bit_T<Wire>* carryIn, int size) {
-	legacy::Bit_T<Wire> carry, bxc, axc, t;
-	int i = 0;
-	if (size == 0) {
-		if (carryIn && carryOut) *carryOut = *carryIn;
-		return;
-	}
-	carry = carryIn ? *carryIn : legacy::Bit_T<Wire>(false, PUBLIC);
-	int skipLast = (carryOut == nullptr);
-	while (size-- > skipLast) {
-		axc = op1[i] ^ carry;
-		bxc = op2[i] ^ carry;
-		dest[i] = op1[i] ^ bxc;
-		t = axc & bxc;
-		carry = carry ^ t;
-		++i;
-	}
-	if (carryOut) *carryOut = carry;
-	else dest[i] = carry ^ op2[i] ^ op1[i];
+// ceil(log2(n)) for n >= 1 — the number of bits a shift amount in [0, n) needs.
+constexpr int clog2_ceil(int n) { int b = 0; while ((1 << b) < n) ++b; return b; }
+// Smallest width that holds the values 0..n (e.g. a popcount of n bits).
+constexpr int bits_for(int n) { int b = 1; while ((1 << b) <= n) ++b; return b; }
+
+// OR via the free-XOR identity: a | b = a ^ b ^ (a & b) (one AND).
+template <BooleanContext Ctx>
+inline typename Ctx::Wire or_gate(Ctx& c, typename Ctx::Wire a, typename Ctx::Wire b) {
+    return c.xor_gate(c.xor_gate(a, b), c.and_gate(a, b));
 }
 
-// dest <- op1 - op2 - borrowIn (mod 2^size). borrowOut may be null.
-template<typename Wire>
-inline void sub_full(legacy::Bit_T<Wire>* dest, legacy::Bit_T<Wire>* borrowOut,
-                     const legacy::Bit_T<Wire>* op1, const legacy::Bit_T<Wire>* op2,
-                     const legacy::Bit_T<Wire>* borrowIn, int size) {
-	legacy::Bit_T<Wire> borrow, bxc, bxa, t;
-	int i = 0;
-	if (size == 0) {
-		if (borrowIn && borrowOut) *borrowOut = *borrowIn;
-		return;
-	}
-	borrow = borrowIn ? *borrowIn : legacy::Bit_T<Wire>(false, PUBLIC);
-	int skipLast = (borrowOut == nullptr);
-	while (size-- > skipLast) {
-		bxa = op1[i] ^ op2[i];
-		bxc = borrow ^ op2[i];
-		dest[i] = bxa ^ borrow;
-		t = bxa & bxc;
-		borrow = borrow ^ t;
-		++i;
-	}
-	if (borrowOut) *borrowOut = borrow;
-	else dest[i] = op1[i] ^ op2[i] ^ borrow;
+// The variable-length carry/borrow arithmetic — size-optimal 1-AND-per-full-adder
+// primitives. `dest` may alias op1: each step reads op1[i]/op2[i] before writing dest[i].
+
+// dest <- op1 + op2 + carryIn (mod 2^size). If carryOut != nullptr it receives
+// the carry-out and the top bit is not folded into dest; otherwise the final
+// carry is dropped and the top bit takes no AND (so an N-bit add is N-1 ANDs).
+template <BooleanContext Ctx>
+inline void add_full(Ctx& c, typename Ctx::Wire* dest, typename Ctx::Wire* carryOut,
+                     const typename Ctx::Wire* op1, const typename Ctx::Wire* op2,
+                     const typename Ctx::Wire* carryIn, int size) {
+    using W = typename Ctx::Wire;
+    if (size == 0) { if (carryIn && carryOut) *carryOut = *carryIn; return; }
+    W carry = carryIn ? *carryIn : c.public_bit(false);
+    int skipLast = (carryOut == nullptr) ? 1 : 0;
+    int i = 0;
+    while (size-- > skipLast) {
+        W axc = c.xor_gate(op1[i], carry);
+        W bxc = c.xor_gate(op2[i], carry);
+        dest[i] = c.xor_gate(op1[i], bxc);
+        W t = c.and_gate(axc, bxc);
+        carry = c.xor_gate(carry, t);
+        ++i;
+    }
+    if (carryOut) *carryOut = carry;
+    else dest[i] = c.xor_gate(c.xor_gate(carry, op2[i]), op1[i]);
 }
 
-// dest <- low `size` bits of op1 * op2 (signed/unsigned identical at the
-// low N bits of an N×N multiply, so this is shared).
-//
-// `sum`/`tmp` are short-lived scratch (size = caller's int width, so 8..64
-// in practice). Heap allocation is in the noise vs the O(size^2) gate
-// work that follows; use std::vector for RAII (no leaks on a future
-// exception, no manual delete[] pair to keep in sync).
-template<typename Wire>
-inline void mul_full(legacy::Bit_T<Wire>* dest, const legacy::Bit_T<Wire>* op1,
-                     const legacy::Bit_T<Wire>* op2, int size) {
-	std::vector<legacy::Bit_T<Wire>> sum(size, legacy::Bit_T<Wire>(false, PUBLIC));
-	std::vector<legacy::Bit_T<Wire>> tmp(size);
-	for (int i = 0; i < size; ++i) {
-		for (int k = 0; k < size - i; ++k)
-			tmp[k] = op1[k] & op2[i];
-		add_full<Wire>(sum.data() + i, nullptr,
-		               sum.data() + i, tmp.data(), nullptr, size - i);
-	}
-	std::copy(sum.begin(), sum.begin() + size, dest);
+// dest <- op1 - op2 - borrowIn (mod 2^size). borrowOut as in add_full.
+template <BooleanContext Ctx>
+inline void sub_full(Ctx& c, typename Ctx::Wire* dest, typename Ctx::Wire* borrowOut,
+                     const typename Ctx::Wire* op1, const typename Ctx::Wire* op2,
+                     const typename Ctx::Wire* borrowIn, int size) {
+    using W = typename Ctx::Wire;
+    if (size == 0) { if (borrowIn && borrowOut) *borrowOut = *borrowIn; return; }
+    W borrow = borrowIn ? *borrowIn : c.public_bit(false);
+    int skipLast = (borrowOut == nullptr) ? 1 : 0;
+    int i = 0;
+    while (size-- > skipLast) {
+        W bxa = c.xor_gate(op1[i], op2[i]);
+        W bxc = c.xor_gate(borrow, op2[i]);
+        dest[i] = c.xor_gate(bxa, borrow);
+        W t = c.and_gate(bxa, bxc);
+        borrow = c.xor_gate(borrow, t);
+        ++i;
+    }
+    if (borrowOut) *borrowOut = borrow;
+    else dest[i] = c.xor_gate(c.xor_gate(op1[i], op2[i]), borrow);
 }
 
-// dest[i] <- cond ? tsrc[i] : fsrc[i].
-template<typename Wire>
-inline void if_then_else(legacy::Bit_T<Wire>* dest, const legacy::Bit_T<Wire>* tsrc,
-                         const legacy::Bit_T<Wire>* fsrc, int size,
-                         const legacy::Bit_T<Wire>& cond) {
-	legacy::Bit_T<Wire> x, a;
-	int i = 0;
-	while (size-- > 0) {
-		x = tsrc[i] ^ fsrc[i];
-		a = cond & x;
-		dest[i] = a ^ fsrc[i];
-		++i;
-	}
+// out <- a + b (mod 2^N). 1 AND per full adder, MSB carry-out dropped -> N-1 ANDs.
+template <BooleanContext Ctx>
+inline void ripple_add(Ctx& c, const typename Ctx::Wire* a,
+                       const typename Ctx::Wire* b, typename Ctx::Wire* out, int N) {
+    add_full<Ctx>(c, out, nullptr, a, b, nullptr, N);
 }
 
-// dest <- cond ? -src : src. Two's-complement negation of src, gated.
-template<typename Wire>
-inline void cond_neg(const legacy::Bit_T<Wire>& cond, legacy::Bit_T<Wire>* dest,
-                     const legacy::Bit_T<Wire>* src, int size) {
-	int i;
-	legacy::Bit_T<Wire> c = cond;
-	for (i = 0; i < size - 1; ++i) {
-		dest[i] = src[i] ^ cond;
-		legacy::Bit_T<Wire> t = dest[i] ^ c;
-		c = c & dest[i];
-		dest[i] = t;
-	}
-	dest[i] = cond ^ c ^ src[i];
+// out <- a - b (mod 2^N). Same 1-AND/bit, MSB borrow dropped -> N-1 ANDs.
+template <BooleanContext Ctx>
+inline void ripple_sub(Ctx& c, const typename Ctx::Wire* a,
+                       const typename Ctx::Wire* b, typename Ctx::Wire* out, int N) {
+    sub_full<Ctx>(c, out, nullptr, a, b, nullptr, N);
+}
+
+// sel ? t : f, per wire: f ^ (sel & (t ^ f)) — one AND per bit.
+template <BooleanContext Ctx>
+inline typename Ctx::Wire mux(Ctx& c, typename Ctx::Wire sel,
+                              typename Ctx::Wire t, typename Ctx::Wire f) {
+    return c.xor_gate(f, c.and_gate(sel, c.xor_gate(t, f)));
+}
+
+// unsigned a < b: the borrow-out of (a - b). sub_full produces that borrow in one
+// AND per bit (the difference bits are discarded), the size-optimal shape.
+template <BooleanContext Ctx>
+inline typename Ctx::Wire less_than(Ctx& c, const typename Ctx::Wire* a,
+                                    const typename Ctx::Wire* b, int N) {
+    using W = typename Ctx::Wire;
+    std::vector<W> diff(N);
+    W borrow;
+    sub_full<Ctx>(c, diff.data(), &borrow, a, b, nullptr, N);
+    return borrow;
+}
+
+// all bits equal: AND of XNORs.
+template <BooleanContext Ctx>
+inline typename Ctx::Wire equal(Ctx& c, const typename Ctx::Wire* a,
+                                const typename Ctx::Wire* b, int N) {
+    using W = typename Ctx::Wire;
+    W acc = c.public_bit(true);
+    for (int i = 0; i < N; ++i)
+        acc = c.and_gate(acc, c.not_gate(c.xor_gate(a[i], b[i])));   // acc & ~(a^b)
+    return acc;
+}
+
+// dest[i] <- cond ? tsrc[i] : fsrc[i]. dest may alias tsrc or fsrc.
+template <BooleanContext Ctx>
+inline void if_then_else(Ctx& c, typename Ctx::Wire* dest, const typename Ctx::Wire* tsrc,
+                         const typename Ctx::Wire* fsrc, int size, typename Ctx::Wire cond) {
+    using W = typename Ctx::Wire;
+    int i = 0;
+    while (size-- > 0) {
+        W x = c.xor_gate(tsrc[i], fsrc[i]);
+        W a = c.and_gate(cond, x);
+        dest[i] = c.xor_gate(a, fsrc[i]);
+        ++i;
+    }
+}
+
+// dest <- low N bits of op1 * op2 (unsigned/signed identical at the low N bits).
+template <BooleanContext Ctx>
+inline void mul_full(Ctx& c, typename Ctx::Wire* dest,
+                     const typename Ctx::Wire* op1, const typename Ctx::Wire* op2, int N) {
+    using W = typename Ctx::Wire;
+    std::vector<W> sum(N, c.public_bit(false));
+    std::vector<W> tmp(N);
+    for (int i = 0; i < N; ++i) {
+        for (int k = 0; k < N - i; ++k) tmp[k] = c.and_gate(op1[k], op2[i]);
+        add_full<Ctx>(c, sum.data() + i, nullptr, sum.data() + i, tmp.data(), nullptr, N - i);
+    }
+    for (int i = 0; i < N; ++i) dest[i] = sum[i];
 }
 
 // vquot, vrem <- op1 / op2, op1 % op2 (both unsigned). Either out may be null.
-// Behavior on op2 == 0 mirrors the original obliv-c circuit (saturates),
-// not C semantics.
-//
-// Same RAII story as mul_full above: short-lived scratch, four vectors
-// instead of four hand-paired new[]/delete[] sites.
-template<typename Wire>
-inline void div_full(legacy::Bit_T<Wire>* vquot, legacy::Bit_T<Wire>* vrem,
-                     const legacy::Bit_T<Wire>* op1, const legacy::Bit_T<Wire>* op2, int size) {
-	std::vector<legacy::Bit_T<Wire>> overflow(size);
-	std::vector<legacy::Bit_T<Wire>> tmp(size);
-	std::vector<legacy::Bit_T<Wire>> rem(size);
-	std::vector<legacy::Bit_T<Wire>> quot(size);
-	legacy::Bit_T<Wire> b;
-	std::copy(op1, op1 + size, rem.begin());
-	overflow[0] = legacy::Bit_T<Wire>(false, PUBLIC);
-	for (int i = 1; i < size; ++i)
-		overflow[i] = overflow[i - 1] | op2[size - i];
-	for (int i = size - 1; i >= 0; --i) {
-		sub_full<Wire>(tmp.data(), &b, rem.data() + i, op2, nullptr, size - i);
-		b = b | overflow[i];
-		if_then_else<Wire>(rem.data() + i, rem.data() + i, tmp.data(), size - i, b);
-		quot[i] = !b;
-	}
-	if (vrem)  std::copy(rem.begin(),  rem.begin()  + size, vrem);
-	if (vquot) std::copy(quot.begin(), quot.begin() + size, vquot);
+// op2 == 0 saturates (restoring-division circuit, not C semantics).
+template <BooleanContext Ctx>
+inline void div_full(Ctx& c, typename Ctx::Wire* vquot, typename Ctx::Wire* vrem,
+                     const typename Ctx::Wire* op1, const typename Ctx::Wire* op2, int N) {
+    using W = typename Ctx::Wire;
+    std::vector<W> overflow(N), tmp(N), rem(N), quot(N);
+    W b;
+    for (int i = 0; i < N; ++i) rem[i] = op1[i];
+    overflow[0] = c.public_bit(false);
+    for (int i = 1; i < N; ++i) overflow[i] = or_gate(c, overflow[i - 1], op2[N - i]);
+    for (int i = N - 1; i >= 0; --i) {
+        sub_full<Ctx>(c, tmp.data(), &b, rem.data() + i, op2, nullptr, N - i);
+        b = or_gate(c, b, overflow[i]);
+        if_then_else<Ctx>(c, rem.data() + i, rem.data() + i, tmp.data(), N - i, b);
+        quot[i] = c.not_gate(b);
+    }
+    if (vrem)  for (int i = 0; i < N; ++i) vrem[i]  = rem[i];
+    if (vquot) for (int i = 0; i < N; ++i) vquot[i] = quot[i];
 }
 
+}  // namespace kernel
 }  // namespace emp
-#endif
+#endif  // EMP_CIRCUIT_NUMERIC_KERNELS_H__

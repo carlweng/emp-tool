@@ -1,12 +1,9 @@
-// Cross-context test for the BooleanContext contract (emp-tool/circuits/context.h):
+// Cross-context test for the BooleanContext contract (emp-tool/context/context.h):
 // one templated kernel run through Record/Count/Clear/Digest/Backend contexts and
 // the value-return replay bridge — all must agree. C++20.
 
-#include "emp-tool/emp-tool.h"
-#include "emp-tool/circuits/context.h"
-#include "emp-tool/circuits/backend_ctx.h"   // BackendCtx (global-backend bridge)
-#include "emp-tool/circuits/circuit_artifact.h"
-#include "emp-tool/execution/clear_backend.h"
+#include "emp-tool/context/context.h"
+#include "emp-tool/ir/artifact.h"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -142,19 +139,6 @@ int main() {
             std::vector<uint32_t> o; const_reuse_kernel(d, in, o);
         });
         check("digest_program == digest_source (const reuse)", digest_program(prog) == ds);
-    }
-
-    // --- BackendCtx<ClearWire> legacy bridge (+ wire_bytes guard) ---
-    {
-        setup_clear_backend("");
-        BackendCtx<ClearWire> bc(backend);     // guard: sizeof(ClearWire)==wire_bytes()
-        std::array<ClearWire, 16> ain{}, bin{}, out{};
-        for (int i = 0; i < 16; ++i) { backend->public_label(&ain[i], a8[i]);
-                                       backend->public_label(&bin[i], b8[i]); }
-        add16(bc, ain.data(), bin.data(), out.data());
-        uint16_t v = 0; for (int i = 0; i < 16; ++i) v |= (uint16_t)(out[i].value & 1) << i;
-        check("backendctx: a+b", v == REF);
-        finalize_clear_backend();
     }
 
     printf("test_context: %s\n", bad ? "FAILED" : "all contexts agree — PASS");

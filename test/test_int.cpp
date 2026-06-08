@@ -1,391 +1,54 @@
-// circuits/signed_int.h — runtime-width two's-complement signed integer.
-// Read example() first; the rest is verification against int{32,64}_t.
-//
-// What's in signed_int.h:
-//   SignedInt_T<Wire>(width, value, party)   feed an int{N}_t-shaped value
-//   + - * / %                                wrap mod 2^N (matches int{N}_t HW)
-//   - (unary)                                two's-complement negate
-//   < <= > >= == !=                          signed comparisons
-//   & | ^ ~                                  bitwise (inherited from BitVec)
-//   << (size_t / UnsignedInt)                logical shift left
-//   >> (size_t / UnsignedInt)                arithmetic shift right (sign-fill)
-//   resize(W)                                sign-extend / truncate
-//   abs()                                    branchless |x|; abs(MIN) bit-pattern
-//   reveal<int32_t / int64_t / string>()
-//   as_unsigned()                            bit-cast to UnsignedInt
-//
-// All arithmetic is verified to match int32_t / int64_t modulo two's
-// complement (i.e. the actual hardware behavior; C UB on signed overflow
-// is sidestepped by reference implementations that cast through unsigned).
-
-#include "emp-tool/emp-tool.h"
-#include <climits>
+// Int_T<Ctx,N> over ClearCtx: signed arithmetic, comparison, division/remainder,
+// shifts (arithmetic right), and sign-extend / truncate.
+#include "emp-tool/circuits/signed_int.h"
+#include "emp-tool/context/clear.h"
 #include <cstdint>
-#include <iostream>
-#include <type_traits>
-#include <vector>
-
-// Use the standard block-wire circuit aliases in this test translation unit.
-using namespace emp::block_types;
+#include <cstdio>
 using namespace emp;
-using namespace emp::legacy;
-using std::cout;
 
-// ---- example -------------------------------------------------------------
-
-static void example() {
-	SignedInt a(32, -7, ALICE);
-	SignedInt b(32,  3, BOB);
-	cout << "a + b = " << (a + b).reveal<int32_t>(PUBLIC) << "\n";   // -4
-	cout << "a - b = " << (a - b).reveal<int32_t>(PUBLIC) << "\n";   // -10
-	cout << "a / b = " << (a / b).reveal<int32_t>(PUBLIC) << "\n";   // -2 (truncate toward 0)
-	cout << "a % b = " << (a % b).reveal<int32_t>(PUBLIC) << "\n";   // -1 (sign matches dividend)
-	cout << "(a >= 0) = " << (a >= SignedInt(32, 0, PUBLIC)).reveal<bool>(PUBLIC) << "\n"; // 0
-	cout << "abs(a) = " << a.abs().reveal<uint32_t>(PUBLIC) << "\n"; // 7
-	cout << "a >> 1 = " << (a >> 1).reveal<int32_t>(PUBLIC) << "\n"; // -4 (ASR)
+static int bad = 0;
+static void chk(const char* w, bool ok) { if (!ok) { printf("  [FAIL] %s\n", w); ++bad; } }
+template <int N> static int64_t rds(const Int_T<ClearCtx, N>& x) {
+  uint64_t v = 0; for (int i = 0; i < N; ++i) v |= (uint64_t)(x.w[i] & 1) << i;
+  if (N < 64 && ((v >> (N - 1)) & 1)) v |= ~((uint64_t(1) << N) - 1);
+  return (int64_t)v;
 }
 
-// ---- reference: deterministic wrapping signed arithmetic -----------------
+int main() {
+  ClearCtx cx;
+  using I = Int_T<ClearCtx, 32>;
+  const int32_t A = -1234567, B = 7654321;
+  I a = I::constant(cx, A), b = I::constant(cx, B);
 
-static int32_t add_w(int32_t a, int32_t b) { return (int32_t)((uint32_t)a + (uint32_t)b); }
-static int32_t sub_w(int32_t a, int32_t b) { return (int32_t)((uint32_t)a - (uint32_t)b); }
-static int32_t mul_w(int32_t a, int32_t b) { return (int32_t)((uint32_t)a * (uint32_t)b); }
-static int32_t neg_w(int32_t a)            { return (int32_t)(0u - (uint32_t)a); }
-static int32_t shl_w(int32_t a, unsigned s) {
-	if (s >= 32) return 0;
-	return (int32_t)((uint32_t)a << s);
-}
-static int32_t shr_w(int32_t a, unsigned s) {  // arithmetic shift right
-	if (s >= 32) return a < 0 ? -1 : 0;
-	// implementation-defined in C++ pre-20; relies on hw-typical ASR
-	return a >> (int)s;
-}
-static int32_t div_w(int32_t a, int32_t b) {
-	// INT_MIN / -1 is UB in C; circuit returns INT_MIN. Skip in caller.
-	return a / b;
-}
-static int32_t mod_w(int32_t a, int32_t b) { return a % b; }
+  chk("add", rds<32>(a + b) == (int32_t)(A + B));
+  chk("sub", rds<32>(a - b) == (int32_t)(A - B));
+  chk("mul", rds<32>(a * b) == (int32_t)(A * B));
+  chk("div", rds<32>(b / a) == (int32_t)(B / A));
+  chk("mod", rds<32>(b % a) == (int32_t)(B % A));
+  chk("neg", rds<32>(-a) == (int32_t)(-A));
+  chk("and", rds<32>(a & b) == (int32_t)(A & B));
+  chk("xor", rds<32>(a ^ b) == (int32_t)(A ^ B));
+  chk("not", rds<32>(~a) == (int32_t)(~A));
 
-// ---- correctness checks --------------------------------------------------
+  chk("lt", ((a < b).w & 1) == (A < B ? 1 : 0));     // signed: -1234567 < 7654321
+  chk("gt", ((b > a).w & 1) == 1);
+  chk("eq", ((a == b).w & 1) == 0);
 
-template <typename Op>
-static bool check_random_pair(const char *name, Op op,
-                              int32_t (*ref)(int32_t, int32_t),
-                              size_t runs = 2000) {
-	PRG prg;
-	for (size_t i = 0; i < runs; ++i) {
-		int32_t ia, ib;
-		prg.random_data_unaligned(&ia, 4);
-		prg.random_data_unaligned(&ib, 4);
-		SignedInt a(32, ia, ALICE);
-		SignedInt b(32, ib, BOB);
-		int32_t got = op(a, b).template reveal<int32_t>(PUBLIC);
-		int32_t want = ref(ia, ib);
-		if (got != want) {
-			cout << "  FAIL " << name << "  ia=" << ia << " ib=" << ib
-			     << " want=" << want << " got=" << got << "\n";
-			return false;
-		}
-	}
-	return true;
-}
+  chk("shl", rds<32>(a << 3) == (int32_t)((uint32_t)A << 3));
+  chk("shr_arith", rds<32>(a >> 4) == (int32_t)(A >> 4));   // sign-filling
+  chk("sec_shl", rds<32>(a << UInt_T<ClearCtx, 32>::constant(cx, 3)) == (int32_t)((uint32_t)A << 3));
+  chk("sec_shr_arith", rds<32>(a >> UInt_T<ClearCtx, 32>::constant(cx, 4)) == (int32_t)(A >> 4));
+  chk("sext", rds<48>(a.sext<48>()) == (int64_t)A);
+  chk("trunc", rds<16>(a.trunc<16>()) == (int16_t)(A & 0xffff));
 
-static bool check_div_random() {
-	// Avoid b==0 and the INT_MIN/-1 case (UB in C).
-	PRG prg;
-	for (size_t i = 0; i < 2000; ++i) {
-		int32_t ia, ib;
-		prg.random_data_unaligned(&ia, 4);
-		prg.random_data_unaligned(&ib, 4);
-		if (ib == 0) continue;
-		if (ia == INT32_MIN && ib == -1) continue;
-		SignedInt a(32, ia, ALICE);
-		SignedInt b(32, ib, BOB);
-		int32_t got_d = (a / b).reveal<int32_t>(PUBLIC);
-		int32_t got_m = (a % b).reveal<int32_t>(PUBLIC);
-		if (got_d != div_w(ia, ib) || got_m != mod_w(ia, ib)) {
-			cout << "  FAIL div/mod  ia=" << ia << " ib=" << ib
-			     << " want=" << div_w(ia, ib) << "," << mod_w(ia, ib)
-			     << " got=" << got_d << "," << got_m << "\n";
-			return false;
-		}
-	}
-	return true;
-}
+  // as_unsigned / as_signed reinterpret (same wires, zero gates).
+  chk("reinterpret roundtrip", rds<32>(a.as_unsigned().as_signed()) == (int64_t)A);
+  { auto u = a.as_unsigned(); uint64_t uv = 0;
+    for (int i = 0; i < 32; ++i) uv |= (uint64_t)(u.w[i] & 1) << i;
+    chk("as_unsigned bits", uv == (uint32_t)A); }
 
-static bool check_unary_neg() {
-	std::vector<int32_t> vs = {0, 1, -1, 7, -7, INT32_MAX, INT32_MIN, INT32_MIN + 1};
-	for (auto v : vs) {
-		SignedInt a(32, v, ALICE);
-		if ((-a).reveal<int32_t>(PUBLIC) != neg_w(v)) {
-			cout << "  FAIL unary -  v=" << v << "\n";
-			return false;
-		}
-	}
-	return true;
-}
+  { auto e = I::encode(A); bool bb[32]; for (int i = 0; i < 32; ++i) bb[i] = e[i]; chk("encode/decode", I::decode(bb) == A); }
 
-static bool check_compare_random() {
-	PRG prg;
-	for (size_t i = 0; i < 2000; ++i) {
-		int32_t ia, ib;
-		prg.random_data_unaligned(&ia, 4);
-		prg.random_data_unaligned(&ib, 4);
-		SignedInt a(32, ia, ALICE);
-		SignedInt b(32, ib, BOB);
-		bool g_lt = (a < b).reveal<bool>(PUBLIC);
-		bool g_le = (a <= b).reveal<bool>(PUBLIC);
-		bool g_gt = (a > b).reveal<bool>(PUBLIC);
-		bool g_ge = (a >= b).reveal<bool>(PUBLIC);
-		bool g_eq = (a == b).reveal<bool>(PUBLIC);
-		bool g_ne = (a != b).reveal<bool>(PUBLIC);
-		if (g_lt != (ia < ib) || g_le != (ia <= ib) ||
-		    g_gt != (ia > ib) || g_ge != (ia >= ib) ||
-		    g_eq != (ia == ib) || g_ne != (ia != ib)) {
-			cout << "  FAIL compare  ia=" << ia << " ib=" << ib << "\n";
-			return false;
-		}
-	}
-	return true;
-}
-
-static bool check_shift_static() {
-	std::vector<int32_t> vs = {0, 1, -1, 7, -7, INT32_MAX, INT32_MIN, 0x55555555, (int32_t)0xAAAAAAAA};
-	for (auto v : vs)
-		for (unsigned s = 0; s <= 33; ++s) {  // include shamt > width
-			SignedInt a(32, v, ALICE);
-			int32_t want_l = shl_w(v, s);
-			int32_t want_r = shr_w(v, s);
-			int32_t got_l = (a << (size_t)s).reveal<int32_t>(PUBLIC);
-			int32_t got_r = (a >> (size_t)s).reveal<int32_t>(PUBLIC);
-			if (got_l != want_l) {
-				cout << "  FAIL <<  v=" << v << " s=" << s
-				     << " want=" << want_l << " got=" << got_l << "\n";
-				return false;
-			}
-			if (got_r != want_r) {
-				cout << "  FAIL >>  v=" << v << " s=" << s
-				     << " want=" << want_r << " got=" << got_r << "\n";
-				return false;
-			}
-		}
-	return true;
-}
-
-// Dynamic (secret) shift amount. Sweeps shamt across [0, 2*width); shamt
-// >= 32 exercises the overflow path — `<<` must zero, `>>` must sign-fill
-// (all bits = msb), per numeric_semantics.md.
-static bool check_shift_dynamic() {
-	std::vector<int32_t> vs = {0, 1, -1, 7, -7, INT32_MAX, INT32_MIN, 0x55555555, (int32_t)0xAAAAAAAA};
-	for (auto v : vs)
-		for (unsigned s = 0; s <= 65; ++s) {
-			SignedInt a(32, v, ALICE);
-			UnsignedInt sh(32, s, BOB);
-			int32_t want_l = shl_w(v, s);
-			int32_t want_r = shr_w(v, s);
-			int32_t got_l = (a << sh).reveal<int32_t>(PUBLIC);
-			int32_t got_r = (a >> sh).reveal<int32_t>(PUBLIC);
-			if (got_l != want_l) {
-				cout << "  FAIL << (dyn)  v=" << v << " s=" << s
-				     << " want=" << want_l << " got=" << got_l << "\n";
-				return false;
-			}
-			if (got_r != want_r) {
-				cout << "  FAIL >> (dyn)  v=" << v << " s=" << s
-				     << " want=" << want_r << " got=" << got_r << "\n";
-				return false;
-			}
-		}
-	return true;
-}
-
-static bool check_resize() {
-	// Sign-extend up.
-	for (int32_t v : {0, 1, -1, 7, -7, INT32_MIN, INT32_MAX}) {
-		SignedInt a(32, v, ALICE);
-		int64_t got = a.resize(64).reveal<int64_t>(PUBLIC);
-		int64_t want = (int64_t)v;
-		if (got != want) {
-			cout << "  FAIL resize-up  v=" << v << " want=" << want << " got=" << got << "\n";
-			return false;
-		}
-	}
-	// Truncate down.
-	int64_t down_cases[] = {0LL, 1LL, -1LL, (int64_t)0xDEADBEEFCAFEBABEULL, INT64_MIN, INT64_MAX};
-	for (int64_t v : down_cases) {
-		SignedInt a(64, v, ALICE);
-		int32_t got = a.resize(32).reveal<int32_t>(PUBLIC);
-		int32_t want = (int32_t)v;  // C++ defines this as bit-truncation for two's complement
-		if (got != want) {
-			cout << "  FAIL resize-down  v=" << v << " want=" << want << " got=" << got << "\n";
-			return false;
-		}
-	}
-	return true;
-}
-
-static bool check_boundaries() {
-	// Wrap behavior at the boundaries.
-	struct { int32_t a, b; } cases[] = {
-		{INT32_MAX, 1},   {INT32_MIN, -1},
-		{INT32_MAX, INT32_MAX}, {INT32_MIN, INT32_MIN},
-		{0, 0}, {-1, -1}, {1, -1},
-	};
-	for (auto c : cases) {
-		SignedInt A(32, c.a, ALICE);
-		SignedInt B(32, c.b, BOB);
-		if ((A + B).reveal<int32_t>(PUBLIC) != add_w(c.a, c.b)) return false;
-		if ((A - B).reveal<int32_t>(PUBLIC) != sub_w(c.a, c.b)) return false;
-		if ((A * B).reveal<int32_t>(PUBLIC) != mul_w(c.a, c.b)) return false;
-	}
-	// abs(INT_MIN): hardware returns INT_MIN bit-pattern; we expose it via
-	// .as_unsigned().reveal<uint32_t>() = 0x80000000.
-	if (SignedInt(32, INT32_MIN, ALICE).abs().reveal<uint32_t>(PUBLIC) != 0x80000000u)
-		return false;
-	return true;
-}
-
-static bool run_correctness() {
-	cout << "=== signed_int correctness ===\n";
-	bool ok = true;
-	auto run = [&](const char *name, bool r) {
-		cout << "  " << name << (r ? "  OK\n" : "  FAIL\n");
-		ok &= r;
-	};
-	run("+ (random)",        check_random_pair("+", [](auto&a, auto&b){return a + b;}, add_w));
-	run("- (random)",        check_random_pair("-", [](auto&a, auto&b){return a - b;}, sub_w));
-	run("* (random)",        check_random_pair("*", [](auto&a, auto&b){return a * b;}, mul_w));
-	run("/ % (random)",      check_div_random());
-	run("- (unary boundary)",check_unary_neg());
-	run("< <= > >= == !=",   check_compare_random());
-	run("<<  >>  (static)",  check_shift_static());
-	run("<<  >>  (dynamic)", check_shift_dynamic());
-	run("resize sign-extend",check_resize());
-	run("boundary wrap",     check_boundaries());
-	return ok;
-}
-
-// ---- fixed-width aliases (Int8 / Int16 / Int32 / Int64) -----------------
-// `Int32` is `SignedInt_T<block, 32>` — width baked into the type.
-
-static bool run_fixed_width() {
-	cout << "=== fixed-width aliases ===\n";
-	bool ok = true;
-
-	// Construction without width arg.
-	Int32 a(-7, ALICE);
-	Int32 b(3, BOB);
-	Int32 c = a + b;        // Int32 + Int32 -> Int32
-	if (c.reveal<int32_t>(PUBLIC) != -4) {
-		cout << "  FAIL Int32 +  got=" << c.reveal<int32_t>(PUBLIC) << "\n"; ok = false;
-	}
-
-	// Default-ctor sizes the wire vector to N.
-	Int64 z;
-	if (z.size() != 64) { cout << "  FAIL Int64 default-ctor size\n"; ok = false; }
-
-	// Runtime-width ctor with width == N: documented "you can pass width
-	// explicitly to disambiguate from the fixed-width form". Underlying
-	// BitVec must end up N bits.
-	Int32 explicit_w((size_t)32, -7, ALICE);
-	if (explicit_w.size() != 32) {
-		cout << "  FAIL Int32(width=32, ...) size: got " << explicit_w.size() << "\n";
-		ok = false;
-	}
-	if (explicit_w.reveal<int32_t>(PUBLIC) != -7) {
-		cout << "  FAIL Int32(width=32, ...) reveal\n"; ok = false;
-	}
-#ifdef NDEBUG
-	// Release-only: assert is compiled out; mismatched width must still
-	// normalize to N. See test_uint.cpp for the rationale.
-	Int32 width_mismatch((size_t)16, -7, ALICE);
-	if (width_mismatch.size() != 32) {
-		cout << "  FAIL Int32(width=16, ...) normalize: got "
-		     << width_mismatch.size() << " want 32\n";
-		ok = false;
-	}
-#endif
-
-	// Pointer-data and BitVec-converting ctors throw on mismatch in all
-	// build types — see test_uint.cpp's run_fixed_width for the rationale.
-	{
-		uint16_t two_bytes = 0xABCDu;
-		bool threw = false;
-		try {
-			Int32 bad((size_t)16, &two_bytes, ALICE);
-			(void)bad;
-		} catch (const std::runtime_error&) { threw = true; }
-		if (!threw) {
-			cout << "  FAIL Int32(width=16, void*) should throw\n";
-			ok = false;
-		}
-	}
-	{
-		BitVec_T<block> narrow(16, 0u, ALICE);
-		bool threw = false;
-		try {
-			Int32 bad(narrow);
-			(void)bad;
-		} catch (const std::runtime_error&) { threw = true; }
-		if (!threw) {
-			cout << "  FAIL Int32(BitVec(16)) should throw\n";
-			ok = false;
-		}
-	}
-
-	// 64-bit signed via implicit width.
-	Int64 v(-1ll, ALICE);
-	if (v.reveal<int64_t>(PUBLIC) != -1ll) {
-		cout << "  FAIL Int64 ctor + reveal\n"; ok = false;
-	}
-
-	// Signed comparison: -7 < 3.
-	if ( (a >= b).reveal<bool>(PUBLIC)) { cout << "  FAIL Int32 >= (signed)\n"; ok = false; }
-	if (!(a <  b).reveal<bool>(PUBLIC)) { cout << "  FAIL Int32 <  (signed)\n"; ok = false; }
-	if ( (a == b).reveal<bool>(PUBLIC)) { cout << "  FAIL Int32 ==\n"; ok = false; }
-
-	// abs() returns the matching unsigned alias (UInt32 here).
-	UInt32 ua = a.abs();
-	if (ua.reveal<uint32_t>(PUBLIC) != 7u) {
-		cout << "  FAIL Int32::abs\n"; ok = false;
-	}
-
-	// Random arithmetic.
-	PRG prg;
-	for (int i = 0; i < 200; ++i) {
-		int32_t ia, ib;
-		prg.random_data_unaligned(&ia, 4);
-		prg.random_data_unaligned(&ib, 4);
-		Int32 A(ia, ALICE), B(ib, BOB);
-		if ((A + B).reveal<int32_t>(PUBLIC) != (int32_t)((uint32_t)ia + (uint32_t)ib)) { ok = false; break; }
-		if ((A * B).reveal<int32_t>(PUBLIC) != (int32_t)((uint32_t)ia * (uint32_t)ib)) { ok = false; break; }
-		if ((A < B).reveal<bool>(PUBLIC)    != (ia < ib)) { ok = false; break; }
-	}
-
-	// Sort signed values.
-	const int n = 6;
-	Int32 keys[n];
-	int32_t in_vals[n] = {3, -5, 0, -2, 7, -9};
-	for (int i = 0; i < n; ++i) keys[i] = Int32(in_vals[i], ALICE);
-	sort(keys, n);
-	int32_t want_sorted[n] = {-9, -5, -2, 0, 3, 7};
-	for (int i = 0; i < n; ++i)
-		if (keys[i].reveal<int32_t>(PUBLIC) != want_sorted[i]) {
-			cout << "  FAIL sort at i=" << i << " got="
-			     << keys[i].reveal<int32_t>(PUBLIC) << " want=" << want_sorted[i] << "\n";
-			ok = false;
-		}
-
-	cout << (ok ? "  fixed-width: OK\n" : "  fixed-width: FAIL\n");
-	return ok;
-}
-
-int main(int /*argc*/, char ** /*argv*/) {
-	setup_clear_backend();
-	example();
-	bool ok = run_correctness();
-	ok &= run_fixed_width();
-	cout << "AND gates: " << backend->num_and() << "\n";
-	finalize_clear_backend();
-	return ok ? 0 : 1;
+  printf("test_int: %s\n", bad ? "FAILED" : "PASS");
+  return bad ? 1 : 0;
 }

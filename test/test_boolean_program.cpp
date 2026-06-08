@@ -3,8 +3,11 @@
 // .empbc codec (u16/u32 roundtrip + malformed rejection). No backend needed:
 // these are pure data-structure / serialization checks.
 
-#include "emp-tool/circuits/boolean_program.h"
-#include "emp-tool/circuits/empbc.h"
+#include "emp-tool/ir/program.h"
+#include "emp-tool/ir/validate.h"
+#include "emp-tool/ir/visit.h"
+#include "emp-tool/ir/execute.h"
+#include "emp-tool/ir/empbc.h"
 #include <cassert>
 #include <cstdio>
 #include <stdexcept>

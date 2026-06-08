@@ -1,110 +1,92 @@
-#ifndef EMP_BITVEC_H__
-#define EMP_BITVEC_H__
-#include <algorithm>
-#include <memory>
-#include <type_traits>
+#ifndef EMP_CIRCUIT_BITVEC_H__
+#define EMP_CIRCUIT_BITVEC_H__
+
+// BitVec_T<Ctx,N>: a fixed-width bit vector over a BooleanContext — the natural
+// value for crypto blocks (AES/SHA I/O) and for assembling / disassembling wider
+// values bit by bit. clear_t is the N bools. It is interconvertible with
+// UInt_T<Ctx,N> (same wires, zero gates).
+
 #include "emp-tool/circuits/bit.h"
-#include "emp-tool/circuits/circuit_value.h"
-#include "emp-tool/core/utils.h"
-#include "emp-tool/core/block.h"
+#include "emp-tool/circuits/unsigned_int.h"
+#include "emp-tool/circuits/numeric_kernels.h"   // kernel::or_gate/equal/mux
+#include "emp-tool/context/checks.h"             // check_same_context
+#include "emp-tool/core/utils.h"                  // error()
+#include <array>
 #include <vector>
-#include <string>
-#include <type_traits>
-#include <cstring>
-#include <algorithm>
 
 namespace emp {
-namespace legacy {
 
-// Runtime-width vector of wires. Carries no arithmetic semantics — for
-// numeric work use UnsignedInt_T / SignedInt_T which inherit from this.
-//
-// Bit ordering is LSB-first: bits[0] is bit 0, bits[size()-1] is the MSB.
-template<typename Wire>
-class BitVec_T : public CircuitValue { public:
-	std::vector<Bit_T<Wire>> bits;
+template <BooleanContext Ctx, int N>
+class BitVec_T {
+public:
+    using Wire         = typename Ctx::Wire;
+    using context_type = Ctx;
+    using clear_t      = std::array<bool, N>;
+    template <BooleanContext C2> using rebind = BitVec_T<C2, N>;
+    std::array<Wire, N> w{};
 
-	BitVec_T() = default;
+    BitVec_T() = default;                          // uninitialized (null ctx) until assigned/from_wires
+    explicit BitVec_T(Ctx& c) : ctx_(&c) {}
+    static BitVec_T constant(Ctx& c, const clear_t& v) {
+        BitVec_T r(c); for (int i = 0; i < N; ++i) r.w[i] = c.public_bit(v[i]); return r;
+    }
+    // Assemble from N Bit_T<Ctx> (e.g. a kernel's output bits).
+    static BitVec_T from_bit_values(Ctx& c, const Bit_T<Ctx>* b) {
+        BitVec_T r(c); for (int i = 0; i < N; ++i) r.w[i] = b[i].w; return r;
+    }
+    static BitVec_T from_wires(Ctx& c, const Wire* in) { BitVec_T r(c); for (int i = 0; i < N; ++i) r.w[i] = in[i]; return r; }
 
-	explicit BitVec_T(size_t width) : bits(width) {}
+    Ctx* context() const { return ctx_; }
+    BitVec_T constant(const clear_t& v) const { return constant(*ctx_, v); }   // same-context sugar
+    Bit_T<Ctx> operator[](int i) const { return Bit_T<Ctx>(*ctx_, w[i]); }
 
-	BitVec_T(const std::vector<Bit_T<Wire>>& bs) : bits(bs) {}
-	BitVec_T(std::vector<Bit_T<Wire>>&& bs) : bits(std::move(bs)) {}
+    // Reinterpret the same wires as an unsigned integer (zero gates).
+    UInt_T<Ctx, N> as_uint() const { return UInt_T<Ctx, N>::from_wires(*ctx_, w.data()); }
 
-	// Feed `width` bits of an integral `value` (LSB-first), interpreted
-	// by `party` as their input. PUBLIC means everyone agrees on the
-	// value. SFINAE-restricted to integral T so that pointer arguments
-	// resolve to the (size_t, const void*, int) overload below.
-	// `party` has NO default: PUBLIC would silently leak a forgotten
-	// private input as public. Explicit party required.
-	template<typename T,
-	         typename = std::enable_if_t<std::is_integral_v<T>
-	                                  || std::is_same_v<T, __uint128_t>
-	                                  || std::is_same_v<T, __int128>>>
-	BitVec_T(size_t width, T value, int party);
+    // --- bitwise ops / equality / select / logical shifts (public amount) ---
+    BitVec_T operator&(const BitVec_T& o) const { check_same_context(*this, o); BitVec_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->and_gate(w[i], o.w[i]); return r; }
+    BitVec_T operator|(const BitVec_T& o) const { check_same_context(*this, o); BitVec_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = kernel::or_gate(*ctx_, w[i], o.w[i]); return r; }
+    BitVec_T operator^(const BitVec_T& o) const { check_same_context(*this, o); BitVec_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->xor_gate(w[i], o.w[i]); return r; }
+    BitVec_T operator~() const                  { BitVec_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = ctx_->not_gate(w[i]); return r; }
+    Bit_T<Ctx> operator==(const BitVec_T& o) const { check_same_context(*this, o); return Bit_T<Ctx>(*ctx_, kernel::equal<Ctx>(*ctx_, w.data(), o.w.data(), N)); }
+    Bit_T<Ctx> operator!=(const BitVec_T& o) const { return !(*this == o); }
+    BitVec_T select(const Bit_T<Ctx>& sel, const BitVec_T& t) const {
+        check_same_context(*this, sel); check_same_context(*this, t);
+        BitVec_T r(*ctx_); for (int i = 0; i < N; ++i) r.w[i] = kernel::mux(*ctx_, sel.w, t.w[i], w[i]); return r;
+    }
+    BitVec_T operator<<(int s) const {
+        if (s < 0) error("BitVec_T::operator<<: shift amount must be >= 0");
+        BitVec_T r(*ctx_); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < N; ++i) r.w[i] = (i >= s) ? w[i - s] : z;
+        return r;
+    }
+    BitVec_T operator>>(int s) const {
+        if (s < 0) error("BitVec_T::operator>>: shift amount must be >= 0");
+        BitVec_T r(*ctx_); Wire z = ctx_->public_bit(false);
+        for (int i = 0; i < N; ++i) r.w[i] = (i + s < N) ? w[i + s] : z;
+        return r;
+    }
 
-	// Feed `width` bits read from raw memory (LSB-first within each byte).
-	BitVec_T(size_t width, const void* data, int party);
+    template <int Lo, int Hi> BitVec_T<Ctx, Hi - Lo> slice() const {
+        static_assert(0 <= Lo && Lo <= Hi && Hi <= N, "BitVec_T::slice<Lo,Hi>: out of range");
+        BitVec_T<Ctx, Hi - Lo> r(*ctx_); for (int i = 0; i < Hi - Lo; ++i) r.w[i] = w[Lo + i]; return r;
+    }
+    template <int M> BitVec_T<Ctx, N + M> concat(const BitVec_T<Ctx, M>& hi) const {  // this is the LOW half
+        check_same_context(*this, hi);
+        BitVec_T<Ctx, N + M> r(*ctx_);
+        for (int i = 0; i < N; ++i) r.w[i] = w[i];
+        for (int i = 0; i < M; ++i) r.w[N + i] = hi.w[i];
+        return r;
+    }
 
-	size_t size() const { return bits.size(); }
+    static constexpr int width() { return N; }
+    void pack_wires(Wire* out) const { for (int i = 0; i < N; ++i) out[i] = w[i]; }
+    static std::vector<bool> encode(const clear_t& v) { return std::vector<bool>(v.begin(), v.end()); }
+    static clear_t decode(const bool* b) { clear_t v{}; for (int i = 0; i < N; ++i) v[i] = b[i]; return v; }
 
-	// Circuit-value interface (see circuit_value.h): one wire per bit, LSB
-	// first. UnsignedInt_T/SignedInt_T inherit pack/unpack/pack_size and override
-	// `rebind` to name their own shape. (BitVec_T has no Sortable base, so it
-	// declares wire_type here; the integer subclasses, which inherit both this
-	// and Sortable, re-declare it to resolve the duplicate base alias.)
-	using wire_type = Wire;
-	template<typename NW> using rebind = BitVec_T<NW>;
-	int  pack_size() const { return (int)bits.size(); }
-	void pack(Wire* out) const {
-		for (size_t i = 0; i < bits.size(); ++i) out[i] = bits[i].bit;
-	}
-	void unpack(const Wire* in, int n) {
-		bits.resize(n);
-		for (int i = 0; i < n; ++i) bits[i].bit = in[i];
-	}
-
-	Bit_T<Wire>&       operator[](size_t i)       { return bits[i]; }
-	const Bit_T<Wire>& operator[](size_t i) const { return bits[i]; }
-
-	// Bitwise — both operands must have equal width (asserted).
-	BitVec_T operator&(const BitVec_T& rhs) const;
-	BitVec_T operator|(const BitVec_T& rhs) const;
-	BitVec_T operator^(const BitVec_T& rhs) const;
-	BitVec_T operator~() const;
-	BitVec_T& operator^=(const BitVec_T& rhs);
-
-	// Logical shifts (zero-fill on both sides). Shift amounts ≥ width
-	// produce zero. SignedInt_T overrides operator>> with arithmetic shift.
-	BitVec_T operator<<(size_t shamt) const;
-	BitVec_T operator>>(size_t shamt) const;
-
-	// Bitwise equality (equal in *every* bit). Returns a single Bit.
-	Bit_T<Wire> equal(const BitVec_T& rhs) const;
-
-	// Concat: result = this | (hi << this->size()). low at low indices.
-	BitVec_T concat(const BitVec_T& hi) const;
-
-	// Slice [lo, hi). hi may be size() (open upper). Returns a width
-	// (hi - lo) BitVec, sharing wire references via copy of the Bit_T.
-	BitVec_T slice(size_t lo, size_t hi) const;
-
-	// Bit-wise oblivious select: result[i] = sel ? rhs[i] : (*this)[i].
-	BitVec_T select(const Bit_T<Wire>& sel, const BitVec_T& rhs) const;
-
-	// Read out the value. If O is std::string, returns the bit string
-	// (MSB-first). If O is integral, packs LSB-first into O (excess high
-	// bits are zeroed; bits beyond sizeof(O)*8 are dropped).
-	template<typename O = std::string>
-	O reveal(int party = PUBLIC) const;
-
-	// Read out the bits to raw memory (LSB-first within each byte). Output
-	// must have at least ⌈size()/8⌉ bytes.
-	void reveal(void* output, int party = PUBLIC) const;
+private:
+    Ctx* ctx_ = nullptr;
 };
 
-#include "emp-tool/circuits/bitvec.hpp"
-
-}  // namespace legacy
 }  // namespace emp
-#endif
+#endif  // EMP_CIRCUIT_BITVEC_H__

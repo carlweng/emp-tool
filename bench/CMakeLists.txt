@@ -21,10 +21,3 @@ add_bench(bench_utils)
 
 add_bench(bench_netio)
 add_bench(bench_tlsio)
-add_bench(bench_garble)
-
-# Dispatch-strategy benchmark over the BooleanContext concept (C++20). emp-tool
-# now exports PUBLIC cxx_std_20, so this is inherited; the explicit feature is
-# kept as a harmless, self-documenting floor.
-add_bench(bench_dispatch)
-target_compile_features(bench_dispatch PRIVATE cxx_std_20)

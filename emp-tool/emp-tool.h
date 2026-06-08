@@ -29,19 +29,10 @@ static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
 #include "emp-tool/crypto/ro.h"
 #include "emp-tool/third_party/ThreadPool.h"
 
-#include "emp-tool/execution/backend.h"
-#include "emp-tool/execution/clear_backend.h"
 #include "emp-tool/execution/half_gate.h"
 #include "emp-tool/execution/privacy_free.h"
 
-// block_types.h aggregates the backend-independent circuit templates and makes
-// the standard block-wire aliases available under emp::block_types. It defines
-// NO bare aliases in namespace emp: downstream protocol libraries can include
-// emp-tool.h safely and bind their own wire types. Normal block-wire
-// applications opt in explicitly:
-//
-//     using namespace emp::block_types;                  // in .cpp files
-//
-// Custom backend/protocol code can bind its own wire with EMP_CIRCUIT_TYPES*
-// inside a protocol-specific namespace.
-#include "emp-tool/circuits/block_types.h"
+// emp-tool.h is the substrate (IO, core, crypto, GC primitives). It defines no
+// circuit value types: protocol libraries and applications include the circuit
+// layer they need explicitly — circuits/typed.h for the BooleanContext values, or
+// circuits/circuit.h for the values plus the crypto primitives.

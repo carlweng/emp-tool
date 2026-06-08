@@ -4,7 +4,7 @@ This document records how the shipped IEEE floating-point circuit assets are
 represented, generated, and verified. The runtime assets live in:
 
 ```text
-emp-tool/circuits/files/fp<width>_<op>.empbc
+emp-tool/ir/files/fp<width>_<op>.empbc
 ```
 
 The `.empbc` files are the canonical stored format for nontrivial generated
@@ -73,7 +73,7 @@ For floating-point assets specifically:
 
 - File names are `fp<width>_<op>.empbc`, for example `fp64_add.empbc`.
   Structural `abs`, `neg`, and `copysign` do not have files.
-- Put runtime assets in `emp-tool/circuits/files/`; CMake installs the `.empbc`
+- Put runtime assets in `emp-tool/ir/files/`; CMake installs the `.empbc`
   assets and the asset README beside the headers.
 - Unary inputs are `A`, binary inputs are `A||B`, and ternary inputs are
   `A||B||C`, each operand LSB-first.
@@ -136,7 +136,7 @@ A practical workflow is:
    verifier for the operation.
 7. Compare AND counts against the table below. Any increase should have a clear
    correctness or maintainability reason.
-8. Copy the final asset to `emp-tool/circuits/files/` and run `test_float`.
+8. Copy the final asset to `emp-tool/ir/files/` and run `test_float`.
 
 ## Generation Tricks
 
@@ -277,5 +277,5 @@ Before replacing a checked-in `.empbc`, confirm all of the following:
 ## Third-Party Provenance
 
 Some fp32/fp64 assets were generated from modified sources derived from Berkeley
-SoftFloat 3e. The asset README in `emp-tool/circuits/files/README.md` carries the
+SoftFloat 3e. The asset README in `emp-tool/ir/files/README.md` carries the
 SoftFloat notice so it is installed beside the generated `.empbc` files.

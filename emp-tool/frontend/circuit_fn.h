@@ -24,8 +24,10 @@
 // A body callable in BOTH forms (e.g. a variadic lambda) is a contract error.
 // In the implicit form, make a constant from an argument: a.constant(5). C++20.
 
-#include "emp-tool/circuits/context.h"          // RecordCtx, execute_program, ProgramWorkspace
-#include "emp-tool/circuits/circuit_artifact.h" // CircuitArtifact, CircuitSignature, validate_artifact
+#include "emp-tool/context/concept.h"
+#include "emp-tool/context/record.h"      // RecordCtx
+#include "emp-tool/ir/execute.h"          // execute_program, ProgramWorkspace
+#include "emp-tool/ir/artifact.h" // CircuitArtifact, CircuitSignature, validate_artifact
 #include "emp-tool/circuits/value_traits.h"     // value_traits (metadata accessor)
 #include "emp-tool/circuits/typed.h"            // typed values (Bit_T/UInt_T/Int_T/Float_T)
 #include "emp-tool/core/utils.h"                // error()

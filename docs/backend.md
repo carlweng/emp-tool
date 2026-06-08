@@ -1,42 +1,40 @@
-# Backend layer (`emp-tool/execution/`)
+# Execution layer (`emp-tool/execution/`)
 
-Conventions for the protocol backends — `ClearBackend`, `HalfGate*`,
-`PrivacyFree*`, and any new gate-engine you add. Read this when
-writing a new `Backend` subclass or modifying gate-dispatch internals.
+emp-tool's circuits are evaluated by a **`BooleanContext`** — a type with a cheap,
+copyable `Wire` and value-return `public_bit` / `and_gate` / `xor_gate` /
+`not_gate`. There is no global backend and no `void*` virtual dispatch: a context
+is passed explicitly and the gate ops are statically dispatched and inlineable. See
+[circuits.md](circuits.md) for the value layer and `context/context.h` for the
+concept and the built-in analysis contexts (`ClearCtx` / `CountCtx` / `DigestCtx` /
+`RecordCtx`).
 
-For circuit-side primitive conventions, read
-[circuits.md](circuits.md). A new `Backend` automatically works with the
-[frontend](frontend.md) — live `run`, `compile`, and replay, for every circuit
-type — with no frontend changes; that's the payoff of this seam.
+## Implementing a context (a "backend")
 
-## Global backend pointer
+A protocol realizes a `BooleanContext` and adds typed I/O around it. The pattern,
+as in emp-sh2pc's `SH2PCCtx` and emp-ag2pc's `AG2PCCtx`:
 
-- Exactly one `Backend* backend` global (thread-local under
-  `EMP_TOOL_THREADING`). Every gate, feed, reveal flows through it.
+- pick a `Wire` (a garbled label, a wire id, …) that is `std::regular`;
+- implement the four gate ops (eager crypto, or recording into an IR — whatever the
+  protocol does per gate);
+- own the protocol state (IO, OT, keys) on the context itself;
+- expose `ctx.input<T>(owner, clear)` / `ctx.reveal(value, recipient)` for the
+  clear↔circuit boundary, routed through `value_traits<T>` (width + codec).
 
-## Type erasure at the dispatch boundary
+Such a context automatically works with the [frontend](frontend.md) — live `run`,
+`compile`, and replay over any circuit value — and with the analysis contexts, with
+no frontend changes. That uniformity is the payoff of the seam.
 
-- `Backend` is type-erased: gate dispatch takes `void*` plus a virtual
-  `wire_bytes()` oracle. This is the boundary between the templated
-  circuit layer and the protocol; concrete backends reinterpret the
-  pointers as their own `Wire`.
+## Garbling primitives (`execution/`)
 
-- `Bit_T<Wire>(bool, int)` asserts
-  `backend->wire_bytes() == sizeof(Wire)`. The assert compiles out
-  under NDEBUG.
+The execution layer ships the per-gate garble/evaluate primitives a garbled context
+builds on, as free functions over `block` labels (XOR/NOT are free; only AND needs
+ciphertext):
 
-## Bulk vs scalar gate paths
+- [half_gate.h](../emp-tool/execution/half_gate.h) — `halfgates_garble` /
+  `halfgates_eval` (Zahur–Rosulek–Evans half-gates).
+- [privacy_free.h](../emp-tool/execution/privacy_free.h) — `privacy_free_garble` /
+  `privacy_free_eval`.
 
-- Bulk variants (`and_gate_n`, `xor_gate_n`, `not_gate_n`) have
-  loop-fallback defaults on the base class. Concrete backends override
-  them when batching meaningfully amortizes per-gate cost. `BitVec_T`
-  ops dispatch through the bulk API (one virtual call per BitVec op);
-  `Bit_T` ops use the scalar path (per-bit dispatch).
-
-## Feed / reveal: what stays at the base
-
-- Backends whose `feed` / `reveal` need OT (HalfGate, PrivacyFree)
-  leave the base no-op overrides in place. The OT-driven layers live
-  downstream in emp-sh2pc / emp-ag2pc / emp-agmpc (which wrap input
-  OT around the gate engine via `setup_*` helpers). emp-ot itself
-  provides only the OT primitives those layers consume.
+`SH2PCCtx` calls `halfgates_garble`/`halfgates_eval` directly inside its `and_gate`;
+a new garbled context does the same. The OT that feeds private inputs lives in the
+protocol libraries (emp-sh2pc / emp-ag2pc / emp-agmpc) over emp-ot.

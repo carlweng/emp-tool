@@ -1,63 +1,61 @@
-#ifndef EMP_BIT_H__
-#define EMP_BIT_H__
-#include <type_traits>
-#include <string>
-#include "emp-tool/execution/backend.h"
-#include "emp-tool/core/utils.h"
-#include "emp-tool/circuits/sortable.h"
-#include "emp-tool/circuits/circuit_value.h"
+#ifndef EMP_CIRCUIT_BIT_H__
+#define EMP_CIRCUIT_BIT_H__
+
+// Bit_T<Ctx>: a single circuit bit over a BooleanContext. It carries one Ctx*
+// (private; reached via context()) plus its wire, and overloads the boolean
+// operators as value-return gates on the context (static dispatch, no global
+// backend). The shared cross-context guard check_same_context lives in
+// context/checks.h, since every value type uses it.
+
+#include "emp-tool/context/concept.h"
+#include "emp-tool/context/checks.h"             // check_same_context
+#include "emp-tool/circuits/numeric_kernels.h"   // kernel::mux for select
+#include "emp-tool/core/utils.h"                  // error()
+#include <vector>
+
 namespace emp {
-namespace legacy {
 
-template<typename Wire>
-class Bit_T: public Sortable<Wire, Bit_T<Wire>>, public CircuitValue { public:
-	// Default member initializer: every Bit_T starts with a defined `bit`,
-	// even before a ctor/backend writes the real wire. The value ctors and
-	// `feed` overwrite it (the optimizer elides the dead zero-store), so this
-	// is free at runtime; it keeps GCC's -Wmaybe-uninitialized from firing
-	// when a value ctor sets `bit` only through the opaque backend->feed call.
-	Wire bit{};
+template <BooleanContext Ctx>
+class Bit_T {
+public:
+    using Wire         = typename Ctx::Wire;
+    using context_type = Ctx;
+    using clear_t      = bool;
+    template <BooleanContext C2> using rebind = Bit_T<C2>;
+    Wire w{};
 
-	Bit_T() {}
-	// `party` has NO default: PUBLIC means "everyone holds this value",
-	// so a default would silently leak a forgotten private input as
-	// public. Explicit party required at every input ctor.
-	Bit_T(bool _b, int party);
-	Bit_T(const Wire& a) {
-		bit = a;
-	}
+    // Default ctor: UNINITIALIZED — null context, no usable wire — so that
+    // `Bit_T<Ctx> arr[N];` (or std::array) works; assign / from_wires before any
+    // op. Operating on a default-constructed value is UB, like a moved-from one.
+    // (Same contract for UInt_T / Int_T / Float_T / BitVec_T.)
+    Bit_T() = default;
+    Bit_T(Ctx& c, Wire wire) : ctx_(&c), w(wire) {}
+    static Bit_T constant(Ctx& c, bool v) { return Bit_T(c, c.public_bit(v)); }
 
-	template<typename O = bool>
-	O reveal(int party = PUBLIC) const;
+    Ctx* context() const { return ctx_; }
+    Bit_T  constant(bool v) const { return constant(*ctx_, v); }   // same-context sugar
 
-	Bit_T operator!=(const Bit_T& rhs) const;
-	Bit_T operator==(const Bit_T& rhs) const;
-	Bit_T operator &(const Bit_T& rhs) const;
-	Bit_T operator |(const Bit_T& rhs) const;
-	Bit_T operator !() const;
+    Bit_T operator&(const Bit_T& o) const { check_same_context(*this, o); return Bit_T(*ctx_, ctx_->and_gate(w, o.w)); }
+    Bit_T operator^(const Bit_T& o) const { check_same_context(*this, o); return Bit_T(*ctx_, ctx_->xor_gate(w, o.w)); }
+    Bit_T operator|(const Bit_T& o) const { return *this ^ o ^ (*this & o); }
+    Bit_T operator!() const                { return Bit_T(*ctx_, ctx_->not_gate(w)); }
+    Bit_T operator==(const Bit_T& o) const { return !(*this ^ o); }   // XNOR
+    Bit_T operator!=(const Bit_T& o) const { return *this ^ o; }      // XOR
+    // sel ? t : *this
+    Bit_T select(const Bit_T& sel, const Bit_T& t) const {
+        check_same_context(*this, sel); check_same_context(*this, t);
+        return Bit_T(*ctx_, kernel::mux(*ctx_, sel.w, t.w, w));
+    }
 
-	Bit_T geq(const Bit_T& rhs) const;
-	Bit_T select(const Bit_T<Wire> & select, const Bit_T & new_v) const;
-	Bit_T operator ^(const Bit_T& rhs) const;
-	Bit_T operator ^=(const Bit_T& rhs);
+    static constexpr int width() { return 1; }
+    void pack_wires(Wire* out) const { out[0] = w; }
+    static Bit_T from_wires(Ctx& c, const Wire* in) { return Bit_T(c, in[0]); }
+    static std::vector<bool> encode(bool v) { return std::vector<bool>{v}; }
+    static bool decode(const bool* b)       { return b[0]; }
 
-	// Circuit-value interface (see circuit_value.h): one wire.
-	template<typename NW> using rebind = Bit_T<NW>;
-	int  pack_size() const { return 1; }
-	void pack(Wire* out) const { out[0] = bit; }
-	void unpack(const Wire* in, int /*n*/) { bit = in[0]; }
-
-	//batcher
-	template<typename... Args>
-	static size_t bool_size(Args&&... args) {
-		return 1;
-	}
-
-	static void bool_data(bool *b, bool data) {
-		b[0] = data;
-	}
+private:
+    Ctx* ctx_ = nullptr;
 };
-#include "emp-tool/circuits/bit.hpp"
-}  // namespace legacy
-}
-#endif
+
+}  // namespace emp
+#endif  // EMP_CIRCUIT_BIT_H__

@@ -293,15 +293,15 @@ Circuits load from the native binary `.empbc` format into one
 outputs are an explicit wire list) and replay through any `BooleanContext`. The
 loader validates structure (bounds, single-definition, topological order) and
 rejects malformed files. Floating-point `.empbc` assets ship in
-`emp-tool/circuits/files/`; see
+`emp-tool/ir/files/`; see
 [docs/floating_point_circuits.md](docs/floating_point_circuits.md) for the
 asset format and regeneration notes. You can also `compile` your own pure
 circuit function (above) or capture a recorded program and load it through this
 API.
 
 ```cpp
-#include <emp-tool/circuits/context.h>   // execute_program, ClearCtx
-#include <emp-tool/circuits/empbc.h>     // load_empbc_file
+#include <emp-tool/context/context.h>   // execute_program, ClearCtx
+#include <emp-tool/ir/empbc.h>     // load_empbc_file
 using namespace emp;
 using namespace emp::circuit;
 

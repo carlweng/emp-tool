@@ -1,118 +1,145 @@
 #ifndef EMP_CIRCUIT_FLOAT_H__
 #define EMP_CIRCUIT_FLOAT_H__
+
+// Float_T<Ctx,W>: IEEE binary{16,32,64} over a BooleanContext. Arithmetic replays
+// the recorded fp<W>_<op>.empbc builtins through the context (the "big circuits ->
+// IR replay" rule). The clear codec uses the host scalar (float for fp16/fp32,
+// double for fp64) via FloatTraits<W>; raw-bit helpers are also provided.
+
 #include "emp-tool/circuits/bit.h"
-#include "emp-tool/circuits/bitvec.h"
-#include "emp-tool/circuits/sortable.h"
-#include "emp-tool/circuits/signed_int.h"
-#include "emp-tool/circuits/unsigned_int.h"
-#include "emp-tool/circuits/boolean_program.h"
-#include "emp-tool/circuits/float_traits.h"   // FloatTraits<W>, emp_float<->half, circuit::float_circuit
-#include <math.h>
+#include "emp-tool/circuits/numeric_kernels.h"   // kernel::mux for select
+#include "emp-tool/circuits/float_traits.h"      // FloatTraits<W>
+#include "emp-tool/ir/builtins.h"                // circuit::float_circuit
+#include "emp-tool/ir/execute.h"                 // execute_program (replay float .empbc)
 #include <array>
 #include <cstdint>
-#include <cstring>
-#include <string>
-#include <type_traits>
-#include <algorithm>
+#include <span>
+#include <vector>
+
 namespace emp {
 
+template <BooleanContext Ctx, int W>
+class Float_T {
+public:
+    using Wire         = typename Ctx::Wire;
+    using context_type = Ctx;
+    using host_t       = typename FloatTraits<W>::host_t;
+    using clear_t      = host_t;
+    template <BooleanContext C2> using rebind = Float_T<C2, W>;
+    std::array<Wire, W> w{};
 
-// Width-generic IEEE-754 float circuit value. W in {16,32,64} selects
-// binary16 / binary32 / binary64. Nontrivial arithmetic, comparisons, and
-// classifiers are realized by matching on-disk circuits in
-// emp-tool/circuits/files/ (fp16_*/fp32_*/fp64_*.empbc), loaded once and shared;
-// simple structural ops such as abs, neg, and copysign are direct bit
-// operations. There is no embedded gate table. The host scalar is `float` for
-// fp16/fp32 and `double` for fp64 (FloatTraits<W>::host_t; fp16 host conversion
-// is software).
-//
-// Bind with Float16 / Float32 / Float64; `Float` is an alias for Float32.
-// Transcendentals (sin/cos/exp/...) are intentionally absent: the on-disk suite
-// is bit-exact / correctly-rounded only.
-namespace legacy {
-template<typename Wire, int W>
-class Float_T: public Sortable<Wire, Float_T<Wire, W>>, public CircuitValue { public:
-	using Traits = FloatTraits<W>;
-	using host_t = typename Traits::host_t;
-	static constexpr int FLOAT_LEN = Traits::LEN;
-	static constexpr int BIAS      = Traits::BIAS;
-	static constexpr int SGNFC_LEN = Traits::SGNFC_LEN;
-	static constexpr int EXPNT_LEN = Traits::EXPNT_LEN;
+    Float_T() = default;
+    explicit Float_T(Ctx& c) : ctx_(&c) {}
+    static Float_T from_bits(Ctx& c, uint64_t bits) {
+        Float_T r(c); for (int i = 0; i < W; ++i) r.w[i] = c.public_bit((bits >> i) & 1); return r;
+    }
+    static Float_T from_wires(Ctx& c, const Wire* in) {
+        Float_T r(c); for (int i = 0; i < W; ++i) r.w[i] = in[i]; return r;
+    }
 
-	std::array<Bit_T<Wire>, W> value;
+    // Construct from a host value (e.g. 1.5f) via the per-width bit pattern.
+    static Float_T constant(Ctx& c, host_t v) { return from_bits(c, FloatTraits<W>::to_bits(v)); }
 
-	// Circuit-value interface (see circuit_value.h): W wires.
-	template<typename NW> using rebind = Float_T<NW, W>;
-	int  pack_size() const { return W; }
-	void pack(Wire* out) const { for (int i = 0; i < W; ++i) out[i] = value[i].bit; }
-	void unpack(const Wire* in, int /*n*/) { for (int i = 0; i < W; ++i) value[i].bit = in[i]; }
+    Ctx*    context() const { return ctx_; }
+    Float_T constant(host_t v) const { return constant(*ctx_, v); }   // same-context sugar
 
-	Float_T(Float_T && in): value(std::move(in.value)) {}
-	Float_T(const Float_T & in): value(in.value) {}
-	Float_T& operator= (Float_T rhs) { std::swap(value, rhs.value); return *this; }
+    // ---- IR-replay helpers over the fp<W>_<op>.empbc builtins ----
+    // unary/binary/ternary return W bits; compare/classify circuits emit 8 bits
+    // (bit 0 is the result), matching the recorded suite. Replay reuses a
+    // thread_local ProgramWorkspace; the returned reference aliases it and is valid
+    // only until the next replay_<K> call (every caller copies immediately).
+    template <int K>
+    const std::vector<Wire>& replay_(const char* op, const std::array<const Float_T*, K>& ops) const {
+        static thread_local ProgramWorkspace<Wire> ws;
+        ws.tmp_inputs.resize((size_t)K * W);
+        for (int k = 0; k < K; ++k)
+            for (int i = 0; i < W; ++i) ws.tmp_inputs[(size_t)k * W + i] = ops[k]->w[i];
+        return execute_program(*ctx_, circuit::float_circuit(W, op),
+                               std::span<const Wire>(ws.tmp_inputs.data(), (size_t)K * W), ws);
+    }
+    Float_T unary_(const char* op) const {
+        const auto& out = replay_<1>(op, {this});
+        Float_T r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = out[i]; return r;
+    }
+    Float_T binop_(const char* op, const Float_T& o) const {
+        check_same_context(*this, o);
+        const auto& out = replay_<2>(op, {this, &o});
+        Float_T r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = out[i]; return r;
+    }
+    Float_T ternary_(const char* op, const Float_T& b, const Float_T& c) const {
+        check_same_context(*this, b); check_same_context(*this, c);
+        const auto& out = replay_<3>(op, {this, &b, &c});
+        Float_T r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = out[i]; return r;
+    }
+    Bit_T<Ctx> cmp_(const char* op, const Float_T& o) const {
+        check_same_context(*this, o);
+        return Bit_T<Ctx>(*ctx_, replay_<2>(op, {this, &o})[0]);
+    }
+    Bit_T<Ctx> classify_(const char* op) const {
+        return Bit_T<Ctx>(*ctx_, replay_<1>(op, {this})[0]);
+    }
 
-	// No-arg ctor: leaves `value` default-initialized (Bit_T<Wire>{}).
-	Float_T() = default;
-	// Input ctor: feeds `input`'s W-bit IEEE pattern as `party`'s input.
-	// `party` has NO default — see Bit_T/BitVec_T for the rationale.
-	Float_T(host_t input, int party);
+    // ---- arithmetic ----
+    Float_T operator+(const Float_T& o) const { return binop_("add", o); }
+    Float_T operator-(const Float_T& o) const { return binop_("sub", o); }
+    Float_T operator*(const Float_T& o) const { return binop_("mul", o); }
+    Float_T operator/(const Float_T& o) const { return binop_("div", o); }
+    Float_T min(const Float_T& o) const { return binop_("min", o); }
+    Float_T max(const Float_T& o) const { return binop_("max", o); }
+    Float_T sqr()   const { return unary_("square"); }
+    Float_T sqrt()  const { return unary_("sqrt"); }
+    Float_T recip() const { return unary_("recip"); }
+    Float_T rsqrt() const { return unary_("rsqrt"); }
+    Float_T fma(const Float_T& b, const Float_T& c) const { return ternary_("fma", b, c); }
 
-	template<typename O>
-	O reveal(int party = PUBLIC) const;
+    // ---- comparisons / classifiers -> Bit_T ----
+    Bit_T<Ctx> equal(const Float_T& o)         const { return cmp_("eq", o); }
+    Bit_T<Ctx> not_equal(const Float_T& o)     const { return cmp_("ne", o); }
+    Bit_T<Ctx> less_than(const Float_T& o)     const { return cmp_("lt", o); }
+    Bit_T<Ctx> less_equal(const Float_T& o)    const { return cmp_("le", o); }
+    Bit_T<Ctx> greater_than(const Float_T& o)  const { return cmp_("gt", o); }
+    Bit_T<Ctx> greater_equal(const Float_T& o) const { return cmp_("ge", o); }
+    Bit_T<Ctx> operator==(const Float_T& o) const { return equal(o); }
+    Bit_T<Ctx> operator!=(const Float_T& o) const { return not_equal(o); }
+    Bit_T<Ctx> operator<(const Float_T& o)  const { return less_than(o); }
+    Bit_T<Ctx> operator<=(const Float_T& o) const { return less_equal(o); }
+    Bit_T<Ctx> operator>(const Float_T& o)  const { return greater_than(o); }
+    Bit_T<Ctx> operator>=(const Float_T& o) const { return greater_equal(o); }
+    Bit_T<Ctx> is_nan()  const { return classify_("isnan"); }
+    Bit_T<Ctx> is_inf()  const { return classify_("isinf"); }
+    Bit_T<Ctx> is_zero() const { return classify_("iszero"); }
 
-	Float_T abs() const;
-	Float_T select(const Bit_T<Wire> & sel, const Float_T & rhs) const;
+    // ---- sign-bit ops + select: pure wiring, realized locally (MSB = bit W-1) ----
+    Float_T abs() const        { Float_T r(*this); r.w[W - 1] = ctx_->public_bit(false); return r; }
+    Float_T operator-() const  { Float_T r(*this); r.w[W - 1] = ctx_->not_gate(w[W - 1]); return r; }
+    Float_T copysign(const Float_T& o) const { check_same_context(*this, o); Float_T r(*this); r.w[W - 1] = o.w[W - 1]; return r; }
+    Float_T select(const Bit_T<Ctx>& sel, const Float_T& o) const {
+        check_same_context(*this, sel); check_same_context(*this, o);
+        Float_T r(*ctx_); for (int i = 0; i < W; ++i) r.w[i] = kernel::mux(*ctx_, sel.w, o.w[i], w[i]); return r;
+    }
+    Bit_T<Ctx> operator[](int i) const { return Bit_T<Ctx>(*ctx_, w[i]); }
 
-	// --- comparisons -> Bit (NaN-aware, via the fp<W>_* circuits) ---
-	Bit_T<Wire> equal(const Float_T & rhs) const;
-	Bit_T<Wire> not_equal(const Float_T & rhs) const;
-	Bit_T<Wire> less_than(const Float_T & rhs) const;
-	Bit_T<Wire> less_equal(const Float_T & rhs) const;
-	Bit_T<Wire> greater_than(const Float_T & rhs) const;
-	Bit_T<Wire> greater_equal(const Float_T & rhs) const;
-	Bit_T<Wire> geq(const Float_T & rhs) const { return greater_equal(rhs); }  // Sortable hook
+    static constexpr int width() { return W; }
+    void pack_wires(Wire* out) const { for (int i = 0; i < W; ++i) out[i] = w[i]; }
+    static std::vector<bool> encode(host_t v) {
+        uint64_t bits = FloatTraits<W>::to_bits(v);
+        std::vector<bool> b(W); for (int i = 0; i < W; ++i) b[i] = (bits >> i) & 1; return b;
+    }
+    static host_t decode(const bool* bits) {
+        uint64_t v = 0; for (int i = 0; i < W; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i;
+        return FloatTraits<W>::from_bits(v);
+    }
+    // Raw-bit helpers (when you want the IEEE pattern directly).
+    static std::vector<bool> encode_bits(uint64_t bits) {
+        std::vector<bool> b(W); for (int i = 0; i < W; ++i) b[i] = (bits >> i) & 1; return b;
+    }
+    static uint64_t decode_bits(const bool* bits) {
+        uint64_t v = 0; for (int i = 0; i < W; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i; return v;
+    }
 
-	// --- classifiers -> Bit ---
-	Bit_T<Wire> is_nan() const;
-	Bit_T<Wire> is_inf() const;
-	Bit_T<Wire> is_zero() const;
-
-	// --- arithmetic ---
-	Float_T operator+(const Float_T& rhs) const;
-	Float_T operator-(const Float_T& rhs) const;
-	Float_T operator-() const;
-	Float_T operator*(const Float_T& rhs) const;
-	Float_T operator/(const Float_T& rhs) const;
-	Float_T operator^(const Float_T& rhs) const;
-	Float_T operator^=(const Float_T& rhs);
-	Float_T operator&(const Float_T& rhs) const;
-
-	Float_T sqr() const;
-	Float_T sqrt() const;
-	Float_T recip() const;                                  // 1 / x
-	Float_T rsqrt() const;                                  // 1 / sqrt(x)
-	Float_T fma(const Float_T& b, const Float_T& c) const;  // this*b + c (unfused)
-	Float_T min(const Float_T& rhs) const;
-	Float_T max(const Float_T& rhs) const;
-	Float_T copysign(const Float_T& rhs) const;             // |this| with sign of rhs
-
-	Bit_T<Wire>& operator[](int index);
-	const Bit_T<Wire> & operator[](int index) const;
-	size_t size() const { return W; }
-
-	// Decode this float as a non-negative N-bit fixed-point integer with `s`
-	// fractional bits. The IEEE sign bit is ignored. Truncates toward zero.
-	// Returns 0 when the input is zero. NaN/Inf/subnormals are preconditions:
-	// undefined. (Width-generic; the fp32 path is the exercised one.)
-	template<int N> UnsignedInt_T<Wire, N> to_unsigned(size_t s) const;
-	// Signed variant: composes to_unsigned with the IEEE sign bit.
-	template<int N> SignedInt_T<Wire, N>   to_signed(size_t s) const;
+private:
+    Ctx* ctx_ = nullptr;
 };
 
-// Default width (W = 32) is declared once in unsigned_int.h; the class
-// definition must not repeat it.
-
-#include "emp-tool/circuits/float.hpp"
-}  // namespace legacy
-}
+}  // namespace emp
 #endif  // EMP_CIRCUIT_FLOAT_H__

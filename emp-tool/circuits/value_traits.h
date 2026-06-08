@@ -3,7 +3,7 @@
 // Uniform metadata accessor for context-bound circuit values. Source of truth =
 // the value type's own static members; this trait just exposes them uniformly
 // (width, clear codec, rebind<Ctx>) for compile()/run()/concepts.
-#include "emp-tool/circuits/context.h"   // BooleanContext
+#include "emp-tool/context/concept.h"   // BooleanContext
 #include <vector>
 namespace emp {
 template <class T>

@@ -8,6 +8,6 @@ using Bit = Bit_T<RecordCtx>;
 template <int N> using UInt  = UInt_T<RecordCtx, N>;
 template <int N> using Int   = Int_T<RecordCtx, N>;
 template <int W> using Float = Float_T<RecordCtx, W>;
-template <int N> using Bits  = Bits_T<RecordCtx, N>;
+template <int N> using BitVec = BitVec_T<RecordCtx, N>;
 }}  // namespace emp::rec
 #endif

@@ -9,7 +9,7 @@
 // host value type is `float` for fp16/fp32 and `double` for fp64; fp16 has no
 // portable C++ scalar, so its conversions are done in software (RNE).
 
-#include "emp-tool/circuits/boolean_program.h"
+#include "emp-tool/ir/builtins.h"
 #include <math.h>
 #include <cstdint>
 #include <cstring>
@@ -89,12 +89,5 @@ template<> struct FloatTraits<16> {
 	static host_t from_bits(uint64_t b) { return emp_half_to_float((uint16_t)b); }
 };
 
-namespace circuit {
-
-// Load-or-fetch the cached on-disk circuit for IEEE binary<width> operation `op`
-// (width in {16,32,64}; op like "add", "mul", "sqrt", "eq", ...).
-const BooleanProgram& float_circuit(int width, const char* op);
-
-}  // namespace circuit
 }  // namespace emp
 #endif  // EMP_CIRCUIT_FLOAT_TRAITS_H__

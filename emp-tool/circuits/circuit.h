@@ -1,24 +1,13 @@
-#ifndef EMP_CIRCUIT_H__
-#define EMP_CIRCUIT_H__
+#ifndef EMP_CIRCUIT_CIRCUIT_H__
+#define EMP_CIRCUIT_CIRCUIT_H__
 
-// Backend-independent umbrella for emp-tool/circuits/*. Pulls in every circuit
-// primitive as a `<Wire>` template — it bakes in NO concrete wire type. Choose
-// a wire and bind the friendly aliases (Bit, UInt32, …) where you select the
-// backend. The standard block-wire binding lives in block_types.h under the
-// nested namespace emp::block_types; custom backends can use
-// EMP_CIRCUIT_TYPES from circuit_types.h in their own namespace.
+// Umbrella for the circuit layer: the BooleanContext value types (typed.h), their
+// uniform metadata accessor (value_traits.h), and the crypto circuit primitives
+// (AES-128, SHA-256, Keccak-f / SHA3-256).
 
-#include "emp-tool/circuits/sortable.h"
-#include "emp-tool/circuits/bit.h"
-#include "emp-tool/circuits/bitvec.h"
-#include "emp-tool/circuits/unsigned_int.h"
-#include "emp-tool/circuits/signed_int.h"
-#include "emp-tool/circuits/float.h"
-#include "emp-tool/circuits/aes_circuit.h"
-#include "emp-tool/circuits/aes_128_ctr.h"
-#include "emp-tool/circuits/sha3_circuit.h"
-#include "emp-tool/circuits/sha3_256.h"
-#include "emp-tool/circuits/sha256_circuit.h"
-#include "emp-tool/circuits/circuit_types.h"
+#include "emp-tool/circuits/typed.h"
+#include "emp-tool/circuits/value_traits.h"
+#include "emp-tool/circuits/sort.h"
+#include "emp-tool/circuits/crypto/crypto.h"
 
-#endif  // EMP_CIRCUIT_H__
+#endif  // EMP_CIRCUIT_CIRCUIT_H__

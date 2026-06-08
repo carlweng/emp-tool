@@ -5,7 +5,7 @@
 // is the size-optimal 31-AND kernel; recording is deterministic. C++20.
 
 #include "emp-tool/emp-tool.h"
-#include "emp-tool/circuits/context.h"
+#include "emp-tool/context/context.h"
 #include "emp-tool/circuits/typed.h"
 #include "emp-tool/frontend/circuit_fn.h"
 #include "emp-tool/frontend/rec.h"
@@ -99,14 +99,14 @@ int main() {
         chk("live run", (uint32_t)clear_of(cf::run(add, x, y)) == 14u);
     }
 
-    // 7) Bits_T circuit (bit-vector value): nibble swap, compiled once, run on ClearCtx.
+    // 7) BitVec_T circuit (bit-vector value): nibble swap, compiled once, run on ClearCtx.
     {
         auto swap = [](auto b) { return b.template slice<4, 8>().concat(b.template slice<0, 4>()); };
-        auto cbits = cf::compile<rec::Bits<8>>(swap);
+        auto cbits = cf::compile<rec::BitVec<8>>(swap);
         std::array<bool, 8> v{}; for (int i = 0; i < 8; ++i) v[i] = (0xB5u >> i) & 1;
-        auto out = cf::run(cx, cbits, Bits_T<ClearCtx, 8>::constant(cx, v));
+        auto out = cf::run(cx, cbits, BitVec_T<ClearCtx, 8>::constant(cx, v));
         uint32_t got = 0; for (int i = 0; i < 8; ++i) if (out.w[i] & 1) got |= (1u << i);
-        chk("Bits_T nibble-swap circuit", got == 0x5Bu);   // 0xB5 -> 0x5B
+        chk("BitVec_T nibble-swap circuit", got == 0x5Bu);   // 0xB5 -> 0x5B
     }
 
     printf("test_circuit_fn: %s\n", bad ? "FAILED" : "compile-once / run-anywhere — PASS");

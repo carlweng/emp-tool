@@ -17,7 +17,7 @@ context-bound values (`Bit_T<Ctx>` / `UInt_T<Ctx,N>` / …), with the context
 passed explicitly and no global backend.
 
 For the typed values it builds on, read [circuits.md](circuits.md); for the
-context concept it targets, read the header of `circuits/context.h`.
+context concept it targets, read the header of `context/context.h`.
 
 ## What a circuit is — a pure function over a context
 
@@ -78,7 +78,11 @@ A circuit value is anything satisfying the `CircuitValue` concept
 `context()`, `pack_wires` / `from_wires`, `encode` / `decode`, and a
 `rebind<Ctx>` that maps the same value family onto another context. The four
 built-in families (`Bit_T`, `UInt_T`, `Int_T`, `Float_T` in `circuits/typed.h`)
-all satisfy it.
+satisfy it at fixed width. The runtime-width forms `UInt_T<Ctx,0>` / `Int_T<Ctx,0>`
+(width chosen at construction) intentionally do **not** — they have no static
+`width()` or clear codec — so they stay inside a circuit body and never cross the
+`input` / `compile` / `run` boundary; convert to a fixed `UInt_T<Ctx,N>`
+(`to_fixed<N>()`) first if a runtime-width result must leave.
 
 ## Recording value types — context-free signatures
 
@@ -146,8 +150,8 @@ rejected at construction rather than silently mis-running. Accessors:
 `circ.program()`, `circ.signature()`.
 
 No analyses are baked into the circuit — gate counts, liveness, and the AND-depth
-schedule are free functions over the program (`frontend/passes.h`,
-`circuits/context.h`), computed when wanted.
+schedule are free functions over the program (`ir/passes.h`,
+`context/context.h`), computed when wanted.
 
 ## What's inside (internals)
 
@@ -158,16 +162,16 @@ schedule are free functions over the program (`frontend/passes.h`,
   (width, clear codec, `rebind<Ctx>`) over a circuit value's own static members.
 - `frontend/rec.h` — `rec::Bit`/`rec::UInt<N>`/`rec::Int<N>`/`rec::Float<W>`,
   the value types over `RecordCtx` used as `compile` arguments.
-- `circuits/context.h` — the `BooleanContext` concept and the contexts
+- `context/context.h` — the `BooleanContext` concept and the contexts
   `ClearCtx` (plaintext) and `RecordCtx` (records a `BooleanProgram`), plus the
   `CountCtx` / `DigestCtx` analysis helpers, `execute_program(ctx, prog, inputs,
   ws)` (value-return replay over any `BooleanContext`), and `ProgramWorkspace`.
-- `circuits/circuit_artifact.h` — `CircuitArtifact` (program + signature) +
+- `ir/artifact.h` — `CircuitArtifact` (program + signature) +
   `validate_artifact`.
 - `frontend/circuit_fn.h` — the `CircuitValue` / `RecordValue` concepts,
   `circuit_fn_traits` / `circuit_contract`, `Circuit<RetV,ArgVs...>`, `compile`,
   `run`.
-- `frontend/passes.h` — analyses over the IR (`count`, `liveness`, `schedule`,
+- `ir/passes.h` — analyses over the IR (`count`, `liveness`, `schedule`,
   `layout`) as free functions.
 
 ## Adding a new backend
