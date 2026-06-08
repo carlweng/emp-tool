@@ -1,6 +1,6 @@
 # Numeric semantics
 
-Normative rules for arithmetic on `UnsignedInt_T` / `SignedInt_T` /
+Normative rules for arithmetic on `UInt_T` / `Int_T` /
 `BitVec_T`. These match **hardware** two's-complement semantics on
 commodity x86 / arm — *not* C's "undefined behavior" rules. A naive
 translator that reproduces a source language's UB-avoidance dance
@@ -12,7 +12,7 @@ boundary case against ground truth.
 
 ## Wrap on `+ - *`
 
-`+`, `-`, `*` on `UnsignedInt_T` and `SignedInt_T` wrap mod 2^N.
+`+`, `-`, `*` on `UInt_T` and `Int_T` wrap mod 2^N.
 Unsigned matches `uint{N}_t` directly; signed matches `int{N}_t`
 *as implemented on hardware* (two's-complement wrap). C's
 signed-overflow UB is sidestepped — emp-tool wraps deterministically.
@@ -24,39 +24,40 @@ signed-overflow UB is sidestepped — emp-tool wraps deterministically.
 - `INT_MIN / -1` is allowed and produces `INT_MIN` (the bit-pattern
   result of two's-complement division). Callers needing a different
   policy must check explicitly.
-- Division by zero is undefined behavior of the *circuit*; do not
-  pass it. If the divisor is secret, guard with an `If` that picks a
-  sentinel result and a "valid" `Bit`.
+- Division by zero follows the arithmetic kernel's saturating result.
+  If the divisor is secret and the caller needs a different policy, carry
+  a validity `Bit_T` and select a sentinel result explicitly.
 
 ## Shifts
 
 - `<<` is logical on every type.
-- `>>` is logical on `BitVec_T` and `UnsignedInt_T`, arithmetic
-  (sign-fill) on `SignedInt_T`.
+- `>>` is logical on `BitVec_T` and `UInt_T`, arithmetic
+  (sign-fill) on `Int_T`.
 - Shift amounts ≥ width yield zero on logical ops, or sign-fill on
   signed `>>`.
 - Both static-shamt and dynamic-shamt forms exist. The dynamic form
   treats `shamt` as unsigned.
 
-To do a *logical* right-shift on a `SignedInt`:
+To do a *logical* right-shift on an `Int_T`:
 `s.as_unsigned() >> k` (then `.as_signed()` if you need the type back).
 
 ## Resize
 
-- `resize(W)` zero-extends on `UnsignedInt_T`, sign-extends on
-  `SignedInt_T`. Truncation drops the high bits.
+- `resize(W)` zero-extends on `UInt_T`, sign-extends on
+  `Int_T`. Truncation drops the high bits.
 - Resize is structural — costs no AND gates.
 
 ## Negation
 
-- `-x` on `UnsignedInt_T` is well-defined as `~x + 1` mod 2^W
+- `-x` on `UInt_T` is well-defined as `~x + 1` mod 2^W
   (i.e. `0u - x`). Matches C unsigned negation. The result is still
-  `UnsignedInt`.
-- Unary `-` on `SignedInt_T` is two's-complement negate. `-INT_MIN`
+  `UInt_T`.
+- Unary `-` on `Int_T` is two's-complement negate. `-INT_MIN`
   wraps to `INT_MIN` as a bit pattern (no exception).
 
-## Absolute value
+## Magnitude
 
-`abs()` on `SignedInt_T` returns an `UnsignedInt_T` of the same
-width. `abs(INT_MIN)` returns the bit pattern `2^(W-1)` — faithful as
-a *magnitude* even though no signed value can represent it.
+There is no separate `abs()` helper on `Int_T`. Compute the magnitude when
+needed as `x.select(x[W-1], -x).as_unsigned()` for a fixed-width value.
+For `INT_MIN`, this returns the unsigned bit pattern `2^(W-1)` — faithful
+as a magnitude even though no signed value can represent it.

@@ -6,8 +6,12 @@ The circuit value layer is the **context-bound typed values**: `Bit_T<Ctx>`,
 `UInt_T<Ctx,N>`, `Int_T<Ctx,N>`, `Float_T<Ctx,W>`, and `BitVec_T<Ctx,N>`,
 templated on a `BooleanContext` (`context/context.h`). Static dispatch, no global
 backend; each value carries its own `Ctx*` and issues value-return gates on it.
-This is the layer the [frontend](frontend.md) compiles and replays, and the layer
-protocol contexts (e.g. emp-sh2pc's `SH2PCCtx`) feed through `input`/`reveal`.
+This is the layer the [frontend](frontend.md) compiles and replays. The
+`BooleanContext` is pure circuit execution (gates only); concrete values enter and
+leave through a **session** (emp-tool's `ClearSession` in
+`session/clear_session.h`, or a protocol library's own session), which owns the
+`input`/`reveal` boundary and a context. Pure circuit bodies stay `Ctx`-templated
+values.
 
 Each value type lives in its own header — `circuits/{bit,bitvec,unsigned_int,
 signed_int,float}.h` — over the shared arithmetic in `circuits/numeric_kernels.h`.
@@ -47,19 +51,29 @@ These static members are exposed uniformly through
 [`emp::value_traits<T>`](../emp-tool/circuits/value_traits.h)
 (`width()`/`encode`/`decode`/`rebind<Ctx>`) — the single metadata accessor over a
 value's own static members. A type meeting all three contracts satisfies the
-`CircuitValue` concept (`frontend/circuit_fn.h`) and can be `input`/`reveal`'d by a
-context and `compile`/`run` by the frontend.
+`CircuitValue` concept (`frontend/circuit_fn.h`); a session can `input`/`reveal` it
+and the frontend can `compile`/`run` it.
 
 ```cpp
-#include "emp-tool/circuits/typed.h"
+#include "emp-tool/session/clear_session.h"
 using namespace emp;
 
-ClearCtx cx;
-auto a = UInt_T<ClearCtx,32>::constant(cx, 7);
-auto b = UInt_T<ClearCtx,32>::constant(cx, 5);
-auto s = a + b;                         // value-return gates on cx
-auto lt = a < b;                        // -> Bit_T<ClearCtx>
+ClearSession sess;                          // owns a ClearCtx + the I/O boundary
+using UInt32 = ClearSession::UInt<32>;
+auto a = sess.input<UInt32>(ALICE, 7);      // feed inputs through the session
+auto b = sess.input<UInt32>(BOB,   5);
+auto s = a + b;                             // pure value-return gates on the values
+auto lt = a < b;                            // -> Bit_T<ClearCtx>
+uint32_t r = sess.reveal<uint32_t>(s, PUBLIC);   // results leave through the session
 ```
+
+A session exposes `input` (and `input_batch` where applicable), `reveal`, the value
+aliases `UInt<N>`/`Int<N>`/`BitVec<N>`/`Float<W>`/`Bit`, and `ctx()` for
+value/context-level work such as public constants (`UInt32::constant(sess.ctx(),
+7)`). A protocol library provides its own session over a garbled / secret-shared
+context with the same surface — only the constructor (IO, party, preprocessing)
+differs. Pure circuit bodies never call `input`/`reveal`; they take and return
+values.
 
 ### Value surface
 
@@ -73,8 +87,8 @@ auto lt = a < b;                        // -> Bit_T<ClearCtx>
   `as_unsigned`.
 
 **Fixed vs runtime width.** `N > 0` is a fixed-width value and a `CircuitValue`
-(compile-time width, clear codec, wire layout — the form the frontend and protocol
-contexts feed through `input`/`reveal`). `N == 0` (the `runtime_width` sentinel) is
+(compile-time width, clear codec, wire layout — the form a session feeds through
+`input`/`reveal` and the frontend compiles). `N == 0` (the `runtime_width` sentinel) is
 the *same* `UInt_T` / `Int_T` family with the width carried in the wire vector and
 chosen at construction — `UInt_T<Ctx,0>(ctx, width)`, `UInt_T<Ctx,0>::constant(ctx,
 width, v)`. It shares every operator above through the runtime-sized kernels; the
@@ -117,16 +131,18 @@ BooleanContext-native crypto circuits over the value layer:
 
 - [aes128.h](../emp-tool/circuits/crypto/aes128.h) — `aes_sbox`, `aes128_key_schedule`,
   `aes128_encrypt_block`, `aes128_encrypt`, plus `aes128_ctr` (CTR mode, NIST SP
-  800-38A), all over bare `Ctx::Wire` arrays (the bulk state is wires, not `Bit_T`)
-  and taking the `Ctx&` explicitly. Other modes (CBC, …) are caller-composed from
-  the block primitive.
+  800-38A). The public boundary is `BitVec_T`: AES bytes are
+  `BitVec_T<Ctx,8>`, blocks/keys/IVs are `BitVec_T<Ctx,128>`, expanded keys are
+  `BitVec_T<Ctx,1408>`, and CTR maps `BitVec_T<Ctx,N>` to `BitVec_T<Ctx,N>`.
+  Internal helpers keep bulk state as bare `Ctx::Wire` arrays. Other modes
+  (CBC, …) are caller-composed from the block primitive.
 - [sha256.h](../emp-tool/circuits/crypto/sha256.h) — `sha256_compress` (the word-level
-  compression function over `UInt_T<Ctx,32>`) + `sha256<N>` (full padded hash for a
-  compile-time public N-bit message; the padded message buffer is `Ctx::Wire`, the
-  256-bit I/O is `Bit_T<Ctx>`).
+  compression function over `UInt_T<Ctx,32>`) + `sha256(ctx, BitVec_T<Ctx,N>)`
+  returning `BitVec_T<Ctx,256>` (full padded hash for a compile-time public N-bit
+  message).
 - [keccak.h](../emp-tool/circuits/crypto/keccak.h) — `keccak_f1600` (the lane-level
-  permutation over `UInt_T<Ctx,64>[25]`) + `sha3_256<N>` (the 1600-bit sponge state
-  is `Ctx::Wire`, the I/O is `Bit_T<Ctx>`).
+  permutation over `UInt_T<Ctx,64>[25]`) + `sha3_256(ctx, BitVec_T<Ctx,N>)`
+  returning `BitVec_T<Ctx,256>`.
 
 These are the source of truth; the prebuilt `aes128` / `sha256_256` /
 `sha3_256_256` `.empbc` assets (loaded by `ir/builtins.h`) are kept as replay

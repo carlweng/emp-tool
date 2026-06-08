@@ -2,7 +2,7 @@
 #define EMP_IR_EXECUTE_H__
 
 // Replay an IR program over wire-valued slots. Two layers:
-//   circuit::execute_program<Wire,Dispatcher> — the C++17 in/out primitive: seed
+//   circuit::execute_program<Wire,Dispatcher> — the low-level in/out primitive: seed
 //     input slots, walk once via for_each_gate, read output slots. Generic over
 //     the wire slot type and a Dispatcher that realizes each op on slots.
 //   execute_program(ctx, program, inputs[, ws]) — the value-return bridge that
@@ -40,7 +40,7 @@ struct CircuitScratch {
 //   void not_gate(Wire& out, const Wire& a);
 //   void const_gate(Wire& out, bool value);
 //
-// (Pointer+count rather than std::span: the library floor is C++17.)
+	// Pointer+count keeps this low-level primitive easy to call from adapters.
 template <class Wire, class Dispatcher>
 inline void execute_program(const BooleanProgram& p,
                             const Wire* inputs, size_t num_in,

@@ -24,10 +24,10 @@ public:
     template <BooleanContext C2> using rebind = Bit_T<C2>;
     Wire w{};
 
-    // Default ctor: UNINITIALIZED — null context, no usable wire — so that
-    // `Bit_T<Ctx> arr[N];` (or std::array) works; assign / from_wires before any
-    // op. Operating on a default-constructed value is UB, like a moved-from one.
-    // (Same contract for UInt_T / Int_T / Float_T / BitVec_T.)
+    // Default ctor: UNINITIALIZED — null context, no usable wire. This supports
+    // narrow scalar scratch; use BitVec_T for multi-bit values. Assign / from_wires
+    // before any op. Operating on a default-constructed value is UB, like a
+    // moved-from one. (Same contract for UInt_T / Int_T / Float_T / BitVec_T.)
     Bit_T() = default;
     Bit_T(Ctx& c, Wire wire) : ctx_(&c), w(wire) {}
     static Bit_T constant(Ctx& c, bool v) { return Bit_T(c, c.public_bit(v)); }

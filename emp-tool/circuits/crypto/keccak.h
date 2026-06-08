@@ -12,6 +12,7 @@
 // state bit 64*(5y+x)+z with byte_j=j/8, lane=byte_j/8, x=lane%5, y=lane/5,
 // z=8*(byte_j%8)+(j%8).
 
+#include "emp-tool/circuits/bitvec.h"
 #include "emp-tool/circuits/unsigned_int.h"
 #include <array>
 #include <cstddef>
@@ -85,11 +86,14 @@ inline void keccak_f1600(Ctx& ctx, UInt_T<Ctx, 64> A[25]) {
   }
 }
 
+namespace detail {
+
 // SHA3-256 of a fixed public N-bit message (rate 1088, domain 0x06, pad10*1).
-// `in` points at the N message bits (a pointer, so N == 0 is well-formed).
-template <BooleanContext Ctx, std::size_t N>
-inline void sha3_256(Ctx& ctx, Bit_T<Ctx> out[256], const Bit_T<Ctx>* in) {
+// `in` points at the N message wires (a pointer, so N == 0 is well-formed).
+template <BooleanContext Ctx, int N>
+inline void sha3_256_wires(Ctx& ctx, typename Ctx::Wire out[256], const typename Ctx::Wire* in) {
   static_assert(N % 8 == 0, "sha3_256<N>: byte-granular message length only");
+  static_assert(N >= 0, "sha3_256<N>: bit length must be non-negative");
   using W = typename Ctx::Wire;
   using U = UInt_T<Ctx, 64>;
   std::array<W, 1600> S;
@@ -109,7 +113,7 @@ inline void sha3_256(Ctx& ctx, Bit_T<Ctx> out[256], const Bit_T<Ctx>* in) {
   std::size_t index = 0;
   for (std::size_t j = 0; j < N; ++j) {
     const std::size_t s = sha3_state_bit_index(index);
-    S[s] = ctx.xor_gate(S[s], in[j].w);
+    S[s] = ctx.xor_gate(S[s], in[j]);
     if (++index == 1088) { permute(); index = 0; }
   }
 
@@ -120,7 +124,16 @@ inline void sha3_256(Ctx& ctx, Bit_T<Ctx> out[256], const Bit_T<Ctx>* in) {
   S[1087] = ctx.not_gate(S[1087]);
   permute();
 
-  for (std::size_t i = 0; i < 256; ++i) out[i] = Bit_T<Ctx>(ctx, S[sha3_state_bit_index(i)]);
+  for (std::size_t i = 0; i < 256; ++i) out[i] = S[sha3_state_bit_index(i)];
+}
+
+}  // namespace detail
+
+template <BooleanContext Ctx, int N>
+inline BitVec_T<Ctx, 256> sha3_256(Ctx& ctx, const BitVec_T<Ctx, N>& in) {
+  BitVec_T<Ctx, 256> out(ctx);
+  detail::sha3_256_wires<Ctx, N>(ctx, out.w.data(), in.w.data());
+  return out;
 }
 
 }  // namespace crypto

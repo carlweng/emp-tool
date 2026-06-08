@@ -12,6 +12,7 @@
 // big-endian 32-bit words and the digest emitted big-endian, so feeding bytes and
 // reading the 256-bit output reproduces the standard digest.
 
+#include "emp-tool/circuits/bitvec.h"
 #include "emp-tool/circuits/unsigned_int.h"
 #include <cstddef>
 #include <cstdint>
@@ -88,20 +89,23 @@ inline constexpr std::size_t sha256_word_bit_index(std::size_t word, std::size_t
   return 8 * (4 * word + 3 - b / 8) + (b % 8);
 }
 
+namespace detail {
+
 // Full SHA-256 of a fixed public N-bit message (N a multiple of 8). Padding is
-// public, so the circuit shape is fixed per N. `in` points at the N message bits.
-// Writes 256 output bits.
-template <BooleanContext Ctx, std::size_t N>
-inline void sha256(Ctx& ctx, Bit_T<Ctx> out[256], const Bit_T<Ctx>* in) {
+// public, so the circuit shape is fixed per N. `in` points at the N message wires.
+// Writes 256 output wires.
+template <BooleanContext Ctx, int N>
+inline void sha256_wires(Ctx& ctx, typename Ctx::Wire out[256], const typename Ctx::Wire* in) {
   static_assert(N % 8 == 0, "sha256<N>: byte-granular message length only");
+  static_assert(N >= 0, "sha256<N>: bit length must be non-negative");
   using W = typename Ctx::Wire;
   using U = UInt_T<Ctx, 32>;
-  const std::size_t L = N;
+  const std::size_t L = static_cast<std::size_t>(N);
   const std::size_t total = ((L + 1 + 64 + 511) / 512) * 512;
 
   // Padded message, flat LSB-first wires: data bits are inputs, pad bits are public.
   std::vector<W> P(total, ctx.public_bit(false));
-  for (std::size_t i = 0; i < L; ++i) P[i] = in[i].w;
+  for (std::size_t i = 0; i < L; ++i) P[i] = in[i];
   P[L + 7] = ctx.public_bit(true);                   // '1' bit = MSB of the 0x80 pad byte
   const std::size_t lenpos = total - 64;             // 64-bit big-endian length
   for (std::size_t t = 0; t < 8; ++t) {
@@ -125,7 +129,16 @@ inline void sha256(Ctx& ctx, Bit_T<Ctx> out[256], const Bit_T<Ctx>* in) {
 
   for (int i = 0; i < 8; ++i)
     for (int b = 0; b < 32; ++b)
-      out[sha256_word_bit_index(i, b)] = Bit_T<Ctx>(ctx, state[i].w[b]);
+      out[sha256_word_bit_index(i, b)] = state[i].w[b];
+}
+
+}  // namespace detail
+
+template <BooleanContext Ctx, int N>
+inline BitVec_T<Ctx, 256> sha256(Ctx& ctx, const BitVec_T<Ctx, N>& in) {
+  BitVec_T<Ctx, 256> out(ctx);
+  detail::sha256_wires<Ctx, N>(ctx, out.w.data(), in.w.data());
+  return out;
 }
 
 }  // namespace crypto

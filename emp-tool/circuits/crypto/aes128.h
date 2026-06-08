@@ -2,6 +2,7 @@
 #define EMP_CIRCUIT_CRYPTO_AES128_H__
 
 #include "emp-tool/context/concept.h"
+#include "emp-tool/circuits/bitvec.h"
 #include "emp-tool/circuits/unsigned_int.h"   // for the CTR counter increment
 #include <algorithm>
 #include <cstddef>
@@ -11,13 +12,16 @@ namespace emp {
 namespace circuit {
 namespace crypto {
 
-// AES-128 over the BooleanContext value layer, operating on bare Ctx::Wire arrays
-// (the bulk circuit state is wires, not Bit_T): the SBox / xtime / key schedule /
-// block encrypt. Round constants fold in with NOT gates, so no public constants
-// are needed. `aes128_encrypt_block` is the block primitive; `aes128_ctr` provides
-// CTR mode (NIST SP 800-38A) on top of it. Other modes (CBC, …) are
+// AES-128 over the BooleanContext value layer. The public API is BitVec_T-first:
+// blocks, keys, IVs, and byte values are typed bit-vectors. Implementation helpers
+// operate on bare Ctx::Wire arrays so the bulk circuit state does not become
+// Bit_T-per-bit storage. Round constants fold in with NOT gates, so no public
+// constants are needed. `aes128_encrypt` is the block primitive; `aes128_ctr`
+// provides CTR mode (NIST SP 800-38A) on top of it. Other modes (CBC, ...) are
 // caller-composed from the block primitive. Bit convention: LSB at index 0 within
 // each byte; bytes natural order; state column-major 4x4.
+
+namespace detail {
 
 // AES SBox (Boyar-Peralta 2010): 32 ANDs, 81 XORs, 4 NOTs.
 // Public bit convention: U[0]=LSB, U[7]=MSB; S[0]=LSB, S[7]=MSB.
@@ -340,6 +344,64 @@ inline void aes128_ctr(Ctx& ctx, const typename Ctx::Wire key[128], const typena
 		done += blk;
 		if (done < length_bits) ctr_inc_be64<Ctx>(ctx, counter, 1);   // no increment past the last block
 	}
+}
+
+}  // namespace detail
+
+template <BooleanContext Ctx>
+inline BitVec_T<Ctx, 8> aes_sbox(Ctx& ctx, const BitVec_T<Ctx, 8>& byte) {
+	BitVec_T<Ctx, 8> out(ctx);
+	detail::aes_sbox<Ctx>(ctx, byte.w.data(), out.w.data());
+	return out;
+}
+
+template <BooleanContext Ctx>
+inline BitVec_T<Ctx, 8> aes_xtime(Ctx& ctx, const BitVec_T<Ctx, 8>& byte) {
+	BitVec_T<Ctx, 8> out(ctx);
+	detail::aes_xtime<Ctx>(ctx, byte.w.data(), out.w.data());
+	return out;
+}
+
+template <BooleanContext Ctx>
+inline BitVec_T<Ctx, 1408> aes128_key_schedule(Ctx& ctx, const BitVec_T<Ctx, 128>& key) {
+	BitVec_T<Ctx, 1408> expanded(ctx);
+	detail::aes128_key_schedule<Ctx>(ctx, key.w.data(), expanded.w.data());
+	return expanded;
+}
+
+template <BooleanContext Ctx>
+inline BitVec_T<Ctx, 128> aes128_encrypt_block(Ctx& ctx, const BitVec_T<Ctx, 128>& plaintext,
+                                               const BitVec_T<Ctx, 1408>& expanded_key) {
+	BitVec_T<Ctx, 128> ciphertext(ctx);
+	detail::aes128_encrypt_block<Ctx>(ctx, plaintext.w.data(), expanded_key.w.data(), ciphertext.w.data());
+	return ciphertext;
+}
+
+template <BooleanContext Ctx>
+inline BitVec_T<Ctx, 128> aes128_encrypt(Ctx& ctx, const BitVec_T<Ctx, 128>& plaintext,
+                                         const BitVec_T<Ctx, 128>& key) {
+	BitVec_T<Ctx, 128> ciphertext(ctx);
+	detail::aes128_encrypt<Ctx>(ctx, plaintext.w.data(), key.w.data(), ciphertext.w.data());
+	return ciphertext;
+}
+
+template <BooleanContext Ctx>
+inline BitVec_T<Ctx, 128> ctr_inc_be64(Ctx& ctx, const BitVec_T<Ctx, 128>& block, uint64_t delta) {
+	BitVec_T<Ctx, 128> out(block);
+	detail::ctr_inc_be64<Ctx>(ctx, out.w.data(), delta);
+	return out;
+}
+
+template <BooleanContext Ctx, int N>
+inline BitVec_T<Ctx, N> aes128_ctr(Ctx& ctx, const BitVec_T<Ctx, 128>& key,
+                                   const BitVec_T<Ctx, 128>& iv,
+                                   const BitVec_T<Ctx, N>& in,
+                                   uint64_t start_chunk = 0) {
+	static_assert(N >= 0, "aes128_ctr<N>: bit length must be non-negative");
+	BitVec_T<Ctx, N> out(ctx);
+	detail::aes128_ctr<Ctx>(ctx, key.w.data(), iv.w.data(), in.w.data(), out.w.data(),
+	                        static_cast<std::size_t>(N), start_chunk);
+	return out;
 }
 
 }  // namespace crypto

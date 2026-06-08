@@ -3,8 +3,8 @@
 A reference for AI agents asked to take ordinary code and produce a
 boolean-circuit equivalent that runs on **emp-tool**'s circuit layer. You
 write the logic over the context-bound typed values
-(`Bit_T<Ctx>` / `UInt_T<Ctx,N>` / `Int_T<Ctx,N>` / `Float_T<Ctx,W>`,
-[typed.h](../emp-tool/circuits/typed.h)) — usually as a
+(`Bit_T<Ctx>` / `BitVec_T<Ctx,N>` / `UInt_T<Ctx,N>` / `Int_T<Ctx,N>` /
+`Float_T<Ctx,W>`, [typed.h](../emp-tool/circuits/typed.h)) — usually as a
 `template<class Ctx>` circuit body — and the same code runs on any
 `BooleanContext`: `ClearCtx` (plaintext), the garbled `SH2PCCtx`, etc.
 
@@ -122,38 +122,40 @@ the other family (`from_wires`/`pack_wires`) — no gates.
 
 ## 3. Inputs, outputs, parties
 
-I/O is the **context's** job, around the circuit body. A pure circuit body
-takes its inputs as arguments and returns its output; it does no `input` /
-`reveal` of its own. The caller feeds inputs and reveals outputs on the
-context.
+I/O is the **session's** job, around the circuit body. A pure circuit body takes
+its inputs as arguments and returns its output; it does no `input` / `reveal` of
+its own. A session owns the I/O boundary (and the protocol state — IO, party,
+preprocessing) over a pure context; the protocol library provides it, with
+emp-tool's `ClearSession` as the reference. `sess` below is that session.
 
 ### 3.1. Feeding input values
 
 ```cpp
 using S32 = Int_T<SH2PCCtx,32>;
 using U32 = UInt_T<SH2PCCtx,32>;
-auto a = ctx.input<S32>(ALICE,  alice_value);   // owned by Alice
-auto b = ctx.input<U32>(BOB,    bob_value);     // owned by Bob
-auto k = ctx.input<S32>(PUBLIC, 17);            // both parties agree on the literal
+auto a = sess.input<S32>(ALICE,  alice_value);   // owned by Alice
+auto b = sess.input<U32>(BOB,    bob_value);     // owned by Bob
+auto k = sess.input<S32>(PUBLIC, 17);            // both parties agree on the literal
 ```
 
-`ctx.input<T>(owner, clear)` is called by both parties; the `clear` argument
-on a non-`PUBLIC` owner is **only read on that party's process**. The other
-party passes a dummy of the same type; the protocol routes the real bits
-through OT. A `PUBLIC` constant inside a body uses `T::constant(ctx, v)`
-instead.
+`sess.input<T>(owner, clear)` is called by both parties; the `clear` argument on a
+non-`PUBLIC` owner is **only read on that party's process**. The other party passes
+a dummy of the same type; the protocol routes the real bits through OT. A `PUBLIC`
+constant inside a body uses `T::constant(sess.ctx(), v)` instead.
 
 ### 3.2. Revealing outputs
 
 ```cpp
-uint64_t r = (uint64_t)ctx.reveal(result, PUBLIC);  // both parties see it
-auto     s = ctx.reveal(result, ALICE);             // only Alice
+uint64_t r = (uint64_t)sess.reveal(result, PUBLIC);  // both parties see it
+auto     s = sess.reveal(result, ALICE);             // only Alice (may be std::optional)
 ```
 
-`ctx.reveal(value, recipient)` is the *only* way to get a host-language value
-back from a circuit value. Revealing a secret comparison to `PUBLIC` **leaks
-that bit to both parties**. This is sometimes intentional and sometimes a
-security bug — the translator must not insert reveals it wasn't asked for.
+`sess.reveal(value, recipient)` is the *only* way to get a host-language value back
+from a circuit value (a protocol session may return `std::optional<T>` to a
+non-`PUBLIC` recipient, since only that party learns it). Revealing a secret
+comparison to `PUBLIC` **leaks that bit to both parties**. This is sometimes
+intentional and sometimes a security bug — the translator must not insert reveals
+it wasn't asked for.
 
 ### 3.3. Single binary
 
@@ -325,7 +327,8 @@ fixed-point work, prefer `Int_T` with a chosen scale.
 
 ### 4.12. Crypto primitives (AES-128, SHA3-256)
 
-Don't hand-roll AES or SHA3 in `Bit`/integer ops. emp-tool ships pre-built
+Don't hand-roll AES or SHA3 in scalar `Bit_T`/integer ops. Use the
+`emp::circuit::crypto` kernels over `BitVec_T` blocks/messages. emp-tool ships pre-built
 circuits as native `.empbc` programs; load one and replay it on your context
 (see [frontend.md](frontend.md) and the `.empbc` section of the README), or
 `compile` a body that calls them. Each input/output bit is a wire — there are
@@ -373,7 +376,8 @@ UB-avoidance dance will produce extra gates for no reason.
 ## 6. Running the circuit on a context
 
 The circuit body is written over a `BooleanContext`; you pick the context at
-the call site. I/O is the context's job, around the body.
+the call site. I/O is the session's job, around the body — the session owns the
+`input`/`reveal` boundary over a pure context.
 
 ### 6.1. Plaintext (for testing translations)
 
@@ -383,16 +387,15 @@ verify a translation matches the original C++ / Python before standing up two
 real parties:
 
 ```cpp
-#include "emp-tool/circuits/typed.h"
+#include "emp-tool/session/clear_session.h"
 using namespace emp;
 
-ClearCtx cx;
-using U32 = UInt_T<ClearCtx,32>;
-auto a = U32::constant(cx, av);          // plaintext: feed values directly
-auto b = U32::constant(cx, bv);
+ClearSession sess;                       // owns a pure ClearCtx + the I/O boundary
+using U32 = ClearSession::UInt<32>;
+auto a = sess.input<U32>(ALICE, av);     // plaintext: a session input is just a public wire
+auto b = sess.input<U32>(BOB, bv);
 auto c = a + b;
-bool bits[32]; for (int i = 0; i < 32; ++i) bits[i] = c.w[i] & 1;
-uint64_t r = U32::decode(bits);
+uint64_t r = sess.reveal(c, PUBLIC);     // results leave through the session
 ```
 
 To count AND gates — the right metric for circuit cost (XOR / NOT are free in
@@ -403,9 +406,11 @@ program (see [frontend.md](frontend.md)).
 
 ### 6.2. Semi-honest 2PC
 
-For end-to-end semi-honest 2PC use **emp-sh2pc**'s `SH2PCCtx` — a single
-`BooleanContext` that owns all protocol state (OT / Delta / PRG / half-gate)
-and exposes typed `input` / `reveal`:
+For end-to-end semi-honest 2PC use **emp-sh2pc**'s `SH2PCCtx`, which owns all
+protocol state (OT / Delta / PRG / half-gate) and exposes typed `input` /
+`reveal` directly — emp-sh2pc currently bundles the session's I/O role onto its
+context, so for it you feed and reveal on the context itself (emp-tool's
+`ClearSession` keeps the pure context and the I/O session separate):
 
 ```cpp
 NetIO io(party == ALICE ? nullptr : "127.0.0.1", port);
@@ -477,10 +482,10 @@ Refuse, or flag for the user, when the source program does any of these:
 
 Before declaring a translation done, verify each of:
 
-- [ ] Every input is fed via `ctx.input<T>(owner, …)` with an owning
-      party (`ALICE`, `BOB`, or `PUBLIC`).
-- [ ] Every output is `ctx.reveal`'d to the intended recipient — and **no
-      one else**.
+- [ ] Every input is fed via the session's `input<T>(owner, …)` with an
+      owning party (`ALICE`, `BOB`, or `PUBLIC`).
+- [ ] Every output is `reveal`'d (through the session) to the intended
+      recipient — and **no one else**.
 - [ ] No host-language `if` / `while` / `for` / ternary branches on a
       value derived from a secret input. (Greppable: every `if` and
       `while` in the translated source is on a public counter or a
@@ -574,8 +579,8 @@ Notes on what changed:
 ## 10. Quick reference: API surface
 
 The value types are over a `BooleanContext` `Ctx`. Make a public constant with
-`T::constant(ctx, v)`; feed a secret with `ctx.input<T>(owner, v)`; open with
-`ctx.reveal(v, recipient)`.
+`T::constant(ctx, v)`; feed a secret through the session with `input<T>(owner,
+v)`; open with `reveal(v, recipient)`.
 
 ```
 Bit_T<Ctx>                                 // wire-level boolean (clear: bool)
@@ -609,6 +614,14 @@ Float_T<Ctx,W>                             // IEEE binary{16,32,64} (clear: host
   abs(), copysign(rhs), select(sel, o)
   operator[i] -> Bit_T (i in [0,W))
   constant(ctx, host_float) / from_bits(ctx, bits)
+
+BitVec_T<Ctx,N>                            // fixed bit-vector (clear: std::array<bool,N>)
+  & | ^ ~
+  == != -> Bit_T
+  select(sel, t) -> BitVec_T
+  << >> by public int                       // logical shifts
+  slice<Lo,Hi>(), concat(rhs), as_uint()
+  operator[i] -> Bit_T (i in [0,N))
 ```
 
 Constants in `emp::`: `PUBLIC = 0`, `ALICE = 1`, `BOB = 2`. Party arguments
@@ -620,7 +633,8 @@ The context is passed explicitly — there is no global backend.
 (garbled 2PC) are all `BooleanContext`s; the same typed body runs on each.
 
 The crypto circuits live in `emp::circuit::crypto` (`circuits/crypto/aes128.h` /
-`sha256.h` / `keccak.h`) as context-generic kernels; the `fp<W>_*` float suite and
+`sha256.h` / `keccak.h`) as context-generic kernels with `BitVec_T` message/block
+interfaces; the `fp<W>_*` float suite and
 the fixed-width AES/SHA assets also ship as native `.empbc` programs you can load
 and replay on your context (see [frontend.md](frontend.md) and the `.empbc` section
 of the README).
@@ -630,7 +644,7 @@ of the README).
 ## 11. Where to read more
 
 * `emp-tool/circuits/typed.h` — the context-bound value types
-  (`Bit_T`/`UInt_T`/`Int_T`/`Float_T<Ctx>`) and the `emp::kernel`
+  (`Bit_T`/`BitVec_T`/`UInt_T`/`Int_T`/`Float_T<Ctx>`) and the `emp::kernel`
   arithmetic kernels. The header is the source of truth for the op set.
 * `emp-tool/context/context.h` — the `BooleanContext` concept and the
   contexts (`ClearCtx`, `RecordCtx`, `CountCtx`, `DigestCtx`), plus

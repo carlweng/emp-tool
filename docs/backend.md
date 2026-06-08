@@ -8,21 +8,29 @@ is passed explicitly and the gate ops are statically dispatched and inlineable. 
 concept and the built-in analysis contexts (`ClearCtx` / `CountCtx` / `DigestCtx` /
 `RecordCtx`).
 
-## Implementing a context (a "backend")
+## Implementing a backend: a pure context + a session
 
-A protocol realizes a `BooleanContext` and adds typed I/O around it. The pattern,
-as in emp-sh2pc's `SH2PCCtx` and emp-ag2pc's `AG2PCCtx`:
+A protocol provides two pieces. The **context** is pure circuit execution — only
+the four gate ops, no I/O — like emp-sh2pc's `SH2PCCtx` and emp-ag2pc's `AG2PCCtx`:
 
 - pick a `Wire` (a garbled label, a wire id, …) that is `std::regular`;
 - implement the four gate ops (eager crypto, or recording into an IR — whatever the
-  protocol does per gate);
-- own the protocol state (IO, OT, keys) on the context itself;
-- expose `ctx.input<T>(owner, clear)` / `ctx.reveal(value, recipient)` for the
-  clear↔circuit boundary, routed through `value_traits<T>` (width + codec).
+  protocol does per gate); optionally `and_many` for batched AND layers.
 
-Such a context automatically works with the [frontend](frontend.md) — live `run`,
+The **session** owns the clear↔circuit I/O boundary and the protocol state (IO,
+party, OT/preprocessing, batching), wrapping a context — like emp-tool's
+`ClearSession` (`session/clear_session.h`):
+
+- hold the context and expose `ctx()` for value/context-level work;
+- expose `input<T>(owner, clear)` (and `input_batch` where applicable) /
+  `reveal(value, recipient)`, routed through `value_traits<T>` (width + codec). A
+  protocol's `reveal` may return `std::optional<T>` when only the recipient learns
+  the value.
+
+The context automatically works with the [frontend](frontend.md) — live `run`,
 `compile`, and replay over any circuit value — and with the analysis contexts, with
-no frontend changes. That uniformity is the payoff of the seam.
+no frontend changes. Pure circuit bodies take and return values and never touch
+I/O; only the session does. That uniformity is the payoff of the seam.
 
 ## Garbling primitives (`execution/`)
 

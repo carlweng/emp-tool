@@ -62,28 +62,28 @@ static void check_builtin(const char* name, int nin, int nout,
 int main() {
     // aes128: 256 inputs = pt[0..127] ‖ key[128..255] -> 128-bit ciphertext.
     check_builtin("aes128", 256, 128, [](const std::vector<bool>& in, std::vector<uint8_t>& out) {
-        ClearCtx cx; using W = ClearCtx::Wire;
-        W pt[128], key[128], ct[128];
-        for (int i = 0; i < 128; ++i) pt[i]  = cx.public_bit(in[i]);
-        for (int i = 0; i < 128; ++i) key[i] = cx.public_bit(in[128 + i]);
-        aes128_encrypt<ClearCtx>(cx, pt, key, ct);
-        for (int i = 0; i < 128; ++i) out[i] = ct[i] & 1;
+        ClearCtx cx;
+        BitVec_T<ClearCtx, 128> pt(cx), key(cx);
+        for (int i = 0; i < 128; ++i) pt.w[i]  = cx.public_bit(in[i]);
+        for (int i = 0; i < 128; ++i) key.w[i] = cx.public_bit(in[128 + i]);
+        auto ct = aes128_encrypt(cx, pt, key);
+        for (int i = 0; i < 128; ++i) out[i] = ct.w[i] & 1;
     });
 
     check_builtin("sha256_256", 256, 256, [](const std::vector<bool>& in, std::vector<uint8_t>& out) {
-        ClearCtx cx; using B = Bit_T<ClearCtx>;
-        B m[256], o[256];
-        for (int i = 0; i < 256; ++i) m[i] = B(cx, in[i] ? 1 : 0);
-        sha256<ClearCtx, 256>(cx, o, m);
-        for (int i = 0; i < 256; ++i) out[i] = o[i].w & 1;
+        ClearCtx cx;
+        BitVec_T<ClearCtx, 256> m(cx);
+        for (int i = 0; i < 256; ++i) m.w[i] = cx.public_bit(in[i]);
+        auto o = sha256(cx, m);
+        for (int i = 0; i < 256; ++i) out[i] = o.w[i] & 1;
     });
 
     check_builtin("sha3_256_256", 256, 256, [](const std::vector<bool>& in, std::vector<uint8_t>& out) {
-        ClearCtx cx; using B = Bit_T<ClearCtx>;
-        B m[256], o[256];
-        for (int i = 0; i < 256; ++i) m[i] = B(cx, in[i] ? 1 : 0);
-        sha3_256<ClearCtx, 256>(cx, o, m);
-        for (int i = 0; i < 256; ++i) out[i] = o[i].w & 1;
+        ClearCtx cx;
+        BitVec_T<ClearCtx, 256> m(cx);
+        for (int i = 0; i < 256; ++i) m.w[i] = cx.public_bit(in[i]);
+        auto o = sha3_256(cx, m);
+        for (int i = 0; i < 256; ++i) out[i] = o.w[i] & 1;
     });
 
     printf("test_builtin_circuits: %s\n", bad ? "FAILED" : "all builtins replay == native kernels — PASS");

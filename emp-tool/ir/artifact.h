@@ -2,9 +2,9 @@
 #define EMP_IR_ARTIFACT_H__
 
 // The canonical persisted/compiled circuit: a BooleanProgram plus the argument
-// shape needed to feed it. NO baked analyses — count/liveness/schedule/layout
+// signature needed to feed it. NO baked analyses — count/liveness/schedule/layout
 // are free functions over the program (ir/passes.h), cached separately by
-// the optional frontend `Circuit` wrapper when wanted. C++17 (lib-includable).
+// the optional frontend `Circuit` wrapper when wanted.
 
 #include "emp-tool/ir/program.h"
 #include "emp-tool/ir/validate.h"

@@ -10,6 +10,9 @@
 
 namespace emp {
 
+// ClearCtx is pure circuit execution — gates only, no protocol I/O. Input and
+// reveal are a Session concern (session/clear_session.h owns a ClearCtx and the
+// I/O boundary); ClearCtx stays usable on its own for internal / analysis work.
 struct ClearCtx {
     using Wire = uint8_t;
     Wire public_bit(bool v)       { return v ? 1 : 0; }

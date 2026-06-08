@@ -21,9 +21,9 @@
 Foundational primitives for the emp-toolkit family: SIMD `block` types,
 fast AES / PRG / PRP / hash / GF(2^128) kernels, OpenSSL-backed elliptic
 curve ops, IO channels, and a boolean-circuit layer built around
-context-bound typed values (`Bit_T<Ctx>` / `UInt_T<Ctx,N>` /
-`Int_T<Ctx,N>` / `Float_T<Ctx,W>`) with a compile-once / run-on-any-context
-frontend. A `BooleanContext` is the execution target: plaintext evaluation
+context-bound typed values (`Bit_T<Ctx>` / `BitVec_T<Ctx,N>` /
+`UInt_T<Ctx,N>` / `Int_T<Ctx,N>` / `Float_T<Ctx,W>`) with a compile-once /
+run-on-any-context frontend. A `BooleanContext` is the execution target: plaintext evaluation
 (`ClearCtx`), program recording (`RecordCtx`), and protocol contexts such as
 emp-sh2pc's garbled `SH2PCCtx`.
 
@@ -103,15 +103,18 @@ emp-tool/
 ├── core/         block, constants, utils
 ├── crypto/       PRG, PRP, AES, Hash, CCRH, MITCCRH, f2k, ec (Scalar/Point/ECGroup)
 ├── io/           IOChannel, NetIO, TLSIO, TraceIO
-├── circuits/     BooleanContext + typed values (Bit_T/UInt_T/Int_T/Float_T<Ctx>); BooleanProgram IR + .empbc format
+├── context/      BooleanContext concept + Clear/Record/Count/Digest contexts
+├── circuits/     typed values (Bit_T/BitVec_T/UInt_T/Int_T/Float_T<Ctx>) + circuit kernels
+├── ir/           BooleanProgram IR + .empbc assets/replay/passes
 ├── frontend/     compile / run pure circuit functions on any context (emp::frontend)
 └── third_party/  ThreadPool, sse2neon
 ```
 
 The canonical circuit value layer is the context-bound typed values in
 `circuits/typed.h`: `Bit_T<Ctx>`, `UInt_T<Ctx,N>`, `Int_T<Ctx,N>`,
-`Float_T<Ctx,W>`, each templated on a `BooleanContext` `Ctx`. There is no global
-backend — every value carries its context and issues value-return gates on it.
+`Float_T<Ctx,W>`, and `BitVec_T<Ctx,N>`, each templated on a `BooleanContext`
+`Ctx`. There is no global backend — every value carries its context and issues
+value-return gates on it.
 
 The numeric layer makes signedness explicit: `UInt_T<Ctx,N>` wraps mod 2^N
 matching `uint{N}_t`, `Int_T<Ctx,N>` is two's-complement matching `int{N}_t` on
@@ -228,38 +231,35 @@ cleartext with no crypto, so a circuit's gate counts match what a protocol
 context would run exactly. Build typed values over it and operate directly:
 
 ```cpp
-#include <emp-tool/circuits/typed.h>
+#include <emp-tool/session/clear_session.h>
 using namespace emp;
 
-ClearCtx cx;
-using S32 = Int_T<ClearCtx, 32>;
+ClearSession sess;                               // owns a ClearCtx + the I/O boundary
+using S32 = ClearSession::Int<32>;
 
-auto a = S32::constant(cx, 7);
-auto b = S32::constant(cx, 35);
-auto c = a * b + S32::constant(cx, 1);           // value-return gates on cx
+auto a = sess.input<S32>(ALICE, 7);              // feed inputs through the session
+auto b = sess.input<S32>(BOB,   35);
+auto c = a * b + S32::constant(sess.ctx(), 1);   // pure value-return gates; +1 is a public constant
 
-// On ClearCtx a wire IS the cleartext bit (uint8_t 0/1), so the result reads
-// straight off the value's wires via the type's clear codec:
-bool bits[32]; for (int i = 0; i < 32; ++i) bits[i] = c.w[i] & 1;
-std::cout << S32::decode(bits) << "\n";          // 246
+std::cout << sess.reveal(c, PUBLIC) << "\n";     // results leave through the session -> 246
 
 // Wrap on overflow is well-defined and matches int32_t / uint32_t hardware:
-using U32 = UInt_T<ClearCtx, 32>;
-auto big = U32::constant(cx, UINT32_MAX);
-auto wrapped = big + U32::constant(cx, 1u);       // == 0
+using U32 = ClearSession::UInt<32>;
+auto big = sess.input<U32>(ALICE, UINT32_MAX);
+auto wrapped = big + U32::constant(sess.ctx(), 1u);   // == 0
 ```
 
 `UInt_T` wraps mod 2^N, `Int_T` is two's-complement, `Float_T` is IEEE
 binary{16,32,64}, and comparisons return `Bit_T<ClearCtx>`. The same typed
-code runs on any other `BooleanContext` (e.g. the garbled `SH2PCCtx`)
-unchanged — there the wires are labels, so values leave the circuit only
-through `ctx.reveal(...)`.
+circuit code runs over any `BooleanContext` unchanged; only the session that
+feeds inputs and reveals outputs differs — a protocol session over a garbled
+context in place of `ClearSession`. Pure circuit bodies never do I/O.
 
 ### Circuit frontend: compile once, run on any context
 
 Write a **pure circuit function** (inputs are arguments, the output is the return
-value — no `input`/`reveal` inside) over the typed values `Bit/UInt/Int/Float<Ctx>`.
-Call it live, or **compile it once into a context-free `Circuit`** and `run` it on
+value — no `input`/`reveal` inside) over the typed values
+`Bit/BitVec/UInt/Int/Float<Ctx>`. Call it live, or **compile it once into a context-free `Circuit`** and `run` it on
 any context — plaintext, garbled 2PC, ZK — with no global backend. I/O is the
 context's job, around the circuit. Add `#include <emp-tool/frontend/circuit_fn.h>`.
 

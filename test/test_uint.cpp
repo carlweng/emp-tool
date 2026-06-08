@@ -1,64 +1,300 @@
-// UInt_T<Ctx,N> over ClearCtx: arithmetic, comparisons, shifts/rotates, and the
-// width-changing views.
-#include "emp-tool/circuits/unsigned_int.h"
-#include "emp-tool/context/clear.h"
+// UInt_T<ClearCtx,N>: a worked example first, then deterministic correctness
+// sweeps cross-checked against host uint32_t (matching the kernels' wrap/trunc
+// semantics). Inputs are fed and results revealed through a ClearSession — the
+// I/O boundary; the values themselves are pure context-bound circuit values.
+// Read example() to see how a normal user writes UInt_T code.
+#include "emp-tool/session/clear_session.h"
+#include "emp-tool/core/constants.h"
+#include <array>
 #include <cstdint>
 #include <cstdio>
+#include <random>
+
 using namespace emp;
 
-static int bad = 0;
-static void chk(const char* w, bool ok) { if (!ok) { printf("  [FAIL] %s\n", w); ++bad; } }
-template <int N> static uint64_t rd(const UInt_T<ClearCtx, N>& u) {
-  uint64_t v = 0; for (int i = 0; i < N; ++i) v |= (uint64_t)(u.w[i] & 1) << i; return v;
+using UInt32  = ClearSession::UInt<32>;
+using DynUInt = ClearSession::UInt<0>;   // runtime-width form (in-circuit only)
+
+// ---- check helpers -------------------------------------------------------
+
+static int g_fail = 0;
+static void check(const char* name, bool ok) {
+  if (!ok) { printf("  [FAIL] %s\n", name); ++g_fail; }
+}
+static void check_u(const char* name, uint64_t got, uint64_t want) {
+  if (got != want) {
+    printf("  [FAIL] %s  got=%llu want=%llu\n", name,
+           (unsigned long long)got, (unsigned long long)want);
+    ++g_fail;
+  }
+}
+// Low-level: read a runtime-width clear value straight off the wires. Runtime
+// values are in-circuit only (not a session I/O type), so this is a deliberate
+// low-level peek, not the user-facing path.
+static uint64_t rd_dyn(const DynUInt& u) {
+  uint64_t v = 0; for (int i = 0; i < u.width(); ++i) v |= (uint64_t)(u.w[i] & 1) << i; return v;
+}
+
+// Host references with the kernels' wrap semantics (mod 2^32).
+static uint32_t shl_w(uint32_t a, unsigned s) { return s >= 32 ? 0u : a << s; }
+static uint32_t shr_w(uint32_t a, unsigned s) { return s >= 32 ? 0u : a >> s; }
+static uint32_t rotl_w(uint32_t a, unsigned s) { s &= 31; return s ? (a << s) | (a >> (32 - s)) : a; }
+static uint32_t rotr_w(uint32_t a, unsigned s) { s &= 31; return s ? (a >> s) | (a << (32 - s)) : a; }
+
+// ---- example: how a user actually writes UInt_T code ---------------------
+
+static void example() {
+  ClearSession sess;
+  auto a = sess.input<UInt32>(ALICE, 7);
+  auto b = sess.input<UInt32>(BOB, 3);
+
+  check("ex sum",      sess.reveal(a + b, PUBLIC) == 10);
+  check("ex diff",     sess.reveal(a - b, PUBLIC) == 4);
+  check("ex product",  sess.reveal(a * b, PUBLIC) == 21);
+  check("ex quotient", sess.reveal(a / b, PUBLIC) == 2);
+  check("ex mod",      sess.reveal(a % b, PUBLIC) == 1);
+  check("ex ge",       sess.reveal(a >= b, PUBLIC) == true);
+  check("ex select",   sess.reveal(a.select((a < b), b), PUBLIC) == 7);  // a>=b so keep a
+
+  // Overflow wraps mod 2^32 like a hardware adder.
+  auto big = sess.input<UInt32>(ALICE, UINT32_MAX);
+  auto one = sess.input<UInt32>(BOB, 1);
+  check("ex wrap",     sess.reveal<uint32_t>(big + one, PUBLIC) == 0u);
+}
+
+// ---- arithmetic / bitwise random sweep (width 32) ------------------------
+
+static void sweep_arith() {
+  ClearSession sess;
+  std::mt19937_64 rng(0xA1CE12345678ULL);
+  for (int i = 0; i < 4000; ++i) {
+    uint32_t ia = (uint32_t)rng(), ib = (uint32_t)rng();
+    auto a = sess.input<UInt32>(ALICE, ia), b = sess.input<UInt32>(BOB, ib);
+    check_u("add", sess.reveal<uint32_t>(a + b, PUBLIC), (uint32_t)(ia + ib));
+    check_u("sub", sess.reveal<uint32_t>(a - b, PUBLIC), (uint32_t)(ia - ib));
+    check_u("mul", sess.reveal<uint32_t>(a * b, PUBLIC), (uint32_t)(ia * ib));
+    check_u("and", sess.reveal<uint32_t>(a & b, PUBLIC), ia & ib);
+    check_u("or",  sess.reveal<uint32_t>(a | b, PUBLIC), ia | ib);
+    check_u("xor", sess.reveal<uint32_t>(a ^ b, PUBLIC), ia ^ ib);
+    check_u("not", sess.reveal<uint32_t>(~a, PUBLIC), ~ia);
+
+    // Division/mod by zero saturates in the kernel; only compare on nonzero.
+    if (ib != 0) {
+      check_u("div", sess.reveal<uint32_t>(a / b, PUBLIC), ia / ib);
+      check_u("mod", sess.reveal<uint32_t>(a % b, PUBLIC), ia % ib);
+    }
+  }
+}
+
+// ---- div/mod by zero: the documented saturating boundary ------------------
+
+static void sweep_div_zero() {
+  ClearSession sess;
+  // div_full saturates the quotient to all-ones on divide-by-zero.
+  auto a = sess.input<UInt32>(ALICE, 12345u), z = sess.input<UInt32>(BOB, 0u);
+  check_u("div_by0 -> UINT32_MAX", sess.reveal<uint32_t>(a / z, PUBLIC), UINT32_MAX);
+  // Remainder of x/0 is x (no subtraction succeeds).
+  check_u("mod_by0 -> dividend",   sess.reveal<uint32_t>(a % z, PUBLIC), 12345u);
+}
+
+// ---- comparisons random sweep --------------------------------------------
+
+static void sweep_compare() {
+  ClearSession sess;
+  std::mt19937_64 rng(0xC0FFEE99ULL);
+  for (int i = 0; i < 4000; ++i) {
+    uint32_t ia = (uint32_t)rng(), ib = (uint32_t)rng();
+    // Occasionally force equality to exercise the == / <= / >= edge.
+    if ((i & 7) == 0) ib = ia;
+    auto a = sess.input<UInt32>(ALICE, ia), b = sess.input<UInt32>(BOB, ib);
+    check("cmp <",  sess.reveal(a < b, PUBLIC)  == (ia < ib));
+    check("cmp <=", sess.reveal(a <= b, PUBLIC) == (ia <= ib));
+    check("cmp >",  sess.reveal(a > b, PUBLIC)  == (ia > ib));
+    check("cmp >=", sess.reveal(a >= b, PUBLIC) == (ia >= ib));
+    check("cmp ==", sess.reveal(a == b, PUBLIC) == (ia == ib));
+    check("cmp !=", sess.reveal(a != b, PUBLIC) == (ia != ib));
+  }
+}
+
+// ---- public shifts & rotates, incl. amount >= width ----------------------
+
+static void sweep_shift_public() {
+  ClearSession sess;
+  std::mt19937_64 rng(0x5417EDULL);
+  const uint32_t vs[] = {0u, 1u, 0x80000000u, UINT32_MAX, 0x55555555u, 0xAAAAAAAAu};
+  for (uint32_t v : vs) {
+    for (int s = 0; s <= 40; ++s) {        // s > 32 must zero (<<, >>)
+      auto a = sess.input<UInt32>(ALICE, v);
+      check_u("shl pub", sess.reveal<uint32_t>(a << s, PUBLIC), shl_w(v, (unsigned)s));
+      check_u("shr pub", sess.reveal<uint32_t>(a >> s, PUBLIC), shr_w(v, (unsigned)s));
+    }
+    for (int s = 0; s <= 40; ++s) {        // rotates are mod-32
+      auto a = sess.input<UInt32>(ALICE, v);
+      check_u("rotl", sess.reveal<uint32_t>(a.rotl(s), PUBLIC), rotl_w(v, (unsigned)s));
+      check_u("rotr", sess.reveal<uint32_t>(a.rotr(s), PUBLIC), rotr_w(v, (unsigned)s));
+    }
+  }
+  // A few random rotate amounts for good measure.
+  for (int i = 0; i < 500; ++i) {
+    uint32_t v = (uint32_t)rng();
+    int s = (int)(rng() % 64);
+    auto a = sess.input<UInt32>(ALICE, v);
+    check_u("rotl rnd", sess.reveal<uint32_t>(a.rotl(s), PUBLIC), rotl_w(v, (unsigned)s));
+    check_u("rotr rnd", sess.reveal<uint32_t>(a.rotr(s), PUBLIC), rotr_w(v, (unsigned)s));
+  }
+}
+
+// ---- secret-amount (barrel) shifts, incl. overflow ----------------------
+
+static void sweep_shift_secret() {
+  ClearSession sess;
+  const uint32_t vs[] = {0u, 1u, 0x80000000u, UINT32_MAX, 0x55555555u, 0xAAAAAAAAu};
+  for (uint32_t v : vs) {
+    // 0..64 — values >= 32 (and the high shamt bits beyond log2(32)) must zero.
+    for (int s = 0; s <= 64; ++s) {
+      auto a  = sess.input<UInt32>(ALICE, v);
+      auto sh = sess.input<UInt32>(BOB, (uint32_t)s);
+      check_u("shl sec", sess.reveal<uint32_t>(a << sh, PUBLIC), shl_w(v, (unsigned)s));
+      check_u("shr sec", sess.reveal<uint32_t>(a >> sh, PUBLIC), shr_w(v, (unsigned)s));
+    }
+  }
+}
+
+// ---- boundary cases ------------------------------------------------------
+
+static void sweep_boundaries() {
+  ClearSession sess;
+  struct { uint32_t a, b; } cases[] = {
+    {0u, 0u}, {0u, 1u}, {1u, 0u},
+    {UINT32_MAX, 1u}, {1u, UINT32_MAX},
+    {UINT32_MAX, UINT32_MAX}, {0x80000000u, 0x80000000u},
+  };
+  for (auto c : cases) {
+    auto A = sess.input<UInt32>(ALICE, c.a), B = sess.input<UInt32>(BOB, c.b);
+    check_u("bnd add", sess.reveal<uint32_t>(A + B, PUBLIC), (uint32_t)(c.a + c.b));
+    check_u("bnd sub", sess.reveal<uint32_t>(A - B, PUBLIC), (uint32_t)(c.a - c.b));
+    check_u("bnd mul", sess.reveal<uint32_t>(A * B, PUBLIC), (uint32_t)(c.a * c.b));
+    if (c.b != 0) {
+      check_u("bnd div", sess.reveal<uint32_t>(A / B, PUBLIC), c.a / c.b);
+      check_u("bnd mod", sess.reveal<uint32_t>(A % B, PUBLIC), c.a % c.b);
+    }
+  }
+}
+
+// ---- width-changing views: zext/trunc/slice/extract/concat ---------------
+
+static void sweep_views() {
+  ClearSession sess;
+  std::mt19937_64 rng(0x5EED5EEDULL);
+  for (int i = 0; i < 1000; ++i) {
+    uint32_t v = (uint32_t)rng();
+    auto a = sess.input<UInt32>(ALICE, v);
+
+    check_u("zext<48>",  sess.reveal(a.zext<48>(), PUBLIC), (uint64_t)v);
+    check_u("trunc<16>", sess.reveal(a.trunc<16>(), PUBLIC), v & 0xffffu);
+    // slice<8,24> picks bits [8,24) -> a 16-bit value.
+    check_u("slice<8,24>", sess.reveal(a.slice<8, 24>(), PUBLIC), (v >> 8) & 0xffffu);
+    // extract<Base,Width> is slice<Base,Base+Width>.
+    check_u("extract<4,12>", sess.reveal(a.extract<4, 12>(), PUBLIC), (v >> 4) & 0xfffu);
+
+    // concat: lo bits are *this, hi bits are the argument (low-at-index-0).
+    UInt_T<ClearCtx, 16> lo = a.trunc<16>();
+    auto hi = sess.input<UInt_T<ClearCtx, 16>>(BOB, (uint16_t)(v >> 16));
+    check_u("concat", sess.reveal(lo.concat(hi), PUBLIC), (uint64_t)v);
+  }
+}
+
+// ---- hamming_weight / leading_zeros / as_signed --------------------------
+
+static void sweep_bitcount_signed() {
+  ClearSession sess;
+  const uint32_t vs[] = {0u, 1u, UINT32_MAX, 0x80000000u, 0x0F0F0F0Fu, 0xCAFEBABEu, 7u, 0x7FFFFFFFu};
+  for (uint32_t v : vs) {
+    auto a = sess.input<UInt32>(ALICE, v);
+    check_u("hamming_weight", sess.reveal(a.hamming_weight(), PUBLIC),
+            (uint64_t)__builtin_popcount(v));
+    check_u("leading_zeros", sess.reveal(a.leading_zeros(), PUBLIC),
+            v == 0 ? 32u : (uint64_t)__builtin_clz(v));
+    // as_signed reinterprets the same wires as two's complement.
+    int64_t got = sess.reveal(a.as_signed(), PUBLIC);
+    check("as_signed", got == (int64_t)(int32_t)v);
+  }
+}
+
+// ---- runtime-width form UInt_T<ClearCtx,0> -------------------------------
+// Runtime-width values are for in-circuit computation, not the session I/O
+// boundary: they are made with ::constant(ctx, width, value) and read with the
+// low-level rd_dyn() peek (or converted to a fixed width and revealed).
+
+static void sweep_dynamic() {
+  ClearSession sess;
+  ClearCtx& ctx = sess.ctx();
+
+  // Construct at a chosen runtime width, read back.
+  {
+    DynUInt a = DynUInt::constant(ctx, 24, 0xABCDEFu);   // 24-bit value
+    check("dyn width", a.width() == 24);
+    check_u("dyn read", rd_dyn(a), 0xABCDEFu);
+  }
+
+  // resize up (zero-extend) and down (truncate).
+  {
+    DynUInt a = DynUInt::constant(ctx, 16, 0xBEEFu);
+    check_u("dyn resize up",   rd_dyn(a.resize(32)), 0xBEEFull);
+    check("dyn resize up width", a.resize(32).width() == 32);
+    DynUInt b = DynUInt::constant(ctx, 32, 0xDEADBEEFu);
+    check_u("dyn resize down", rd_dyn(b.resize(16)), 0xBEEFull);
+    check("dyn resize down width", b.resize(16).width() == 16);
+  }
+
+  // to_fixed<M> reaches the session I/O boundary; to_dynamic goes back.
+  {
+    DynUInt a = DynUInt::constant(ctx, 32, 0x12345678u);
+    UInt_T<ClearCtx, 32> fixed = a.to_fixed<32>();
+    check_u("dyn->fixed", sess.reveal(fixed, PUBLIC), 0x12345678u);
+    DynUInt back = fixed.to_dynamic();
+    check("dyn round-trip width", back.width() == 32);
+    check_u("fixed->dyn", rd_dyn(back), 0x12345678u);
+  }
+
+  // Arithmetic on the runtime-width form, cross-checked at width 32.
+  std::mt19937_64 r2(0xBADC0DEULL);
+  for (int i = 0; i < 2000; ++i) {
+    uint32_t ia = (uint32_t)r2(), ib = (uint32_t)r2();
+    DynUInt a = DynUInt::constant(ctx, 32, ia), b = DynUInt::constant(ctx, 32, ib);
+    check_u("dyn add", rd_dyn(a + b), (uint32_t)(ia + ib));
+    check_u("dyn sub", rd_dyn(a - b), (uint32_t)(ia - ib));
+    check_u("dyn mul", rd_dyn(a * b), (uint32_t)(ia * ib));
+    check_u("dyn and", rd_dyn(a & b), ia & ib);
+    check_u("dyn or",  rd_dyn(a | b), ia | ib);
+    check_u("dyn xor", rd_dyn(a ^ b), ia ^ ib);
+    check("dyn lt", sess.reveal(a < b, PUBLIC) == (ia < ib));   // comparison yields a Bit_T
+    if (ib != 0) {
+      check_u("dyn div", rd_dyn(a / b), ia / ib);
+      check_u("dyn mod", rd_dyn(a % b), ia % ib);
+    }
+  }
+
+  // hamming_weight on the runtime form.
+  {
+    DynUInt a = DynUInt::constant(ctx, 32, 0xCAFEBABEu);
+    check_u("dyn hamming", rd_dyn(a.hamming_weight()),
+            (uint64_t)__builtin_popcount(0xCAFEBABEu));
+  }
 }
 
 int main() {
-  ClearCtx cx;
-  using U = UInt_T<ClearCtx, 32>;
-  const uint32_t A = 1234567u, B = 7654321u;
-  U a = U::constant(cx, A), b = U::constant(cx, B);
+  example();
+  sweep_arith();
+  sweep_div_zero();
+  sweep_compare();
+  sweep_shift_public();
+  sweep_shift_secret();
+  sweep_boundaries();
+  sweep_views();
+  sweep_bitcount_signed();
+  sweep_dynamic();
 
-  chk("add", rd<32>(a + b) == (uint32_t)(A + B));
-  chk("sub", rd<32>(a - b) == (uint32_t)(A - B));
-  chk("mul", rd<32>(a * b) == (uint32_t)(A * B));
-  chk("div", rd<32>(b / a) == (B / A));
-  chk("mod", rd<32>(b % a) == (B % A));
-  chk("and", rd<32>(a & b) == (A & B));
-  chk("or",  rd<32>(a | b) == (A | B));
-  chk("xor", rd<32>(a ^ b) == (A ^ B));
-  chk("not", rd<32>(~a) == (uint32_t)(~A));
-
-  chk("lt", ((a < b).w & 1) == (A < B ? 1 : 0));
-  chk("gt", ((a > b).w & 1) == (A > B ? 1 : 0));
-  chk("le", ((a <= b).w & 1) == 1);
-  chk("eq", ((a == b).w & 1) == 0);
-  chk("ne", ((a != b).w & 1) == 1);
-  chk("select", rd<32>(a.select((a < b), b)) == (A < B ? B : A));
-
-  chk("shl", rd<32>(a << 5) == (uint32_t)(A << 5));
-  chk("shr", rd<32>(a >> 5) == (A >> 5));
-  chk("rotl", rd<32>(a.rotl(7)) == (uint32_t)((A << 7) | (A >> 25)));
-  chk("rotr", rd<32>(a.rotr(7)) == (uint32_t)((A >> 7) | (A << 25)));
-
-  chk("trunc", rd<16>(a.trunc<16>()) == (A & 0xffff));
-  chk("zext", rd<48>(a.zext<48>()) == (uint64_t)A);
-  chk("slice", rd<16>(a.slice<8, 24>()) == ((A >> 8) & 0xffff));
-  chk("concat", rd<48>(U::constant(cx, 0xABCD).trunc<16>().concat(UInt_T<ClearCtx, 32>::constant(cx, A)))
-                    == (((uint64_t)A << 16) | 0xABCD));
-
-  // secret-amount (barrel) shifts.
-  chk("dyn_shl", rd<32>(a << U::constant(cx, 5)) == (uint32_t)(A << 5));
-  chk("dyn_shr", rd<32>(a >> U::constant(cx, 5)) == (A >> 5));
-  chk("dyn_shl_overflow", rd<32>(a << U::constant(cx, 40)) == 0);
-
-  // bit counting.
-  chk("popcount", rd<6>(a.hamming_weight()) == (uint64_t)__builtin_popcount(A));
-  chk("leading_zeros", rd<6>(a.leading_zeros()) == (uint64_t)__builtin_clz(A));
-  chk("mod_exp 7^13 mod 1000",
-      rd<32>(U::constant(cx, 7).mod_exp(U::constant(cx, 13), U::constant(cx, 1000))) == 407);
-
-  { auto e = U::encode(A); bool bb[32]; for (int i = 0; i < 32; ++i) bb[i] = e[i]; chk("encode/decode", U::decode(bb) == A); }
-
-  printf("test_uint: %s\n", bad ? "FAILED" : "PASS");
-  return bad ? 1 : 0;
+  printf("test_uint: %s\n", g_fail ? "FAILED" : "PASS");
+  return g_fail ? 1 : 0;
 }

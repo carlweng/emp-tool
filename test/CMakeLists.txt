@@ -22,10 +22,9 @@ function(add_test_case_with_run name)
              WORKING_DIRECTORY ${PROJECT_SOURCE_DIR})
 endfunction()
 
-# Historically forced C++20 on a single test while the library was C++17. emp-tool
-# now exports PUBLIC cxx_std_20 (the BooleanContext surface requires it), so every
-# test already compiles as C++20 and this is equivalent to add_test_case; kept as a
-# self-documenting marker for the context/typed-layer tests.
+# emp-tool exports PUBLIC cxx_std_20 (the BooleanContext surface requires it), so
+# every test already compiles as C++20. This wrapper is a self-documenting marker
+# for the context/typed-layer tests.
 function(add_test_case_cxx20 name)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} PRIVATE emp-tool::emp-tool)
@@ -67,7 +66,7 @@ add_test_case(test_halfgate)         # half-gate garble/eval free functions
 add_test_case_cxx20(test_circuit_fn) # C++20: compile-once / run-on-any-context frontend (rec:: value types)
 add_test_case_cxx20(test_context)    # C++20: BooleanContext concept + contexts cross-check
 add_test_case_cxx20(test_builtin_circuits)   # C++20: AES/SHA/SHA3 IR-replay == live kernels
-add_test_case_cxx20(test_typed)              # C++20: typed values (Bit/UInt/SignedInt/Float) over Ctx
+add_test_case_cxx20(test_typed)              # C++20: typed values (Bit/BitVec/UInt/Int/Float) over Ctx
 add_test_case_cxx20(test_crypto_aes)         # C++20: AES-128 block over the value layer (vector/record/count)
 add_test_case_cxx20(test_crypto_sha256)      # C++20: SHA-256 compression + full-hash wrapper
 add_test_case_cxx20(test_crypto_keccak)      # C++20: Keccak-f[1600] + SHA3-256 wrapper

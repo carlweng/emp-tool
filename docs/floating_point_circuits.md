@@ -102,7 +102,7 @@ The current generation path is:
 5. Verify the `.empbc` output against host floating-point behavior or the native
    C reference for the same operation.
 
-The core library does not parse any legacy text circuit format at runtime.
+The core library does not parse external text circuit formats at runtime.
 Conversion scripts are development/provenance tools only; `.empbc` is the stored
 format consumed by emp-tool and downstream protocols.
 

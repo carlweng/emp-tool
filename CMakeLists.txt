@@ -80,7 +80,7 @@ set_target_properties(emp-tool PROPERTIES
     SOVERSION      ${PROJECT_VERSION_MAJOR}
     CXX_EXTENSIONS OFF)
 
-# The canonical BooleanContext surface (circuits/context.h, circuits/typed.h)
+# The canonical BooleanContext surface (context/context.h, circuits/typed.h)
 # requires C++20 (concepts, std::regular, std::span), so emp-tool's public
 # contract is C++20 — consumers that include those headers must build as C++20.
 target_compile_features(emp-tool PUBLIC cxx_std_20)

@@ -26,18 +26,20 @@ value; it does **no I/O of its own** (no `input`/`reveal`/OT). This is enforced
 structurally: a body is recorded through a `RecordCtx`, which has no I/O.
 
 - **No secret input inside** — pass secret/party inputs as arguments.
-- **No `reveal` inside** — reveal the returned value *outside*, on the context.
+- **No `reveal` inside** — reveal the returned value *outside*, through the session.
 - **Public constants inside are fine** — `a.constant(5)` (implicit form) or
   `UInt_T<Ctx,N>::constant(ctx, 5)` (explicit form) fold to constant gates. A
   value that may differ across parties or runs must be an **argument**.
 
-I/O stays the caller's job, around the circuit:
+I/O stays the session's job, around the circuit:
 
 ```cpp
-auto a = ctx.input<UInt_T<SH2PCCtx,32>>(ALICE, av);   // context feeds inputs
-auto b = ctx.input<UInt_T<SH2PCCtx,32>>(BOB,   bv);
-auto c = frontend::run(ctx, circuit, a, b);           // pure replay
-uint32_t r = ctx.reveal(c, PUBLIC);                   // context reveals
+ClearSession sess;                                    // session owns the I/O boundary
+using UInt32 = ClearSession::UInt<32>;                // (a protocol session is the same shape)
+auto a = sess.input<UInt32>(ALICE, av);               // session feeds inputs
+auto b = sess.input<UInt32>(BOB,   bv);
+auto c = frontend::run(sess.ctx(), circuit, a, b);    // pure replay over the context
+uint32_t r = sess.reveal<uint32_t>(c, PUBLIC);        // session reveals
 ```
 
 ## Body forms
@@ -96,6 +98,7 @@ types without spelling `RecordCtx`:
 | `UInt_T<Ctx,N>`      | `rec::UInt<N>` (`= UInt_T<RecordCtx,N>`) |
 | `Int_T<Ctx,N>`       | `rec::Int<N>`  (`= Int_T<RecordCtx,N>`)  |
 | `Float_T<Ctx,W>`     | `rec::Float<W>` (`= Float_T<RecordCtx,W>`) |
+| `BitVec_T<Ctx,N>`    | `rec::BitVec<N>` (`= BitVec_T<RecordCtx,N>`) |
 
 The metadata a compiled signature needs — bit width, host clear type + codec,
 and the per-context family map — lives on the value type itself
@@ -155,12 +158,12 @@ schedule are free functions over the program (`ir/passes.h`,
 
 ## What's inside (internals)
 
-- `circuits/typed.h` — the typed values `Bit_T`/`UInt_T`/`Int_T`/`Float_T<Ctx>`
+- `circuits/typed.h` — the typed values `Bit_T`/`BitVec_T`/`UInt_T`/`Int_T`/`Float_T<Ctx>`
   (each carries `width()`/`clear_t`/`encode`/`decode`/`rebind<Ctx>` inline) plus
   the bare-wire arithmetic kernels in `emp::kernel`.
 - `circuits/value_traits.h` — `value_traits<T>`: the uniform metadata accessor
   (width, clear codec, `rebind<Ctx>`) over a circuit value's own static members.
-- `frontend/rec.h` — `rec::Bit`/`rec::UInt<N>`/`rec::Int<N>`/`rec::Float<W>`,
+- `frontend/rec.h` — `rec::Bit`/`rec::BitVec<N>`/`rec::UInt<N>`/`rec::Int<N>`/`rec::Float<W>`,
   the value types over `RecordCtx` used as `compile` arguments.
 - `context/context.h` — the `BooleanContext` concept and the contexts
   `ClearCtx` (plaintext) and `RecordCtx` (records a `BooleanProgram`), plus the
