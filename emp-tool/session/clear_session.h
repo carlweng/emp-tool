@@ -14,16 +14,21 @@
 //   auto a = sess.input<UInt32>(ALICE, x);   // feed inputs through the session
 //   auto b = sess.input<UInt32>(BOB,   y);
 //   auto c = a + b;                          // pure circuit math on the values
-//   uint32_t r = sess.reveal(c, PUBLIC);     // results leave through the session
+//   uint32_t r = sess.reveal(c, PUBLIC).value();  // results leave through the session
 //
+// reveal returns std::optional<clear_t> (the session contract): the value is
+// present on a party that learns it and std::nullopt otherwise. ClearSession is
+// plaintext — it always knows the value — so its optional is always populated.
 // Pure circuit bodies stay Ctx-templated values; the session is only the
 // boundary. Public constants stay value/context-level: UInt32::constant(sess.ctx(), 7).
 
 #include "emp-tool/context/clear.h"
 #include "emp-tool/circuits/typed.h"
+#include "emp-tool/session/concept.h"   // CircuitSession / SessionIO
 #include "emp-tool/core/utils.h"   // error()
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace emp {
@@ -36,6 +41,10 @@ public:
     template <int N> using BitVec = BitVec_T<Ctx, N>;
     template <int W> using Float  = Float_T<Ctx, W>;
     using Bit = Bit_T<Ctx>;
+    // reveal returns std::optional<clear_t> (the session contract). ClearSession is
+    // plaintext and always knows the value, so its optional is always populated —
+    // for every recipient, since there is no other party to withhold it from.
+    template <class V> using reveal_t = std::optional<typename V::clear_t>;
 
     // The circuit context, for value construction that is not I/O — e.g. public
     // constants UInt<32>::constant(sess.ctx(), 7) or crypto kernels.
@@ -59,24 +68,31 @@ public:
         return V::from_wires(ctx_, wires.data());
     }
 
-    // Reveal a circuit value to `recipient`, returning the clear value. In the
-    // clear everyone learns it (recipient accepted and ignored). reveal<T>(...)
-    // casts the clear value to T for readability.
+    // Reveal a circuit value to `recipient`, returning std::optional<clear_t>. In
+    // the clear everyone learns it (recipient accepted and ignored), so the optional
+    // is always populated. reveal<T>(...) casts the clear value to T for readability.
     template <class V>
-    typename V::clear_t reveal(const V& value, int /*recipient*/) {
+    reveal_t<V> reveal(const V& value, int /*recipient*/) {
         const int n = V::width();
         std::vector<typename Ctx::Wire> wires((std::size_t)n);
         value.pack_wires(wires.data());
         std::unique_ptr<bool[]> buf(new bool[(std::size_t)n]);
         for (int i = 0; i < n; ++i) buf[i] = (wires[i] & 1) != 0;
-        return V::decode(buf.get());
+        return std::optional<typename V::clear_t>(V::decode(buf.get()));
     }
     template <class T, class V>
-    T reveal(const V& value, int recipient) { return static_cast<T>(reveal(value, recipient)); }
+    std::optional<T> reveal(const V& value, int recipient) {
+        reveal_t<V> r = reveal(value, recipient);
+        if (!r) return std::nullopt;
+        return std::optional<T>(static_cast<T>(*r));
+    }
 
 private:
     Ctx ctx_;
 };
+
+static_assert(CircuitSession<ClearSession>);
+static_assert(SessionIO<ClearSession, ClearSession::UInt<32>>);
 
 }  // namespace emp
 #endif  // EMP_SESSION_CLEAR_SESSION_H__

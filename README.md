@@ -11,7 +11,7 @@
 >   tag [`0.3.0`](https://github.com/emp-toolkit/emp-tool/releases/tag/0.3.0)
 >   or branch [`v0.3.x`](https://github.com/emp-toolkit/emp-tool/tree/v0.3.x).
 >   Bug fixes and security patches will be backported to `v0.3.x`.
-> - **New projects, or willing to migrate: track the development branch**
+> - **New projects, or able to track a moving API: use the development branch**
 >   (this branch). Its CMake package metadata is already `1.0.0` for
 >   local development, but the API is still pre-alpha and not frozen.
 >   Faster, cleaner APIs (test-mode determinism, trace I/O, refactored
@@ -169,10 +169,10 @@ CCRH has three call shapes: a scalar `H(block)` returning one block, a
 templated batched `H<n>(out, in)` that the compiler unrolls (best up to
 n ≤ 16, beyond which register spills hurt throughput), and a runtime
 `Hn(out, in, n)` for large batches. MITCCRH has a different shape — see
-`crypto/mitccrh.h`. The plain non-circular CRH used to be a separate
-class but has been removed; CCRH supersedes it (its `sigma` preprocessing
-costs roughly half a cycle per block in bulk and rules out a footgun
-class of misuse where `H(in)` and `H(in ⊕ Δ)` are correlated).
+`crypto/mitccrh.h`. `CCRH` is the single correlation-robust hash: its `sigma`
+preprocessing costs roughly half a cycle per block in bulk and rules out a
+footgun class of misuse where a plain CRH leaves `H(in)` and `H(in ⊕ Δ)`
+correlated.
 
 ### Hash (SHA-256)
 
@@ -241,7 +241,7 @@ auto a = sess.input<S32>(ALICE, 7);              // feed inputs through the sess
 auto b = sess.input<S32>(BOB,   35);
 auto c = a * b + S32::constant(sess.ctx(), 1);   // pure value-return gates; +1 is a public constant
 
-std::cout << sess.reveal(c, PUBLIC) << "\n";     // results leave through the session -> 246
+std::cout << sess.reveal(c, PUBLIC).value() << "\n";  // reveal -> std::optional<clear_t>
 
 // Wrap on overflow is well-defined and matches int32_t / uint32_t hardware:
 using U32 = ClearSession::UInt<32>;
@@ -253,7 +253,9 @@ auto wrapped = big + U32::constant(sess.ctx(), 1u);   // == 0
 binary{16,32,64}, and comparisons return `Bit_T<ClearCtx>`. The same typed
 circuit code runs over any `BooleanContext` unchanged; only the session that
 feeds inputs and reveals outputs differs — a protocol session over a garbled
-context in place of `ClearSession`. Pure circuit bodies never do I/O.
+context in place of `ClearSession`. Pure circuit bodies never do I/O. `reveal`
+returns `std::optional<clear_t>` — the value on a party that learns it, `std::nullopt`
+otherwise (a plaintext `ClearSession` always populates it).
 
 ### Circuit frontend: compile once, run on any context
 

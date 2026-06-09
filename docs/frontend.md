@@ -17,7 +17,8 @@ context-bound values (`Bit_T<Ctx>` / `UInt_T<Ctx,N>` / …), with the context
 passed explicitly and no global backend.
 
 For the typed values it builds on, read [circuits.md](circuits.md); for the
-context concept it targets, read the header of `context/context.h`.
+gate-context concept it replays over, read the header of `context/context.h`;
+for the session that owns I/O around it, read `session/concept.h`.
 
 ## What a circuit is — a pure function over a context
 
@@ -35,11 +36,11 @@ I/O stays the session's job, around the circuit:
 
 ```cpp
 ClearSession sess;                                    // session owns the I/O boundary
-using UInt32 = ClearSession::UInt<32>;                // (a protocol session is the same shape)
+using UInt32 = ClearSession::UInt<32>;                // a protocol session (SH2PCSession, AG2PCSession) exposes the same surface
 auto a = sess.input<UInt32>(ALICE, av);               // session feeds inputs
 auto b = sess.input<UInt32>(BOB,   bv);
 auto c = frontend::run(sess.ctx(), circuit, a, b);    // pure replay over the context
-uint32_t r = sess.reveal<uint32_t>(c, PUBLIC);        // session reveals
+uint32_t r = sess.reveal<uint32_t>(c, PUBLIC).value(); // session reveals -> std::optional<uint32_t>
 ```
 
 ## Body forms

@@ -23,9 +23,10 @@ party, OT/preprocessing, batching), wrapping a context — like emp-tool's
 
 - hold the context and expose `ctx()` for value/context-level work;
 - expose `input<T>(owner, clear)` (and `input_batch` where applicable) /
-  `reveal(value, recipient)`, routed through `value_traits<T>` (width + codec). A
-  protocol's `reveal` may return `std::optional<T>` when only the recipient learns
-  the value.
+  `reveal(value, recipient)`, routed through `value_traits<T>` (width + codec).
+  `reveal` returns `std::optional<clear_t>`: the value on a party that learns it
+  (every party for `PUBLIC`, the named recipient otherwise) and `std::nullopt` on a
+  party that does not. A plaintext `ClearSession` always populates it.
 
 The context automatically works with the [frontend](frontend.md) — live `run`,
 `compile`, and replay over any circuit value — and with the analysis contexts, with

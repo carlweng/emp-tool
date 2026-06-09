@@ -10,10 +10,10 @@
 // via the rec:: aliases, e.g. rec::UInt<32> == UInt_T<RecordCtx,32>.
 //
 // A circuit is PURE: no input/reveal/OT inside a body (RecordCtx has no I/O,
-// so it is structurally impossible). The CONTEXT does I/O AROUND run():
-//   auto a = ctx.input<UInt_T<Ctx,32>>(ALICE, av);     // ctx is the protocol context
-//   auto c = frontend::run(ctx, circuit, a, b);
-//   auto out = ctx.reveal(c, PUBLIC);
+// so it is structurally impossible). I/O is a SESSION concern, AROUND run():
+//   auto a = sess.input<UInt_T<Ctx,32>>(ALICE, av);    // feed inputs through the session
+//   auto c = frontend::run(sess.ctx(), circuit, a, b); // run the circuit over the context
+//   auto out = sess.reveal(c, PUBLIC);                 // results leave through the session
 //
 // A body comes in two forms; compile/run pick whichever is invocable:
 //   [](auto a, auto b){ return a + b; }          // implicit context (default)

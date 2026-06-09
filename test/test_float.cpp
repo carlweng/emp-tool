@@ -65,16 +65,16 @@ static void example() {
   ClearSession sess;
 
   auto a = sess.input<F32>(ALICE, 1.5f), b = sess.input<F32>(BOB, 2.25f);
-  check("example add", sess.reveal(a + b, PUBLIC) == 3.75f);
-  check("example sub", sess.reveal(b - a, PUBLIC) == 0.75f);
-  check("example mul", sess.reveal(a * b, PUBLIC) == 3.375f);
-  check("example div", sess.reveal(b / a, PUBLIC) == 1.5f);
-  check("example lt",  sess.reveal(a < b, PUBLIC) == true);
-  check("example abs", sess.reveal((-a).abs(), PUBLIC) == 1.5f);
+  check("example add", sess.reveal(a + b, PUBLIC).value() == 3.75f);
+  check("example sub", sess.reveal(b - a, PUBLIC).value() == 0.75f);
+  check("example mul", sess.reveal(a * b, PUBLIC).value() == 3.375f);
+  check("example div", sess.reveal(b / a, PUBLIC).value() == 1.5f);
+  check("example lt",  sess.reveal(a < b, PUBLIC).value() == true);
+  check("example abs", sess.reveal((-a).abs(), PUBLIC).value() == 1.5f);
 
   // reveal<T>() casts the host float to a named type for readability.
   auto nine = sess.input<F32>(ALICE, 9.0f);
-  check("example sqrt", sess.reveal<float>(nine.sqrt(), PUBLIC) == 3.0f);
+  check("example sqrt", sess.reveal<float>(nine.sqrt(), PUBLIC).value() == 3.0f);
 }
 
 // ---------------------------------------------------------------------------
@@ -93,43 +93,43 @@ static void width_examples(const char* tag) {
 
   F a = C((host_t)2.0), b = C((host_t)3.0), nine = C((host_t)9.0), z = C((host_t)0.0);
 
-  check_eq<host_t>(name("add"),   sess.reveal(a + b, PUBLIC), (host_t)5.0);
-  check_eq<host_t>(name("sub"),   sess.reveal(a - b, PUBLIC), (host_t)-1.0);
-  check_eq<host_t>(name("mul"),   sess.reveal(a * b, PUBLIC), (host_t)6.0);
-  check_eq<host_t>(name("div"),   sess.reveal(b / a, PUBLIC), (host_t)1.5);
-  check_eq<host_t>(name("sqr"),   sess.reveal(a.sqr(), PUBLIC), (host_t)4.0);
-  check_eq<host_t>(name("min"),   sess.reveal(a.min(b), PUBLIC), (host_t)2.0);
-  check_eq<host_t>(name("max"),   sess.reveal(a.max(b), PUBLIC), (host_t)3.0);
-  check_eq<host_t>(name("fma"),   sess.reveal(a.fma(b, a), PUBLIC), (host_t)8.0);  // 2*3 + 2
+  check_eq<host_t>(name("add"),   sess.reveal(a + b, PUBLIC).value(), (host_t)5.0);
+  check_eq<host_t>(name("sub"),   sess.reveal(a - b, PUBLIC).value(), (host_t)-1.0);
+  check_eq<host_t>(name("mul"),   sess.reveal(a * b, PUBLIC).value(), (host_t)6.0);
+  check_eq<host_t>(name("div"),   sess.reveal(b / a, PUBLIC).value(), (host_t)1.5);
+  check_eq<host_t>(name("sqr"),   sess.reveal(a.sqr(), PUBLIC).value(), (host_t)4.0);
+  check_eq<host_t>(name("min"),   sess.reveal(a.min(b), PUBLIC).value(), (host_t)2.0);
+  check_eq<host_t>(name("max"),   sess.reveal(a.max(b), PUBLIC).value(), (host_t)3.0);
+  check_eq<host_t>(name("fma"),   sess.reveal(a.fma(b, a), PUBLIC).value(), (host_t)8.0);  // 2*3 + 2
 
   // Iterative kernels: tolerance, not bit-exact (3 ulp of fp16's coarse grid is
   // generous; fp32/fp64 are far tighter, so a single relative bound suffices).
-  check_close<host_t>(name("sqrt"),  sess.reveal(nine.sqrt(), PUBLIC),  (host_t)3.0, 1e-2);
-  check_close<host_t>(name("recip"), sess.reveal(a.recip(), PUBLIC),    (host_t)0.5, 1e-2);
-  check_close<host_t>(name("rsqrt"), sess.reveal(nine.rsqrt(), PUBLIC), (host_t)(1.0 / 3.0), 1e-2);
+  check_close<host_t>(name("sqrt"),  sess.reveal(nine.sqrt(), PUBLIC).value(),  (host_t)3.0, 1e-2);
+  check_close<host_t>(name("recip"), sess.reveal(a.recip(), PUBLIC).value(),    (host_t)0.5, 1e-2);
+  check_close<host_t>(name("rsqrt"), sess.reveal(nine.rsqrt(), PUBLIC).value(), (host_t)(1.0 / 3.0), 1e-2);
 
   // sign ops are pure wiring (set/flip the MSB), so exact at every width.
-  check_eq<host_t>(name("neg"),       sess.reveal(-a, PUBLIC), (host_t)-2.0);
-  check_eq<host_t>(name("abs"),       sess.reveal((-a).abs(), PUBLIC), (host_t)2.0);
-  check_eq<host_t>(name("copysign"),  sess.reveal(a.copysign(-b), PUBLIC), (host_t)-2.0);
+  check_eq<host_t>(name("neg"),       sess.reveal(-a, PUBLIC).value(), (host_t)-2.0);
+  check_eq<host_t>(name("abs"),       sess.reveal((-a).abs(), PUBLIC).value(), (host_t)2.0);
+  check_eq<host_t>(name("copysign"),  sess.reveal(a.copysign(-b), PUBLIC).value(), (host_t)-2.0);
 
   // comparisons / classifiers return Bit_T.
-  check(name("lt true"),  sess.reveal(a.less_than(b), PUBLIC) == true);
-  check(name("lt false"), sess.reveal(b.less_than(a), PUBLIC) == false);
-  check(name("le"),       sess.reveal(a.less_equal(a), PUBLIC) == true);
-  check(name("eq"),       sess.reveal(a.equal(a), PUBLIC) == true);
-  check(name("ne"),       sess.reveal(a.not_equal(b), PUBLIC) == true);
-  check(name("ge"),       sess.reveal(b.greater_equal(a), PUBLIC) == true);
-  check(name("gt"),       sess.reveal(a.greater_than(b), PUBLIC) == false);
-  check(name("iszero"),   sess.reveal(z.is_zero(), PUBLIC) == true);
-  check(name("iszero f"), sess.reveal(a.is_zero(), PUBLIC) == false);
-  check(name("isnan"),    sess.reveal(a.is_nan(), PUBLIC) == false);
-  check(name("isinf"),    sess.reveal(a.is_inf(), PUBLIC) == false);
+  check(name("lt true"),  sess.reveal(a.less_than(b), PUBLIC).value() == true);
+  check(name("lt false"), sess.reveal(b.less_than(a), PUBLIC).value() == false);
+  check(name("le"),       sess.reveal(a.less_equal(a), PUBLIC).value() == true);
+  check(name("eq"),       sess.reveal(a.equal(a), PUBLIC).value() == true);
+  check(name("ne"),       sess.reveal(a.not_equal(b), PUBLIC).value() == true);
+  check(name("ge"),       sess.reveal(b.greater_equal(a), PUBLIC).value() == true);
+  check(name("gt"),       sess.reveal(a.greater_than(b), PUBLIC).value() == false);
+  check(name("iszero"),   sess.reveal(z.is_zero(), PUBLIC).value() == true);
+  check(name("iszero f"), sess.reveal(a.is_zero(), PUBLIC).value() == false);
+  check(name("isnan"),    sess.reveal(a.is_nan(), PUBLIC).value() == false);
+  check(name("isinf"),    sess.reveal(a.is_inf(), PUBLIC).value() == false);
 
   // select(sel, other): sel ? other : *this.
   auto t = sess.input<ClearSession::Bit>(ALICE, true), f = sess.input<ClearSession::Bit>(ALICE, false);
-  check_eq<host_t>(name("select t"), sess.reveal(a.select(t, b), PUBLIC), (host_t)3.0);
-  check_eq<host_t>(name("select f"), sess.reveal(a.select(f, b), PUBLIC), (host_t)2.0);
+  check_eq<host_t>(name("select t"), sess.reveal(a.select(t, b), PUBLIC).value(), (host_t)3.0);
+  check_eq<host_t>(name("select f"), sess.reveal(a.select(f, b), PUBLIC).value(), (host_t)2.0);
 }
 
 // ---------------------------------------------------------------------------
@@ -165,17 +165,17 @@ static void random_sweep(const char* tag, int runs) {
     F a = sess.input<F>(ALICE, da), b = sess.input<F>(BOB, db);
 
     // Bit-exact: reference computed wide, rounded once to width W.
-    if (bits(sess.reveal(a + b, PUBLIC)) != bits(round_to_w<W>((double)da + (double)db))) ++bad_exact;
-    if (bits(sess.reveal(a - b, PUBLIC)) != bits(round_to_w<W>((double)da - (double)db))) ++bad_exact;
-    if (bits(sess.reveal(a * b, PUBLIC)) != bits(round_to_w<W>((double)da * (double)db))) ++bad_exact;
-    if (bits(sess.reveal(a / b, PUBLIC)) != bits(round_to_w<W>((double)da / (double)db))) ++bad_exact;
-    if (bits(sess.reveal(a.min(b), PUBLIC)) != bits((host_t)std::fmin(da, db))) ++bad_exact;
-    if (bits(sess.reveal(a.max(b), PUBLIC)) != bits((host_t)std::fmax(da, db))) ++bad_exact;
+    if (bits(sess.reveal(a + b, PUBLIC).value()) != bits(round_to_w<W>((double)da + (double)db))) ++bad_exact;
+    if (bits(sess.reveal(a - b, PUBLIC).value()) != bits(round_to_w<W>((double)da - (double)db))) ++bad_exact;
+    if (bits(sess.reveal(a * b, PUBLIC).value()) != bits(round_to_w<W>((double)da * (double)db))) ++bad_exact;
+    if (bits(sess.reveal(a / b, PUBLIC).value()) != bits(round_to_w<W>((double)da / (double)db))) ++bad_exact;
+    if (bits(sess.reveal(a.min(b), PUBLIC).value()) != bits((host_t)std::fmin(da, db))) ++bad_exact;
+    if (bits(sess.reveal(a.max(b), PUBLIC).value()) != bits((host_t)std::fmax(da, db))) ++bad_exact;
 
     // fma = round(round(a*b) + c): two roundings, product sequenced first.
     host_t prod = round_to_w<W>((double)da * (double)db);
     host_t fma_want = round_to_w<W>((double)prod + (double)da);
-    if (bits(sess.reveal(a.fma(b, a), PUBLIC)) != bits(fma_want)) ++bad_exact;
+    if (bits(sess.reveal(a.fma(b, a), PUBLIC).value()) != bits(fma_want)) ++bad_exact;
 
     // Iterative kernels: relative tolerance against the host on |a|. Only check
     // when the true result is a finite, representable value at this width — a
@@ -188,17 +188,17 @@ static void random_sweep(const char* tag, int runs) {
     if (pa > 0.0) {
       double want_sqrt = std::sqrt(pa);
       if (in_range(want_sqrt)) {
-        double got = (double)sess.reveal(sess.input<F>(ALICE, round_to_w<W>(pa)).sqrt(), PUBLIC);
+        double got = (double)sess.reveal(sess.input<F>(ALICE, round_to_w<W>(pa)).sqrt(), PUBLIC).value();
         if (std::fabs(got - want_sqrt) > 1e-2 * std::max(1.0, want_sqrt)) ++bad_close;
       }
       double want_recip = 1.0 / (double)da;
       if (in_range(want_recip)) {
-        double got = (double)sess.reveal(a.recip(), PUBLIC);
+        double got = (double)sess.reveal(a.recip(), PUBLIC).value();
         if (std::fabs(got - want_recip) > 1e-2 * std::max(1.0, std::fabs(want_recip))) ++bad_close;
       }
       double want_rsqrt = 1.0 / std::sqrt(pa);
       if (in_range(want_rsqrt)) {
-        double got = (double)sess.reveal(sess.input<F>(ALICE, round_to_w<W>(pa)).rsqrt(), PUBLIC);
+        double got = (double)sess.reveal(sess.input<F>(ALICE, round_to_w<W>(pa)).rsqrt(), PUBLIC).value();
         if (std::fabs(got - want_rsqrt) > 1e-2 * std::max(1.0, want_rsqrt)) ++bad_close;
       }
     }
@@ -232,12 +232,12 @@ static void compare_sweep(const char* tag, int runs) {
     host_t db = (tie(rng) == 0) ? da   // force exact ties some of the time
                                 : round_to_w<W>(mant(rng) * std::pow(2.0, ex(rng)));
     F a = sess.input<F>(ALICE, da), b = sess.input<F>(BOB, db);
-    if (sess.reveal(a.less_than(b), PUBLIC)     != (da <  db)) ++bad;
-    if (sess.reveal(a.less_equal(b), PUBLIC)    != (da <= db)) ++bad;
-    if (sess.reveal(a.greater_than(b), PUBLIC)  != (da >  db)) ++bad;
-    if (sess.reveal(a.greater_equal(b), PUBLIC) != (da >= db)) ++bad;
-    if (sess.reveal(a.equal(b), PUBLIC)         != (da == db)) ++bad;
-    if (sess.reveal(a.not_equal(b), PUBLIC)     != (da != db)) ++bad;
+    if (sess.reveal(a.less_than(b), PUBLIC).value()     != (da <  db)) ++bad;
+    if (sess.reveal(a.less_equal(b), PUBLIC).value()    != (da <= db)) ++bad;
+    if (sess.reveal(a.greater_than(b), PUBLIC).value()  != (da >  db)) ++bad;
+    if (sess.reveal(a.greater_equal(b), PUBLIC).value() != (da >= db)) ++bad;
+    if (sess.reveal(a.equal(b), PUBLIC).value()         != (da == db)) ++bad;
+    if (sess.reveal(a.not_equal(b), PUBLIC).value()     != (da != db)) ++bad;
   }
   char nm[64]; std::snprintf(nm, sizeof nm, "%s compare sweep", tag);
   check(nm, bad == 0);
@@ -276,40 +276,40 @@ static void boundary_cases(const char* tag) {
   F den = sess.input<F>(ALICE, denorm), big = sess.input<F>(ALICE, maxv);
 
   // classifiers.
-  check(name("iszero +0"), sess.reveal(pos_zero.is_zero(), PUBLIC) == true);
-  check(name("iszero -0"), sess.reveal(neg_zero.is_zero(), PUBLIC) == true);
-  check(name("iszero den"), sess.reveal(den.is_zero(), PUBLIC) == false);
-  check(name("isinf +inf"), sess.reveal(pinf.is_inf(), PUBLIC) == true);
-  check(name("isinf -inf"), sess.reveal(ninf.is_inf(), PUBLIC) == true);
-  check(name("isinf big"), sess.reveal(big.is_inf(), PUBLIC) == false);
-  check(name("isnan nan"), sess.reveal(qnan.is_nan(), PUBLIC) == true);
-  check(name("isnan +inf"), sess.reveal(pinf.is_nan(), PUBLIC) == false);
-  check(name("isnan big"), sess.reveal(big.is_nan(), PUBLIC) == false);
+  check(name("iszero +0"), sess.reveal(pos_zero.is_zero(), PUBLIC).value() == true);
+  check(name("iszero -0"), sess.reveal(neg_zero.is_zero(), PUBLIC).value() == true);
+  check(name("iszero den"), sess.reveal(den.is_zero(), PUBLIC).value() == false);
+  check(name("isinf +inf"), sess.reveal(pinf.is_inf(), PUBLIC).value() == true);
+  check(name("isinf -inf"), sess.reveal(ninf.is_inf(), PUBLIC).value() == true);
+  check(name("isinf big"), sess.reveal(big.is_inf(), PUBLIC).value() == false);
+  check(name("isnan nan"), sess.reveal(qnan.is_nan(), PUBLIC).value() == true);
+  check(name("isnan +inf"), sess.reveal(pinf.is_nan(), PUBLIC).value() == false);
+  check(name("isnan big"), sess.reveal(big.is_nan(), PUBLIC).value() == false);
 
   // -0 and +0 compare equal in IEEE.
-  check(name("+0 == -0"), sess.reveal(pos_zero.equal(neg_zero), PUBLIC) == true);
+  check(name("+0 == -0"), sess.reveal(pos_zero.equal(neg_zero), PUBLIC).value() == true);
 
   // sign ops on the edges: bit patterns must match the host exactly.
-  check_eq<uint64_t>(name("abs -inf"), host_bits<W>(sess.reveal(ninf.abs(), PUBLIC)), host_bits<W>(inf));
-  check_eq<uint64_t>(name("neg +inf"), host_bits<W>(sess.reveal(-pinf, PUBLIC)), host_bits<W>(-inf));
-  check_eq<uint64_t>(name("abs -0"),   host_bits<W>(sess.reveal(neg_zero.abs(), PUBLIC)), host_bits<W>((host_t)0.0));
+  check_eq<uint64_t>(name("abs -inf"), host_bits<W>(sess.reveal(ninf.abs(), PUBLIC).value()), host_bits<W>(inf));
+  check_eq<uint64_t>(name("neg +inf"), host_bits<W>(sess.reveal(-pinf, PUBLIC).value()), host_bits<W>(-inf));
+  check_eq<uint64_t>(name("abs -0"),   host_bits<W>(sess.reveal(neg_zero.abs(), PUBLIC).value()), host_bits<W>((host_t)0.0));
   check_eq<uint64_t>(name("copysign den<-big"),
-                     host_bits<W>(sess.reveal(den.copysign(-big), PUBLIC)), host_bits<W>(-denorm));
+                     host_bits<W>(sess.reveal(den.copysign(-big), PUBLIC).value()), host_bits<W>(-denorm));
 
   // arithmetic that overflows the format goes to inf; inf - inf is NaN.
-  check(name("max+max -> inf"), sess.reveal((big + big).is_inf(), PUBLIC) == true);
+  check(name("max+max -> inf"), sess.reveal((big + big).is_inf(), PUBLIC).value() == true);
   check(name("fma overflow -> inf"),
-        sess.reveal(big.fma(sess.input<F>(ALICE, (host_t)2.0), big).is_inf(), PUBLIC) == true);
-  check(name("inf - inf -> nan"), sess.reveal((pinf - pinf).is_nan(), PUBLIC) == true);
-  check(name("1/inf -> 0"), sess.reveal(pinf.recip().is_zero(), PUBLIC) == true);
+        sess.reveal(big.fma(sess.input<F>(ALICE, (host_t)2.0), big).is_inf(), PUBLIC).value() == true);
+  check(name("inf - inf -> nan"), sess.reveal((pinf - pinf).is_nan(), PUBLIC).value() == true);
+  check(name("1/inf -> 0"), sess.reveal(pinf.recip().is_zero(), PUBLIC).value() == true);
 
   // NaN is unordered: every ordering predicate is false, ne is true.
   F one = sess.input<F>(ALICE, (host_t)1.0);
-  check(name("nan<1 false"),  sess.reveal(qnan.less_than(one), PUBLIC) == false);
-  check(name("nan>1 false"),  sess.reveal(qnan.greater_than(one), PUBLIC) == false);
-  check(name("nan==1 false"), sess.reveal(qnan.equal(one), PUBLIC) == false);
-  check(name("nan!=1 true"),  sess.reveal(qnan.not_equal(one), PUBLIC) == true);
-  check(name("nan==nan false"), sess.reveal(qnan.equal(qnan), PUBLIC) == false);
+  check(name("nan<1 false"),  sess.reveal(qnan.less_than(one), PUBLIC).value() == false);
+  check(name("nan>1 false"),  sess.reveal(qnan.greater_than(one), PUBLIC).value() == false);
+  check(name("nan==1 false"), sess.reveal(qnan.equal(one), PUBLIC).value() == false);
+  check(name("nan!=1 true"),  sess.reveal(qnan.not_equal(one), PUBLIC).value() == true);
+  check(name("nan==nan false"), sess.reveal(qnan.equal(qnan), PUBLIC).value() == false);
 }
 
 // ---------------------------------------------------------------------------

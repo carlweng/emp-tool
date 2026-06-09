@@ -48,18 +48,18 @@ static void example() {
   auto a = sess.input<UInt32>(ALICE, 7);
   auto b = sess.input<UInt32>(BOB, 3);
 
-  check("ex sum",      sess.reveal(a + b, PUBLIC) == 10);
-  check("ex diff",     sess.reveal(a - b, PUBLIC) == 4);
-  check("ex product",  sess.reveal(a * b, PUBLIC) == 21);
-  check("ex quotient", sess.reveal(a / b, PUBLIC) == 2);
-  check("ex mod",      sess.reveal(a % b, PUBLIC) == 1);
-  check("ex ge",       sess.reveal(a >= b, PUBLIC) == true);
-  check("ex select",   sess.reveal(a.select((a < b), b), PUBLIC) == 7);  // a>=b so keep a
+  check("ex sum",      sess.reveal(a + b, PUBLIC).value() == 10);
+  check("ex diff",     sess.reveal(a - b, PUBLIC).value() == 4);
+  check("ex product",  sess.reveal(a * b, PUBLIC).value() == 21);
+  check("ex quotient", sess.reveal(a / b, PUBLIC).value() == 2);
+  check("ex mod",      sess.reveal(a % b, PUBLIC).value() == 1);
+  check("ex ge",       sess.reveal(a >= b, PUBLIC).value() == true);
+  check("ex select",   sess.reveal(a.select((a < b), b), PUBLIC).value() == 7);  // a>=b so keep a
 
   // Overflow wraps mod 2^32 like a hardware adder.
   auto big = sess.input<UInt32>(ALICE, UINT32_MAX);
   auto one = sess.input<UInt32>(BOB, 1);
-  check("ex wrap",     sess.reveal<uint32_t>(big + one, PUBLIC) == 0u);
+  check("ex wrap",     sess.reveal<uint32_t>(big + one, PUBLIC).value() == 0u);
 }
 
 // ---- arithmetic / bitwise random sweep (width 32) ------------------------
@@ -70,18 +70,18 @@ static void sweep_arith() {
   for (int i = 0; i < 4000; ++i) {
     uint32_t ia = (uint32_t)rng(), ib = (uint32_t)rng();
     auto a = sess.input<UInt32>(ALICE, ia), b = sess.input<UInt32>(BOB, ib);
-    check_u("add", sess.reveal<uint32_t>(a + b, PUBLIC), (uint32_t)(ia + ib));
-    check_u("sub", sess.reveal<uint32_t>(a - b, PUBLIC), (uint32_t)(ia - ib));
-    check_u("mul", sess.reveal<uint32_t>(a * b, PUBLIC), (uint32_t)(ia * ib));
-    check_u("and", sess.reveal<uint32_t>(a & b, PUBLIC), ia & ib);
-    check_u("or",  sess.reveal<uint32_t>(a | b, PUBLIC), ia | ib);
-    check_u("xor", sess.reveal<uint32_t>(a ^ b, PUBLIC), ia ^ ib);
-    check_u("not", sess.reveal<uint32_t>(~a, PUBLIC), ~ia);
+    check_u("add", sess.reveal<uint32_t>(a + b, PUBLIC).value(), (uint32_t)(ia + ib));
+    check_u("sub", sess.reveal<uint32_t>(a - b, PUBLIC).value(), (uint32_t)(ia - ib));
+    check_u("mul", sess.reveal<uint32_t>(a * b, PUBLIC).value(), (uint32_t)(ia * ib));
+    check_u("and", sess.reveal<uint32_t>(a & b, PUBLIC).value(), ia & ib);
+    check_u("or",  sess.reveal<uint32_t>(a | b, PUBLIC).value(), ia | ib);
+    check_u("xor", sess.reveal<uint32_t>(a ^ b, PUBLIC).value(), ia ^ ib);
+    check_u("not", sess.reveal<uint32_t>(~a, PUBLIC).value(), ~ia);
 
     // Division/mod by zero saturates in the kernel; only compare on nonzero.
     if (ib != 0) {
-      check_u("div", sess.reveal<uint32_t>(a / b, PUBLIC), ia / ib);
-      check_u("mod", sess.reveal<uint32_t>(a % b, PUBLIC), ia % ib);
+      check_u("div", sess.reveal<uint32_t>(a / b, PUBLIC).value(), ia / ib);
+      check_u("mod", sess.reveal<uint32_t>(a % b, PUBLIC).value(), ia % ib);
     }
   }
 }
@@ -92,9 +92,9 @@ static void sweep_div_zero() {
   ClearSession sess;
   // div_full saturates the quotient to all-ones on divide-by-zero.
   auto a = sess.input<UInt32>(ALICE, 12345u), z = sess.input<UInt32>(BOB, 0u);
-  check_u("div_by0 -> UINT32_MAX", sess.reveal<uint32_t>(a / z, PUBLIC), UINT32_MAX);
+  check_u("div_by0 -> UINT32_MAX", sess.reveal<uint32_t>(a / z, PUBLIC).value(), UINT32_MAX);
   // Remainder of x/0 is x (no subtraction succeeds).
-  check_u("mod_by0 -> dividend",   sess.reveal<uint32_t>(a % z, PUBLIC), 12345u);
+  check_u("mod_by0 -> dividend",   sess.reveal<uint32_t>(a % z, PUBLIC).value(), 12345u);
 }
 
 // ---- comparisons random sweep --------------------------------------------
@@ -107,12 +107,12 @@ static void sweep_compare() {
     // Occasionally force equality to exercise the == / <= / >= edge.
     if ((i & 7) == 0) ib = ia;
     auto a = sess.input<UInt32>(ALICE, ia), b = sess.input<UInt32>(BOB, ib);
-    check("cmp <",  sess.reveal(a < b, PUBLIC)  == (ia < ib));
-    check("cmp <=", sess.reveal(a <= b, PUBLIC) == (ia <= ib));
-    check("cmp >",  sess.reveal(a > b, PUBLIC)  == (ia > ib));
-    check("cmp >=", sess.reveal(a >= b, PUBLIC) == (ia >= ib));
-    check("cmp ==", sess.reveal(a == b, PUBLIC) == (ia == ib));
-    check("cmp !=", sess.reveal(a != b, PUBLIC) == (ia != ib));
+    check("cmp <",  sess.reveal(a < b, PUBLIC).value()  == (ia < ib));
+    check("cmp <=", sess.reveal(a <= b, PUBLIC).value() == (ia <= ib));
+    check("cmp >",  sess.reveal(a > b, PUBLIC).value()  == (ia > ib));
+    check("cmp >=", sess.reveal(a >= b, PUBLIC).value() == (ia >= ib));
+    check("cmp ==", sess.reveal(a == b, PUBLIC).value() == (ia == ib));
+    check("cmp !=", sess.reveal(a != b, PUBLIC).value() == (ia != ib));
   }
 }
 
@@ -125,13 +125,13 @@ static void sweep_shift_public() {
   for (uint32_t v : vs) {
     for (int s = 0; s <= 40; ++s) {        // s > 32 must zero (<<, >>)
       auto a = sess.input<UInt32>(ALICE, v);
-      check_u("shl pub", sess.reveal<uint32_t>(a << s, PUBLIC), shl_w(v, (unsigned)s));
-      check_u("shr pub", sess.reveal<uint32_t>(a >> s, PUBLIC), shr_w(v, (unsigned)s));
+      check_u("shl pub", sess.reveal<uint32_t>(a << s, PUBLIC).value(), shl_w(v, (unsigned)s));
+      check_u("shr pub", sess.reveal<uint32_t>(a >> s, PUBLIC).value(), shr_w(v, (unsigned)s));
     }
     for (int s = 0; s <= 40; ++s) {        // rotates are mod-32
       auto a = sess.input<UInt32>(ALICE, v);
-      check_u("rotl", sess.reveal<uint32_t>(a.rotl(s), PUBLIC), rotl_w(v, (unsigned)s));
-      check_u("rotr", sess.reveal<uint32_t>(a.rotr(s), PUBLIC), rotr_w(v, (unsigned)s));
+      check_u("rotl", sess.reveal<uint32_t>(a.rotl(s), PUBLIC).value(), rotl_w(v, (unsigned)s));
+      check_u("rotr", sess.reveal<uint32_t>(a.rotr(s), PUBLIC).value(), rotr_w(v, (unsigned)s));
     }
   }
   // A few random rotate amounts for good measure.
@@ -139,8 +139,8 @@ static void sweep_shift_public() {
     uint32_t v = (uint32_t)rng();
     int s = (int)(rng() % 64);
     auto a = sess.input<UInt32>(ALICE, v);
-    check_u("rotl rnd", sess.reveal<uint32_t>(a.rotl(s), PUBLIC), rotl_w(v, (unsigned)s));
-    check_u("rotr rnd", sess.reveal<uint32_t>(a.rotr(s), PUBLIC), rotr_w(v, (unsigned)s));
+    check_u("rotl rnd", sess.reveal<uint32_t>(a.rotl(s), PUBLIC).value(), rotl_w(v, (unsigned)s));
+    check_u("rotr rnd", sess.reveal<uint32_t>(a.rotr(s), PUBLIC).value(), rotr_w(v, (unsigned)s));
   }
 }
 
@@ -154,8 +154,8 @@ static void sweep_shift_secret() {
     for (int s = 0; s <= 64; ++s) {
       auto a  = sess.input<UInt32>(ALICE, v);
       auto sh = sess.input<UInt32>(BOB, (uint32_t)s);
-      check_u("shl sec", sess.reveal<uint32_t>(a << sh, PUBLIC), shl_w(v, (unsigned)s));
-      check_u("shr sec", sess.reveal<uint32_t>(a >> sh, PUBLIC), shr_w(v, (unsigned)s));
+      check_u("shl sec", sess.reveal<uint32_t>(a << sh, PUBLIC).value(), shl_w(v, (unsigned)s));
+      check_u("shr sec", sess.reveal<uint32_t>(a >> sh, PUBLIC).value(), shr_w(v, (unsigned)s));
     }
   }
 }
@@ -171,12 +171,12 @@ static void sweep_boundaries() {
   };
   for (auto c : cases) {
     auto A = sess.input<UInt32>(ALICE, c.a), B = sess.input<UInt32>(BOB, c.b);
-    check_u("bnd add", sess.reveal<uint32_t>(A + B, PUBLIC), (uint32_t)(c.a + c.b));
-    check_u("bnd sub", sess.reveal<uint32_t>(A - B, PUBLIC), (uint32_t)(c.a - c.b));
-    check_u("bnd mul", sess.reveal<uint32_t>(A * B, PUBLIC), (uint32_t)(c.a * c.b));
+    check_u("bnd add", sess.reveal<uint32_t>(A + B, PUBLIC).value(), (uint32_t)(c.a + c.b));
+    check_u("bnd sub", sess.reveal<uint32_t>(A - B, PUBLIC).value(), (uint32_t)(c.a - c.b));
+    check_u("bnd mul", sess.reveal<uint32_t>(A * B, PUBLIC).value(), (uint32_t)(c.a * c.b));
     if (c.b != 0) {
-      check_u("bnd div", sess.reveal<uint32_t>(A / B, PUBLIC), c.a / c.b);
-      check_u("bnd mod", sess.reveal<uint32_t>(A % B, PUBLIC), c.a % c.b);
+      check_u("bnd div", sess.reveal<uint32_t>(A / B, PUBLIC).value(), c.a / c.b);
+      check_u("bnd mod", sess.reveal<uint32_t>(A % B, PUBLIC).value(), c.a % c.b);
     }
   }
 }
@@ -190,17 +190,17 @@ static void sweep_views() {
     uint32_t v = (uint32_t)rng();
     auto a = sess.input<UInt32>(ALICE, v);
 
-    check_u("zext<48>",  sess.reveal(a.zext<48>(), PUBLIC), (uint64_t)v);
-    check_u("trunc<16>", sess.reveal(a.trunc<16>(), PUBLIC), v & 0xffffu);
+    check_u("zext<48>",  sess.reveal(a.zext<48>(), PUBLIC).value(), (uint64_t)v);
+    check_u("trunc<16>", sess.reveal(a.trunc<16>(), PUBLIC).value(), v & 0xffffu);
     // slice<8,24> picks bits [8,24) -> a 16-bit value.
-    check_u("slice<8,24>", sess.reveal(a.slice<8, 24>(), PUBLIC), (v >> 8) & 0xffffu);
+    check_u("slice<8,24>", sess.reveal(a.slice<8, 24>(), PUBLIC).value(), (v >> 8) & 0xffffu);
     // extract<Base,Width> is slice<Base,Base+Width>.
-    check_u("extract<4,12>", sess.reveal(a.extract<4, 12>(), PUBLIC), (v >> 4) & 0xfffu);
+    check_u("extract<4,12>", sess.reveal(a.extract<4, 12>(), PUBLIC).value(), (v >> 4) & 0xfffu);
 
     // concat: lo bits are *this, hi bits are the argument (low-at-index-0).
     UInt_T<ClearCtx, 16> lo = a.trunc<16>();
     auto hi = sess.input<UInt_T<ClearCtx, 16>>(BOB, (uint16_t)(v >> 16));
-    check_u("concat", sess.reveal(lo.concat(hi), PUBLIC), (uint64_t)v);
+    check_u("concat", sess.reveal(lo.concat(hi), PUBLIC).value(), (uint64_t)v);
   }
 }
 
@@ -211,12 +211,12 @@ static void sweep_bitcount_signed() {
   const uint32_t vs[] = {0u, 1u, UINT32_MAX, 0x80000000u, 0x0F0F0F0Fu, 0xCAFEBABEu, 7u, 0x7FFFFFFFu};
   for (uint32_t v : vs) {
     auto a = sess.input<UInt32>(ALICE, v);
-    check_u("hamming_weight", sess.reveal(a.hamming_weight(), PUBLIC),
+    check_u("hamming_weight", sess.reveal(a.hamming_weight(), PUBLIC).value(),
             (uint64_t)__builtin_popcount(v));
-    check_u("leading_zeros", sess.reveal(a.leading_zeros(), PUBLIC),
+    check_u("leading_zeros", sess.reveal(a.leading_zeros(), PUBLIC).value(),
             v == 0 ? 32u : (uint64_t)__builtin_clz(v));
     // as_signed reinterprets the same wires as two's complement.
-    int64_t got = sess.reveal(a.as_signed(), PUBLIC);
+    int64_t got = sess.reveal(a.as_signed(), PUBLIC).value();
     check("as_signed", got == (int64_t)(int32_t)v);
   }
 }
@@ -251,7 +251,7 @@ static void sweep_dynamic() {
   {
     DynUInt a = DynUInt::constant(ctx, 32, 0x12345678u);
     UInt_T<ClearCtx, 32> fixed = a.to_fixed<32>();
-    check_u("dyn->fixed", sess.reveal(fixed, PUBLIC), 0x12345678u);
+    check_u("dyn->fixed", sess.reveal(fixed, PUBLIC).value(), 0x12345678u);
     DynUInt back = fixed.to_dynamic();
     check("dyn round-trip width", back.width() == 32);
     check_u("fixed->dyn", rd_dyn(back), 0x12345678u);
@@ -268,7 +268,7 @@ static void sweep_dynamic() {
     check_u("dyn and", rd_dyn(a & b), ia & ib);
     check_u("dyn or",  rd_dyn(a | b), ia | ib);
     check_u("dyn xor", rd_dyn(a ^ b), ia ^ ib);
-    check("dyn lt", sess.reveal(a < b, PUBLIC) == (ia < ib));   // comparison yields a Bit_T
+    check("dyn lt", sess.reveal(a < b, PUBLIC).value() == (ia < ib));   // comparison yields a Bit_T
     if (ib != 0) {
       check_u("dyn div", rd_dyn(a / b), ia / ib);
       check_u("dyn mod", rd_dyn(a % b), ia % ib);

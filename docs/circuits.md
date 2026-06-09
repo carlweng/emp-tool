@@ -64,7 +64,7 @@ auto a = sess.input<UInt32>(ALICE, 7);      // feed inputs through the session
 auto b = sess.input<UInt32>(BOB,   5);
 auto s = a + b;                             // pure value-return gates on the values
 auto lt = a < b;                            // -> Bit_T<ClearCtx>
-uint32_t r = sess.reveal<uint32_t>(s, PUBLIC);   // results leave through the session
+uint32_t r = sess.reveal<uint32_t>(s, PUBLIC).value();  // reveal -> std::optional<uint32_t>
 ```
 
 A session exposes `input` (and `input_batch` where applicable), `reveal`, the value
@@ -73,7 +73,9 @@ value/context-level work such as public constants (`UInt32::constant(sess.ctx(),
 7)`). A protocol library provides its own session over a garbled / secret-shared
 context with the same surface — only the constructor (IO, party, preprocessing)
 differs. Pure circuit bodies never call `input`/`reveal`; they take and return
-values.
+values. `reveal` returns `std::optional<clear_t>`: the value on a party that learns
+it (every party for `PUBLIC`, the named recipient otherwise) and `std::nullopt` on a
+party that does not; a plaintext `ClearSession` always populates it.
 
 ### Value surface
 

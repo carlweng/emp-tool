@@ -74,7 +74,7 @@ static std::array<uint8_t, 32> circuit_sha256(const uint8_t* bytes) {
   ClearSession sess;
   ClearSession::BitVec<N> msg = message_bits<N>(sess, bytes);
   BV256 dig = sha256(sess.ctx(), msg);
-  return bytes_from_digest(sess.reveal(dig, PUBLIC));
+  return bytes_from_digest(sess.reveal(dig, PUBLIC).value());
 }
 
 // OpenSSL reference digest.
@@ -94,7 +94,7 @@ static void example() {
   auto msg = sess.input<ClearSession::BitVec<24>>(ALICE, message_clear<24>(abc));
 
   BV256 digest = sha256(sess.ctx(), msg);
-  std::string got = hex32(bytes_from_digest(sess.reveal(digest, PUBLIC)));
+  std::string got = hex32(bytes_from_digest(sess.reveal(digest, PUBLIC).value()));
 
   const std::string want =
       "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
@@ -169,7 +169,7 @@ static void section_compress() {
                             0xb00361a3, 0x96177a9c, 0xb410ff61, 0xf20015ad};
   bool ok = true;
   for (int i = 0; i < 8; ++i) {
-    uint32_t w = sess.reveal<uint32_t>(state[i], PUBLIC);
+    uint32_t w = sess.reveal<uint32_t>(state[i], PUBLIC).value();
     if (w != want[i]) { ok = false; printf("    word %d got %08x want %08x\n", i, w, want[i]); }
   }
   check("direct sha256_compress(\"abc\")", ok);

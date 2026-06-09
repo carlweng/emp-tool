@@ -131,8 +131,8 @@ emp-tool's `ClearSession` as the reference. `sess` below is that session.
 ### 3.1. Feeding input values
 
 ```cpp
-using S32 = Int_T<SH2PCCtx,32>;
-using U32 = UInt_T<SH2PCCtx,32>;
+using S32 = SH2PCSession::Int<32>;
+using U32 = SH2PCSession::UInt<32>;
 auto a = sess.input<S32>(ALICE,  alice_value);   // owned by Alice
 auto b = sess.input<U32>(BOB,    bob_value);     // owned by Bob
 auto k = sess.input<S32>(PUBLIC, 17);            // both parties agree on the literal
@@ -146,14 +146,16 @@ constant inside a body uses `T::constant(sess.ctx(), v)` instead.
 ### 3.2. Revealing outputs
 
 ```cpp
-uint64_t r = (uint64_t)sess.reveal(result, PUBLIC);  // both parties see it
-auto     s = sess.reveal(result, ALICE);             // only Alice (may be std::optional)
+uint64_t r = (uint64_t)sess.reveal(result, PUBLIC).value();  // both parties see it
+auto     s = sess.reveal(result, ALICE);             // std::optional: value on Alice, nullopt on Bob
 ```
 
-`sess.reveal(value, recipient)` is the *only* way to get a host-language value back
-from a circuit value (a protocol session may return `std::optional<T>` to a
-non-`PUBLIC` recipient, since only that party learns it). Revealing a secret
-comparison to `PUBLIC` **leaks that bit to both parties**. This is sometimes
+`sess.reveal(value, recipient)` returns `std::optional<clear_t>` and is the *only*
+way to get a host-language value back from a circuit value: the value is present on
+a party that learns it (every party for `PUBLIC`, the named recipient otherwise) and
+`std::nullopt` on a party that does not — never a decoded placeholder. A plaintext
+session (`ClearSession`) always populates it. Revealing a secret comparison to
+`PUBLIC` **leaks that bit to both parties**. This is sometimes
 intentional and sometimes a security bug — the translator must not insert reveals
 it wasn't asked for.
 
@@ -161,9 +163,9 @@ it wasn't asked for.
 
 The same source file is compiled once and run as both parties (e.g.
 `./prog 1 12345` for Alice, `./prog 2 12345` for Bob). The party identity is a
-runtime int, typically read from `argv[1]`, and passed to the context
-constructor (`SH2PCCtx ctx(&io, party)`). Both invocations call the same
-`ctx.input<T>(ALICE, …)` / `ctx.input<T>(BOB, …)` — each process supplies its
+runtime int, typically read from `argv[1]`, and passed to the session
+constructor (`SH2PCSession sess(&io, party)`). Both invocations call the same
+`sess.input<T>(ALICE, …)` / `sess.input<T>(BOB, …)` — each process supplies its
 own real value where it owns the input and a placeholder elsewhere.
 Translators should preserve this symmetry.
 
@@ -248,6 +250,7 @@ If MAX is unknown, the program is not translatable.
 //   y = arr[idx];   // idx secret, arr public-length
 
 // EMP: linear mux. Cost is O(len(arr)) in AND gates.
+// (ctx is the body's BooleanContext parameter; at a call site it is sess.ctx().)
 auto y = T::constant(ctx, 0);
 for (size_t k = 0; k < arr.size(); ++k) {
     Bit_T<Ctx> eq = (idx == UIdx::constant(ctx, k));
@@ -395,7 +398,7 @@ using U32 = ClearSession::UInt<32>;
 auto a = sess.input<U32>(ALICE, av);     // plaintext: a session input is just a public wire
 auto b = sess.input<U32>(BOB, bv);
 auto c = a + b;
-uint64_t r = sess.reveal(c, PUBLIC);     // results leave through the session
+uint64_t r = sess.reveal(c, PUBLIC).value();  // results leave through the session
 ```
 
 To count AND gates — the right metric for circuit cost (XOR / NOT are free in
@@ -406,29 +409,29 @@ program (see [frontend.md](frontend.md)).
 
 ### 6.2. Semi-honest 2PC
 
-For end-to-end semi-honest 2PC use **emp-sh2pc**'s `SH2PCCtx`, which owns all
-protocol state (OT / Delta / PRG / half-gate) and exposes typed `input` /
-`reveal` directly — emp-sh2pc currently bundles the session's I/O role onto its
-context, so for it you feed and reveal on the context itself (emp-tool's
-`ClearSession` keeps the pure context and the I/O session separate):
+For end-to-end semi-honest 2PC use **emp-sh2pc**'s `SH2PCSession`. It owns the
+protocol state (IO / OT / Delta / PRG / half-gate) and exposes the same surface
+as `ClearSession` — `input` / `reveal` for the I/O boundary and `ctx()` for the
+garbled `SH2PCCtx` gate context that value construction and `frontend::run` use:
 
 ```cpp
 NetIO io(party == ALICE ? nullptr : "127.0.0.1", port);
-SH2PCCtx ctx(&io, party);                       // owns the protocol state
+SH2PCSession sess(&io, party);                  // owns the protocol state + I/O boundary
+using U32 = SH2PCSession::UInt<32>;
 
-auto a = ctx.input<UInt_T<SH2PCCtx,32>>(ALICE,  av);   // private inputs
-auto b = ctx.input<UInt_T<SH2PCCtx,32>>(BOB,    bv);
-auto k = ctx.input<UInt_T<SH2PCCtx,32>>(PUBLIC, kv);   // public constant
-auto c = a + b + k;                                     // or frontend::run(ctx, circ, ...)
-uint32_t r = (uint32_t)ctx.reveal(c, PUBLIC);
-ctx.finalize();
+auto a = sess.input<U32>(ALICE, av);                   // private inputs
+auto b = sess.input<U32>(BOB,   bv);
+auto k = U32::constant(sess.ctx(), kv);                // public constant
+auto c = a + b + k;                                     // or frontend::run(sess.ctx(), circ, ...)
+uint32_t r = (uint32_t)sess.reveal(c, PUBLIC).value();
+sess.finalize();
 ```
 
 Because the body is written over a generic context, the **same** circuit
 function (e.g. `[](auto a, auto b){ return a + b; }`) compiled once with
 `frontend::compile` runs unchanged on `ClearCtx` (plaintext) and `SH2PCCtx`
 (garbled). **This is the point** — write once, run on whichever context the
-caller wants. `ctx.num_and()` reports the ANDs garbled so far.
+caller wants. `sess.num_and()` reports the ANDs garbled so far.
 
 `NetIO` satisfies the `IOChannel` contract; it is not thread-safe — see
 [docs/io_channel.md](io_channel.md).
@@ -520,7 +523,7 @@ def f(alice_xs, bob_y):
     return total                        # revealed to both
 ```
 
-**EMP translation (C++), over the garbled `SH2PCCtx`:**
+**EMP translation (C++), over the garbled `SH2PCSession`:**
 
 ```cpp
 #include "emp-tool/emp-tool.h"
@@ -529,33 +532,33 @@ def f(alice_xs, bob_y):
 using namespace emp;
 
 constexpr size_t N = 16;                       // public
-using S32 = Int_T<SH2PCCtx, 32>;               // x and y are int32
+using S32 = SH2PCSession::Int<32>;             // x and y are int32
 
-int32_t f(SH2PCCtx& ctx, const int32_t alice_xs[N], int32_t bob_y_value) {
-    auto y     = ctx.input<S32>(BOB, bob_y_value);
-    auto total = S32::constant(ctx, 0);
-    auto zero  = S32::constant(ctx, 0);
+int32_t f(SH2PCSession& sess, const int32_t alice_xs[N], int32_t bob_y_value) {
+    auto y     = sess.input<S32>(BOB, bob_y_value);
+    auto total = S32::constant(sess.ctx(), 0);
+    auto zero  = S32::constant(sess.ctx(), 0);
 
     for (size_t i = 0; i < N; ++i) {
         // Each party feeds its own value; the other passes a dummy.
-        auto x      = ctx.input<S32>(ALICE, alice_xs[i]);
+        auto x      = sess.input<S32>(ALICE, alice_xs[i]);
         auto gt     = x > y;                     // signed comparison -> Bit_T
         auto addend = zero.select(gt, x);        // gt ? x : 0
         total = total + addend;
     }
-    return (int32_t)ctx.reveal(total, PUBLIC);
+    return (int32_t)sess.reveal(total, PUBLIC).value();
 }
 
 int main(int argc, char** argv) {
     int party = std::atoi(argv[1]);
     NetIO io(party == ALICE ? nullptr : "127.0.0.1", 12345);
-    SH2PCCtx ctx(&io, party);
+    SH2PCSession sess(&io, party);
 
     int32_t alice_xs[N] = { /* Alice's real values; Bob's process passes 0s here */ };
     int32_t bob_y       = /* Bob's real value;       Alice's process passes 0   */;
 
-    int32_t r = f(ctx, alice_xs, bob_y);
-    ctx.finalize();
+    int32_t r = f(sess, alice_xs, bob_y);
+    sess.finalize();
     std::cout << r << "\n";
 }
 ```
@@ -567,7 +570,7 @@ Notes on what changed:
   every `i`.
 * `total = 0` became `S32::constant(ctx, 0)`. The accumulator is a circuit
   value, not an `int`, after the first iteration.
-* The function returns an `int32_t` only because `ctx.reveal(total, PUBLIC)`
+* The function returns an `int32_t` only because `sess.reveal(total, PUBLIC)`
   was called at the end. All intermediate state is `S32`.
 * `for x in alice_xs` works because `N` is public and known at
   translation time.
@@ -579,8 +582,9 @@ Notes on what changed:
 ## 10. Quick reference: API surface
 
 The value types are over a `BooleanContext` `Ctx`. Make a public constant with
-`T::constant(ctx, v)`; feed a secret through the session with `input<T>(owner,
-v)`; open with `reveal(v, recipient)`.
+`T::constant(sess.ctx(), v)`; feed a secret through the session with
+`sess.input<T>(owner, v)`; open with `sess.reveal(v, recipient)` — a
+`std::optional<clear_t>`, populated only on a party that learns the value.
 
 ```
 Bit_T<Ctx>                                 // wire-level boolean (clear: bool)
@@ -651,8 +655,8 @@ of the README).
   `execute_program(ctx, prog, inputs)` for replaying a loaded program.
 * `emp-tool/frontend/circuit_fn.h` + `frontend/rec.h` — `compile` / `run`
   for pure circuit functions; see [frontend.md](frontend.md).
-* `emp-sh2pc/emp-sh2pc/sh2pc_session.h` — `SH2PCCtx`, the garbled 2PC
-  context with typed `input` / `reveal`.
+* `emp-sh2pc/emp-sh2pc/sh2pc_session.h` — `SH2PCSession`, the garbled 2PC
+  session: typed `input` / `reveal` over its `SH2PCCtx` gate context (`sess.ctx()`).
 * `test/test_typed.cpp` — tutorial for the context-bound value types over
   `ClearCtx`.
 * `test/test_circuit_fn.cpp` — compile-once / run-on-any-context, both body

@@ -58,19 +58,19 @@ static void example() {
   auto a = sess.input<Word>(ALICE, to_bits<32>(0xCAFEBABE));
   auto b = sess.input<Word>(BOB, to_bits<32>(0xDEADBEEF));
 
-  check("example xor", from_bits<32>(sess.reveal(a ^ b, PUBLIC)) == (0xCAFEBABEu ^ 0xDEADBEEFu));
-  check("example and", from_bits<32>(sess.reveal(a & b, PUBLIC)) == (0xCAFEBABEu & 0xDEADBEEFu));
-  check("example not", from_bits<32>(sess.reveal(~a, PUBLIC)) == (uint32_t)~0xCAFEBABEu);
-  check("example shl", from_bits<32>(sess.reveal(a << 8, PUBLIC)) == (uint32_t)(0xCAFEBABEu << 8));
+  check("example xor", from_bits<32>(sess.reveal(a ^ b, PUBLIC).value()) == (0xCAFEBABEu ^ 0xDEADBEEFu));
+  check("example and", from_bits<32>(sess.reveal(a & b, PUBLIC).value()) == (0xCAFEBABEu & 0xDEADBEEFu));
+  check("example not", from_bits<32>(sess.reveal(~a, PUBLIC).value()) == (uint32_t)~0xCAFEBABEu);
+  check("example shl", from_bits<32>(sess.reveal(a << 8, PUBLIC).value()) == (uint32_t)(0xCAFEBABEu << 8));
 
   // Pull the low byte out as its own block, and read a single bit as a Bit_T.
   Byte lo = a.slice<0, 8>();
-  check("example slice", from_bits<8>(sess.reveal(lo, PUBLIC)) == 0xBE);
-  check("example index", sess.reveal(a[0], PUBLIC) == ((0xCAFEBABEu) & 1));
+  check("example slice", from_bits<8>(sess.reveal(lo, PUBLIC).value()) == 0xBE);
+  check("example index", sess.reveal(a[0], PUBLIC).value() == ((0xCAFEBABEu) & 1));
 
   // The same wires viewed as an unsigned integer (zero gates) — how crypto
   // output flows into arithmetic.
-  check("example as_uint", sess.reveal<uint32_t>(a.as_uint(), PUBLIC) == 0xCAFEBABEu);
+  check("example as_uint", sess.reveal<uint32_t>(a.as_uint(), PUBLIC).value() == 0xCAFEBABEu);
 }
 
 // ---- bitwise: & | ^ ~ ----------------------------------------------------
@@ -82,10 +82,10 @@ template <int N> static void sweep_bitwise(std::mt19937_64& rng, const char* tag
     uint64_t ia = rng() & mask, ib = rng() & mask;
     auto a = sess.input<V>(ALICE, to_bits<N>(ia));
     auto b = sess.input<V>(BOB, to_bits<N>(ib));
-    check_eq(tag, from_bits<N>(sess.reveal(a & b, PUBLIC)), ia & ib);
-    check_eq(tag, from_bits<N>(sess.reveal(a | b, PUBLIC)), ia | ib);
-    check_eq(tag, from_bits<N>(sess.reveal(a ^ b, PUBLIC)), ia ^ ib);
-    check_eq(tag, from_bits<N>(sess.reveal(~a, PUBLIC)), (~ia) & mask);
+    check_eq(tag, from_bits<N>(sess.reveal(a & b, PUBLIC).value()), ia & ib);
+    check_eq(tag, from_bits<N>(sess.reveal(a | b, PUBLIC).value()), ia | ib);
+    check_eq(tag, from_bits<N>(sess.reveal(a ^ b, PUBLIC).value()), ia ^ ib);
+    check_eq(tag, from_bits<N>(sess.reveal(~a, PUBLIC).value()), (~ia) & mask);
   }
 }
 
@@ -99,10 +99,10 @@ template <int N> static void sweep_equality(std::mt19937_64& rng) {
     auto a = sess.input<V>(ALICE, to_bits<N>(v));
     auto same = sess.input<V>(BOB, to_bits<N>(v));
     auto diff = sess.input<V>(BOB, to_bits<N>((v ^ 1) & mask));   // flip one bit
-    check("eq same", sess.reveal(a == same, PUBLIC) == true);
-    check("eq same !ne", sess.reveal(a != same, PUBLIC) == false);
-    check("ne diff", sess.reveal(a != diff, PUBLIC) == true);
-    check("ne diff !eq", sess.reveal(a == diff, PUBLIC) == false);
+    check("eq same", sess.reveal(a == same, PUBLIC).value() == true);
+    check("eq same !ne", sess.reveal(a != same, PUBLIC).value() == false);
+    check("ne diff", sess.reveal(a != diff, PUBLIC).value() == true);
+    check("ne diff !eq", sess.reveal(a == diff, PUBLIC).value() == false);
   }
 }
 
@@ -118,8 +118,8 @@ template <int N> static void sweep_select(std::mt19937_64& rng) {
     auto a = sess.input<V>(ALICE, to_bits<N>(va));
     auto b = sess.input<V>(BOB, to_bits<N>(vb));
     // a.select(sel, t): sel ? t : a.
-    check_eq("select false", from_bits<N>(sess.reveal(a.select(B::constant(ctx, false), b), PUBLIC)), va);
-    check_eq("select true",  from_bits<N>(sess.reveal(a.select(B::constant(ctx, true),  b), PUBLIC)), vb);
+    check_eq("select false", from_bits<N>(sess.reveal(a.select(B::constant(ctx, false), b), PUBLIC).value()), va);
+    check_eq("select true",  from_bits<N>(sess.reveal(a.select(B::constant(ctx, true),  b), PUBLIC).value()), vb);
   }
 }
 
@@ -133,8 +133,8 @@ static void sweep_shifts() {
       auto a = sess.input<V>(ALICE, to_bits<32>(v));
       uint32_t want_l = (s >= 32) ? 0u : (uint32_t)(v << s);
       uint32_t want_r = (s >= 32) ? 0u : (uint32_t)(v >> s);
-      check_eq("shl", from_bits<32>(sess.reveal(a << s, PUBLIC)), want_l);
-      check_eq("shr", from_bits<32>(sess.reveal(a >> s, PUBLIC)), want_r);
+      check_eq("shl", from_bits<32>(sess.reveal(a << s, PUBLIC).value()), want_l);
+      check_eq("shr", from_bits<32>(sess.reveal(a >> s, PUBLIC).value()), want_r);
     }
 }
 
@@ -151,13 +151,13 @@ static void sweep_slice_concat(std::mt19937_64& rng) {
     BitVec_T<ClearCtx, 64> c = L.concat(H);
     check("concat width", c.width() == 64);
     uint64_t want = (uint64_t)lo | ((uint64_t)hi << 32);
-    check_eq("concat value", from_bits<64>(sess.reveal(c, PUBLIC)), want);
+    check_eq("concat value", from_bits<64>(sess.reveal(c, PUBLIC).value()), want);
 
     // compile-time slices read fixed windows of the 64-bit block.
-    check_eq("slice [0,8)",   from_bits<8>(sess.reveal(c.slice<0, 8>(), PUBLIC)),   (want >> 0)  & 0xff);
-    check_eq("slice [8,16)",  from_bits<8>(sess.reveal(c.slice<8, 16>(), PUBLIC)),  (want >> 8)  & 0xff);
-    check_eq("slice [16,32)", from_bits<16>(sess.reveal(c.slice<16, 32>(), PUBLIC)),(want >> 16) & 0xffff);
-    check_eq("slice [32,64)", from_bits<32>(sess.reveal(c.slice<32, 64>(), PUBLIC)),(want >> 32) & 0xffffffff);
+    check_eq("slice [0,8)",   from_bits<8>(sess.reveal(c.slice<0, 8>(), PUBLIC).value()),   (want >> 0)  & 0xff);
+    check_eq("slice [8,16)",  from_bits<8>(sess.reveal(c.slice<8, 16>(), PUBLIC).value()),  (want >> 8)  & 0xff);
+    check_eq("slice [16,32)", from_bits<16>(sess.reveal(c.slice<16, 32>(), PUBLIC).value()),(want >> 16) & 0xffff);
+    check_eq("slice [32,64)", from_bits<32>(sess.reveal(c.slice<32, 64>(), PUBLIC).value()),(want >> 32) & 0xffffffff);
   }
 }
 
@@ -171,8 +171,8 @@ static void sweep_as_uint(std::mt19937_64& rng) {
     auto a = sess.input<V>(ALICE, to_bits<32>(v));
     // BitVec -> UInt keeps the value and lets it enter arithmetic.
     UInt_T<ClearCtx, 32> u = a.as_uint();
-    check_eq("as_uint value", sess.reveal<uint32_t>(u, PUBLIC), v);
-    check_eq("as_uint +1", sess.reveal<uint32_t>(u + UInt_T<ClearCtx, 32>::constant(ctx, 1), PUBLIC), v + 1u);
+    check_eq("as_uint value", sess.reveal<uint32_t>(u, PUBLIC).value(), v);
+    check_eq("as_uint +1", sess.reveal<uint32_t>(u + UInt_T<ClearCtx, 32>::constant(ctx, 1), PUBLIC).value(), v + 1u);
   }
 }
 
@@ -185,7 +185,7 @@ static void sweep_index(std::mt19937_64& rng) {
     auto a = sess.input<V>(ALICE, to_bits<32>(v));
     for (int i = 0; i < 32; ++i) {
       Bit_T<ClearCtx> bit = a[i];   // a Bit_T reference to position i
-      check("index bit", sess.reveal(bit, PUBLIC) == (bool)((v >> i) & 1));
+      check("index bit", sess.reveal(bit, PUBLIC).value() == (bool)((v >> i) & 1));
     }
   }
 }

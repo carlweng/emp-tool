@@ -93,7 +93,7 @@ static void example() {
   auto msg = sess.input<BV24>(ALICE, in);     // feed "abc" as ALICE's input
   BV256 dig = sha3_256(sess.ctx(), msg);
 
-  std::array<bool, 256> bits = sess.reveal(dig, PUBLIC);
+  std::array<bool, 256> bits = sess.reveal(dig, PUBLIC).value();
   std::vector<uint8_t> ov(bits.begin(), bits.end());
   check("example sha3_256(\"abc\")",
         hex_from_bits(ov) ==
@@ -117,7 +117,7 @@ static void run_permute_case(const char* label, const uint64_t start[25]) {
   for (int l = 0; l < 25; ++l) {
     char nm[64];
     std::snprintf(nm, sizeof nm, "%s lane %d", label, l);
-    check_u64(nm, sess.reveal(A[l], PUBLIC), want[l]);
+    check_u64(nm, sess.reveal(A[l], PUBLIC).value(), want[l]);
   }
 }
 
@@ -156,7 +156,7 @@ static std::vector<uint8_t> sha3_clear(const uint8_t* msg) {
 
   auto m = sess.input<Msg>(ALICE, in);   // feed the message bytes as ALICE's input
   BV256 dig = sha3_256(sess.ctx(), m);
-  std::array<bool, 256> bits = sess.reveal(dig, PUBLIC);
+  std::array<bool, 256> bits = sess.reveal(dig, PUBLIC).value();
   return std::vector<uint8_t>(bits.begin(), bits.end());
 }
 

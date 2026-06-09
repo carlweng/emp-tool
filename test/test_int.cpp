@@ -46,16 +46,16 @@ static void example() {
   auto a = sess.input<Int32>(ALICE, -7);   // ALICE feeds -7
   auto b = sess.input<Int32>(BOB,    3);   // BOB feeds 3
 
-  check("example sum",  sess.reveal(a + b, PUBLIC) == -4);                 // -7 + 3
-  check("example diff", sess.reveal(a - b, PUBLIC) == -10);                // -7 - 3
-  check("example prod", sess.reveal(a * b, PUBLIC) == -21);                // -7 * 3
-  check("example quot", sess.reveal(a / b, PUBLIC) == -2);                 // truncate toward 0
-  check("example rem",  sess.reveal(a % b, PUBLIC) == -1);                 // remainder takes dividend sign
-  check("example neg",  sess.reveal(-a, PUBLIC) == 7);
-  check("example lt",   sess.reveal(a < b, PUBLIC) == true);               // signed: -7 < 3
-  check("example ge0",  sess.reveal(a >= sess.input<Int32>(PUBLIC, 0), PUBLIC) == false);
-  check("example asr",  sess.reveal(a >> 1, PUBLIC) == -4);                // arithmetic shift right
-  check("example cast", sess.reveal<int>(a + b, PUBLIC) == -4);            // reveal<T> casts for readability
+  check("example sum",  sess.reveal(a + b, PUBLIC).value() == -4);                 // -7 + 3
+  check("example diff", sess.reveal(a - b, PUBLIC).value() == -10);                // -7 - 3
+  check("example prod", sess.reveal(a * b, PUBLIC).value() == -21);                // -7 * 3
+  check("example quot", sess.reveal(a / b, PUBLIC).value() == -2);                 // truncate toward 0
+  check("example rem",  sess.reveal(a % b, PUBLIC).value() == -1);                 // remainder takes dividend sign
+  check("example neg",  sess.reveal(-a, PUBLIC).value() == 7);
+  check("example lt",   sess.reveal(a < b, PUBLIC).value() == true);               // signed: -7 < 3
+  check("example ge0",  sess.reveal(a >= sess.input<Int32>(PUBLIC, 0), PUBLIC).value() == false);
+  check("example asr",  sess.reveal(a >> 1, PUBLIC).value() == -4);                // arithmetic shift right
+  check("example cast", sess.reveal<int>(a + b, PUBLIC).value() == -4);            // reveal<T> casts for readability
 }
 
 // ---- reference: deterministic wrapping signed arithmetic (host) ------------
@@ -80,14 +80,14 @@ static void sweep_arith() {
     int32_t ia = (int32_t)(uint32_t)rng();
     int32_t ib = (int32_t)(uint32_t)rng();
     auto a = sess.input<Int32>(ALICE, ia), b = sess.input<Int32>(BOB, ib);
-    check_eq("add", sess.reveal(a + b, PUBLIC), add_w(ia, ib));
-    check_eq("sub", sess.reveal(a - b, PUBLIC), sub_w(ia, ib));
-    check_eq("mul", sess.reveal(a * b, PUBLIC), mul_w(ia, ib));
-    check_eq("and", sess.reveal(a & b, PUBLIC), (int32_t)(ia & ib));
-    check_eq("or",  sess.reveal(a | b, PUBLIC), (int32_t)(ia | ib));
-    check_eq("xor", sess.reveal(a ^ b, PUBLIC), (int32_t)(ia ^ ib));
-    check_eq("not", sess.reveal(~a, PUBLIC),    (int32_t)(~ia));
-    check_eq("neg", sess.reveal(-a, PUBLIC),    neg_w(ia));
+    check_eq("add", sess.reveal(a + b, PUBLIC).value(), add_w(ia, ib));
+    check_eq("sub", sess.reveal(a - b, PUBLIC).value(), sub_w(ia, ib));
+    check_eq("mul", sess.reveal(a * b, PUBLIC).value(), mul_w(ia, ib));
+    check_eq("and", sess.reveal(a & b, PUBLIC).value(), (int32_t)(ia & ib));
+    check_eq("or",  sess.reveal(a | b, PUBLIC).value(), (int32_t)(ia | ib));
+    check_eq("xor", sess.reveal(a ^ b, PUBLIC).value(), (int32_t)(ia ^ ib));
+    check_eq("not", sess.reveal(~a, PUBLIC).value(),    (int32_t)(~ia));
+    check_eq("neg", sess.reveal(-a, PUBLIC).value(),    neg_w(ia));
   }
 }
 
@@ -99,8 +99,8 @@ static void sweep_div_mod() {
     if (ib == 0) continue;                       // division by zero is undefined here
     if (ia == INT32_MIN && ib == -1) continue;   // INT_MIN/-1 is a UB precondition
     auto a = sess.input<Int32>(ALICE, ia), b = sess.input<Int32>(BOB, ib);
-    check_eq("div (truncate toward 0)", sess.reveal(a / b, PUBLIC), (int32_t)(ia / ib));
-    check_eq("mod (sign of dividend)",  sess.reveal(a % b, PUBLIC), (int32_t)(ia % ib));
+    check_eq("div (truncate toward 0)", sess.reveal(a / b, PUBLIC).value(), (int32_t)(ia / ib));
+    check_eq("mod (sign of dividend)",  sess.reveal(a % b, PUBLIC).value(), (int32_t)(ia % ib));
   }
 }
 
@@ -110,12 +110,12 @@ static void sweep_compare() {
     int32_t ia = (int32_t)(uint32_t)rng();
     int32_t ib = (int32_t)(uint32_t)rng();
     auto a = sess.input<Int32>(ALICE, ia), b = sess.input<Int32>(BOB, ib);
-    check("signed <",  sess.reveal(a <  b, PUBLIC) == (ia <  ib));
-    check("signed <=", sess.reveal(a <= b, PUBLIC) == (ia <= ib));
-    check("signed >",  sess.reveal(a >  b, PUBLIC) == (ia >  ib));
-    check("signed >=", sess.reveal(a >= b, PUBLIC) == (ia >= ib));
-    check("signed ==", sess.reveal(a == b, PUBLIC) == (ia == ib));
-    check("signed !=", sess.reveal(a != b, PUBLIC) == (ia != ib));
+    check("signed <",  sess.reveal(a <  b, PUBLIC).value() == (ia <  ib));
+    check("signed <=", sess.reveal(a <= b, PUBLIC).value() == (ia <= ib));
+    check("signed >",  sess.reveal(a >  b, PUBLIC).value() == (ia >  ib));
+    check("signed >=", sess.reveal(a >= b, PUBLIC).value() == (ia >= ib));
+    check("signed ==", sess.reveal(a == b, PUBLIC).value() == (ia == ib));
+    check("signed !=", sess.reveal(a != b, PUBLIC).value() == (ia != ib));
   }
 }
 
@@ -130,8 +130,8 @@ static void sweep_shift_public() {
   for (int32_t v : kShiftVals)
     for (unsigned s = 0; s <= 33; ++s) {         // include shamt > width
       auto a = sess.input<Int32>(ALICE, v);
-      check_eq("public <<", sess.reveal(a << (int)s, PUBLIC), shl_w(v, s));
-      check_eq("public >> (arith)", sess.reveal(a >> (int)s, PUBLIC), asr_w(v, s));
+      check_eq("public <<", sess.reveal(a << (int)s, PUBLIC).value(), shl_w(v, s));
+      check_eq("public >> (arith)", sess.reveal(a >> (int)s, PUBLIC).value(), asr_w(v, s));
     }
 }
 
@@ -143,8 +143,8 @@ static void sweep_shift_secret() {
     for (unsigned s = 0; s <= 65; ++s) {
       auto a = sess.input<Int32>(ALICE, v);
       auto sh = sess.input<UInt32>(BOB, (uint64_t)s);
-      check_eq("secret <<", sess.reveal(a << sh, PUBLIC), shl_w(v, s));
-      check_eq("secret >> (arith)", sess.reveal(a >> sh, PUBLIC), asr_w(v, s));
+      check_eq("secret <<", sess.reveal(a << sh, PUBLIC).value(), shl_w(v, s));
+      check_eq("secret >> (arith)", sess.reveal(a >> sh, PUBLIC).value(), asr_w(v, s));
     }
 }
 
@@ -158,14 +158,14 @@ static void boundary_cases() {
   };
   for (auto c : cases) {
     auto A = sess.input<Int32>(ALICE, c.a), B = sess.input<Int32>(BOB, c.b);
-    check_eq("boundary +", sess.reveal(A + B, PUBLIC), add_w(c.a, c.b));
-    check_eq("boundary -", sess.reveal(A - B, PUBLIC), sub_w(c.a, c.b));
-    check_eq("boundary *", sess.reveal(A * B, PUBLIC), mul_w(c.a, c.b));
+    check_eq("boundary +", sess.reveal(A + B, PUBLIC).value(), add_w(c.a, c.b));
+    check_eq("boundary -", sess.reveal(A - B, PUBLIC).value(), sub_w(c.a, c.b));
+    check_eq("boundary *", sess.reveal(A * B, PUBLIC).value(), mul_w(c.a, c.b));
   }
   // negate at the boundaries (-INT_MIN wraps back to INT_MIN).
   for (int32_t v : {0, 1, -1, 7, -7, INT32_MAX, INT32_MIN, INT32_MIN + 1}) {
     auto a = sess.input<Int32>(ALICE, v);
-    check_eq("boundary neg", sess.reveal(-a, PUBLIC), neg_w(v));
+    check_eq("boundary neg", sess.reveal(-a, PUBLIC).value(), neg_w(v));
   }
 }
 
@@ -176,14 +176,14 @@ static void width_changes() {
   for (int32_t v : {0, 1, -1, 7, -7, INT32_MAX, INT32_MIN, (int32_t)0xDEADBEEF}) {
     auto a = sess.input<Int32>(ALICE, v);
     // sext widens, replicating the sign bit.
-    check_eq("sext<48>", sess.reveal(a.sext<48>(), PUBLIC), (int64_t)v);
-    check_eq("sext<56>", sess.reveal(a.sext<56>(), PUBLIC), (int64_t)v);
+    check_eq("sext<48>", sess.reveal(a.sext<48>(), PUBLIC).value(), (int64_t)v);
+    check_eq("sext<56>", sess.reveal(a.sext<56>(), PUBLIC).value(), (int64_t)v);
     // trunc keeps the low bits (a signed 16-bit view of them).
-    check_eq("trunc<16>", sess.reveal(a.trunc<16>(), PUBLIC), (int16_t)(v & 0xffff));
+    check_eq("trunc<16>", sess.reveal(a.trunc<16>(), PUBLIC).value(), (int16_t)(v & 0xffff));
     // as_unsigned bit-casts the same wires (zero gates).
-    check_eq("as_unsigned", (int64_t)sess.reveal(a.as_unsigned(), PUBLIC), (int64_t)(uint32_t)v);
+    check_eq("as_unsigned", (int64_t)sess.reveal(a.as_unsigned(), PUBLIC).value(), (int64_t)(uint32_t)v);
     // round-trip: signed -> unsigned -> signed is the identity.
-    check_eq("as_unsigned->as_signed", sess.reveal(a.as_unsigned().as_signed(), PUBLIC), (int64_t)v);
+    check_eq("as_unsigned->as_signed", sess.reveal(a.as_unsigned().as_signed(), PUBLIC).value(), (int64_t)v);
   }
 }
 
@@ -208,7 +208,7 @@ static void runtime_width_section() {
            (int64_t)((int32_t)(((uint32_t)(-1000) * 333u) << 8) >> 8));   // wrap to 24 bits, sign-extend
   check_eq("runtime div", rd_dyn(a / b), -1000 / 333);   // -3, truncate toward 0
   check_eq("runtime mod", rd_dyn(a % b), -1000 % 333);   // -1, sign of dividend
-  check("runtime lt", sess.reveal(a < b, PUBLIC) == true);   // signed: -1000 < 333; comparison yields a Bit_T
+  check("runtime lt", sess.reveal(a < b, PUBLIC).value() == true);   // signed: -1000 < 333; comparison yields a Bit_T
 
   // arithmetic right shift on a negative runtime value sign-fills.
   check_eq("runtime asr", rd_dyn(a >> 2), -1000 >> 2);   // -250
@@ -238,7 +238,7 @@ static void runtime_width_section() {
       check_eq("dyn div", rd_dyn(x / y), sx(ia / ib));
       check_eq("dyn mod", rd_dyn(x % y), sx(ia % ib));
     }
-    check("dyn lt", sess.reveal(x < y, PUBLIC) == (ia < ib));   // comparison yields a Bit_T
+    check("dyn lt", sess.reveal(x < y, PUBLIC).value() == (ia < ib));   // comparison yields a Bit_T
   }
 }
 
