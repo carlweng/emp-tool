@@ -2,7 +2,7 @@
 #define EMP_CIRCUIT_UNSIGNED_INT_H__
 
 // UInt_T<Ctx,N>: an unsigned integer over a BooleanContext. N > 0 is a fixed-width
-// value (a CircuitValue: compile-time width, clear codec, wire layout); N == 0
+// value (a WireValue: compile-time width, clear codec, wire layout); N == 0
 // (== runtime_width) is a runtime-width value whose width lives in the wire vector
 // and is chosen at construction. Both share one set of operators: arithmetic
 // (+,-,*,/,%) over the runtime-sized numeric_kernels, comparisons returning
@@ -13,7 +13,7 @@
 
 #include "emp-tool/circuits/bit.h"
 #include "emp-tool/circuits/numeric_kernels.h"
-#include "emp-tool/core/utils.h"
+#include "emp-tool/runtime/core/utils.h"
 #include <array>
 #include <cstdint>
 #include <type_traits>

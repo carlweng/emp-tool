@@ -10,14 +10,14 @@
 //
 // Inputs are fed and results revealed through a ClearSession — the I/O boundary;
 // the values themselves are pure context-bound circuit values, and crypto kernels
-// take the raw ctx (sess.ctx()) as their first argument.
+// take the raw ctx (sess.direct_ctx()) as their first argument.
 //
 // Bit/byte convention throughout: LSB-first within each byte, bytes in natural
 // order. The BitVec clear_t is std::array<bool,N> in that same layout, so
 // bits_of<N>() feeds straight into sess.input<...> and sess.reveal returns it.
 #include "emp-tool/circuits/crypto/aes128.h"
-#include "emp-tool/session/clear_session.h"
-#include "emp-tool/core/constants.h"
+#include "emp-tool/ir/session/clear_session.h"
+#include "emp-tool/runtime/core/constants.h"
 #include "test_crypto_common.h"
 #include <openssl/aes.h>
 #include <openssl/evp.h>
@@ -32,8 +32,8 @@ using namespace emp;
 using namespace emp::circuit::crypto;
 using namespace test_crypto;
 
-using Byte  = ClearSession::BitVec<8>;
-using Block = ClearSession::BitVec<128>;
+using Byte  = BitVec_T<ClearCtx, 8>;
+using Block = BitVec_T<ClearCtx, 128>;
 
 // ---- local check helpers (no global mutable state besides the failure tally) ----
 static int g_fail = 0;
@@ -96,7 +96,7 @@ static void example() {
   auto key = sess.input<Block>(ALICE, bits_of<128>(bits_from_hex("000102030405060708090a0b0c0d0e0f")));
   auto pt  = sess.input<Block>(BOB,   bits_of<128>(bits_from_hex("00112233445566778899aabbccddeeff")));
 
-  Block ct = aes128_encrypt(sess.ctx(), pt, key);
+  Block ct = aes128_encrypt(sess.direct_ctx(), pt, key);
 
   unsigned char out[16];
   bytes_of<128>(sess.reveal(ct, PUBLIC).value(), out);
@@ -132,7 +132,7 @@ static void test_sbox() {
   for (int v = 0; v < 256; ++v) {
     unsigned char vb = (unsigned char)v;
     auto in = sess.input<Byte>(ALICE, bits_of<8>(&vb));
-    Byte out = aes_sbox(sess.ctx(), in);
+    Byte out = aes_sbox(sess.direct_ctx(), in);
     unsigned char got;
     bytes_of<8>(sess.reveal(out, PUBLIC).value(), &got);
     if (got != AES_SBOX_TABLE[v]) {
@@ -154,14 +154,14 @@ static void test_fips197() {
   auto pt  = sess.input<Block>(ALICE, bits_of<128>(bits_from_hex("3243f6a8885a308d313198a2e0370734")));
   auto key = sess.input<Block>(ALICE, bits_of<128>(bits_from_hex("2b7e151628aed2a6abf7158809cf4f3c")));
   unsigned char out[16];
-  bytes_of<128>(sess.reveal(aes128_encrypt(sess.ctx(), pt, key), PUBLIC).value(), out);
+  bytes_of<128>(sess.reveal(aes128_encrypt(sess.direct_ctx(), pt, key), PUBLIC).value(), out);
   check_hex("FIPS-197 Appendix B", hex_of_bytes(out, 16),
             "3925841d02dc09fbdc118597196a0b32");
 
   // Also exercise the two-stage form: key_schedule then encrypt_block.
-  using Exp = ClearSession::BitVec<1408>;
-  Exp exp = aes128_key_schedule(sess.ctx(), key);
-  Block ct2 = aes128_encrypt_block(sess.ctx(), pt, exp);
+  using Exp = BitVec_T<ClearCtx, 1408>;
+  Exp exp = aes128_key_schedule(sess.direct_ctx(), key);
+  Block ct2 = aes128_encrypt_block(sess.direct_ctx(), pt, exp);
   bytes_of<128>(sess.reveal(ct2, PUBLIC).value(), out);
   check_hex("FIPS-197 via key_schedule+encrypt_block", hex_of_bytes(out, 16),
             "3925841d02dc09fbdc118597196a0b32");
@@ -191,7 +191,7 @@ static void test_openssl_block() {
     auto key = sess.input<Block>(ALICE, bits_of<128>(k));
     auto pt  = sess.input<Block>(BOB,   bits_of<128>(p));
     unsigned char mine[16];
-    bytes_of<128>(sess.reveal(aes128_encrypt(sess.ctx(), pt, key), PUBLIC).value(), mine);
+    bytes_of<128>(sess.reveal(aes128_encrypt(sess.direct_ctx(), pt, key), PUBLIC).value(), mine);
 
     if (memcmp(mine, ref, 16) != 0) {
       if (bad < 3)
@@ -235,16 +235,16 @@ static void test_ctr() {
   ClearSession sess;
 
   // (a) ctr_inc_be64 by 1 on a zero block -> byte 15 (BE LSB) == 0x01.
-  Block zero = Block::constant(sess.ctx(), std::array<bool, 128>{});
+  Block zero = Block::constant(sess.direct_ctx(), std::array<bool, 128>{});
   unsigned char z1[16];
-  bytes_of<128>(sess.reveal(ctr_inc_be64(sess.ctx(), zero, 1), PUBLIC).value(), z1);
+  bytes_of<128>(sess.reveal(ctr_inc_be64(sess.direct_ctx(), zero, 1), PUBLIC).value(), z1);
   check_hex("ctr_inc +1", hex_of_bytes(z1, 16), "00000000000000000000000000000001");
 
   // (b) carry across a byte boundary: byte 15 == 0xff, +1 -> 00, byte 14 -> 01.
   unsigned char ffb[16] = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0xff};
   auto cff = sess.input<Block>(ALICE, bits_of<128>(ffb));
   unsigned char c1[16];
-  bytes_of<128>(sess.reveal(ctr_inc_be64(sess.ctx(), cff, 1), PUBLIC).value(), c1);
+  bytes_of<128>(sess.reveal(ctr_inc_be64(sess.direct_ctx(), cff, 1), PUBLIC).value(), c1);
   check_hex("ctr_inc carry", hex_of_bytes(c1, 16), "00000000000000000000000000000100");
 
   // (c) a large delta that ripples several bytes (byte 8..15 only; bytes 0..7 stay).
@@ -252,7 +252,7 @@ static void test_ctr() {
                             0,0,0,0,0,0,0xff,0xff};
   auto cb = sess.input<Block>(ALICE, bits_of<128>(base));
   unsigned char cd[16];
-  bytes_of<128>(sess.reveal(ctr_inc_be64(sess.ctx(), cb, 1), PUBLIC).value(), cd);
+  bytes_of<128>(sess.reveal(ctr_inc_be64(sess.direct_ctx(), cb, 1), PUBLIC).value(), cd);
   check_hex("ctr_inc multi-byte carry", hex_of_bytes(cd, 16),
             "11223344556677880000000000010000");
 
@@ -265,17 +265,17 @@ static void test_ctr() {
 
   // (d) Two-block keystream: ct == pt ^ AES(counter_i), counter_1 = inc(counter_0).
   {
-    using Two = ClearSession::BitVec<256>;
+    using Two = BitVec_T<ClearCtx, 256>;
     const std::string pth = "6bc1bee22e409f96e93d7e117393172a"
                             "ae2d8a571e03ac9c9eb76fac45af8e51";
     auto ptbits = bits_of<256>(bits_from_hex(pth));
     auto pt = sess.input<Two>(BOB, ptbits);
-    Two ct = aes128_ctr(sess.ctx(), key, iv, pt);
+    Two ct = aes128_ctr(sess.direct_ctx(), key, iv, pt);
 
     // Reconstruct the keystream from the block primitive.
-    Block ctr1 = ctr_inc_be64(sess.ctx(), iv, 1);
-    Block ks0 = aes128_encrypt(sess.ctx(), iv, key);
-    Block ks1 = aes128_encrypt(sess.ctx(), ctr1, key);
+    Block ctr1 = ctr_inc_be64(sess.direct_ctx(), iv, 1);
+    Block ks0 = aes128_encrypt(sess.direct_ctx(), iv, key);
+    Block ks1 = aes128_encrypt(sess.direct_ctx(), ctr1, key);
     auto ctb = sess.reveal(ct, PUBLIC).value();
     auto ks0b = sess.reveal(ks0, PUBLIC).value();
     auto ks1b = sess.reveal(ks1, PUBLIC).value();
@@ -295,13 +295,13 @@ static void test_ctr() {
   // (e) Longer multi-block message (5 full blocks = 640 bits) vs OpenSSL.
   {
     constexpr int NB = 5, N = NB * 128;
-    using Long = ClearSession::BitVec<N>;
+    using Long = BitVec_T<ClearCtx, N>;
     std::mt19937_64 rng(0x1234abcdull);
     std::vector<unsigned char> inb(NB * 16);
     for (auto& x : inb) x = (unsigned char)(rng() & 0xff);
     auto pt = sess.input<Long>(BOB, bits_of<N>(inb.data()));
     unsigned char mine[NB * 16];
-    bytes_of<N>(sess.reveal(aes128_ctr(sess.ctx(), key, iv, pt), PUBLIC).value(), mine);
+    bytes_of<N>(sess.reveal(aes128_ctr(sess.direct_ctx(), key, iv, pt), PUBLIC).value(), mine);
     std::vector<unsigned char> ref = openssl_ctr(keyb, ivb, inb, 0);
     check("CTR 5-block vs OpenSSL", memcmp(mine, ref.data(), NB * 16) == 0);
   }
@@ -309,14 +309,14 @@ static void test_ctr() {
   // (f) start_chunk offset: encrypting block k of a stream uses counter_0 + k.
   {
     constexpr int NB = 3, N = NB * 128;
-    using Long = ClearSession::BitVec<N>;
+    using Long = BitVec_T<ClearCtx, N>;
     std::mt19937_64 rng(0xfeedface77ull);
     std::vector<unsigned char> inb(NB * 16);
     for (auto& x : inb) x = (unsigned char)(rng() & 0xff);
     auto pt = sess.input<Long>(BOB, bits_of<N>(inb.data()));
     for (uint64_t start : {uint64_t(1), uint64_t(7), uint64_t(255), uint64_t(256), uint64_t(1000)}) {
       unsigned char mine[NB * 16];
-      bytes_of<N>(sess.reveal(aes128_ctr(sess.ctx(), key, iv, pt, start), PUBLIC).value(), mine);
+      bytes_of<N>(sess.reveal(aes128_ctr(sess.direct_ctx(), key, iv, pt, start), PUBLIC).value(), mine);
       std::vector<unsigned char> ref = openssl_ctr(keyb, ivb, inb, start);
       char nm[64]; snprintf(nm, sizeof nm, "CTR start_chunk=%llu vs OpenSSL", (unsigned long long)start);
       check(nm, memcmp(mine, ref.data(), NB * 16) == 0);
@@ -326,13 +326,13 @@ static void test_ctr() {
   // (g) round-trip: CTR is its own inverse (encrypt then decrypt == identity).
   {
     constexpr int N = 256;
-    using Two = ClearSession::BitVec<N>;
+    using Two = BitVec_T<ClearCtx, N>;
     std::mt19937_64 rng(0xdeadbeef01ull);
     std::array<bool, N> inbits{};
     for (int i = 0; i < N; ++i) inbits[i] = rng() & 1;
     auto pt = sess.input<Two>(BOB, inbits);
-    Two ct = aes128_ctr(sess.ctx(), key, iv, pt, 42);
-    Two rt = aes128_ctr(sess.ctx(), key, iv, ct, 42);
+    Two ct = aes128_ctr(sess.direct_ctx(), key, iv, pt, 42);
+    Two rt = aes128_ctr(sess.direct_ctx(), key, iv, ct, 42);
     check("CTR encrypt/decrypt round-trip", sess.reveal(rt, PUBLIC).value() == inbits);
   }
 }

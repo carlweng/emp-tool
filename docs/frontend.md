@@ -1,4 +1,4 @@
-# Circuit frontend (`emp-tool/frontend/`)
+# Circuit frontend (`emp-tool/circuits/frontend/`)
 
 A small, optional layer for **writing a pure circuit once and running it on any
 context** — plaintext, garbled 2PC, ZK, … . You write the circuit in ordinary
@@ -9,16 +9,16 @@ a reusable, **context-free** `Circuit` and `run` it on whatever context you hold
 
 Everything lives in namespace **`emp::frontend`** (so `run` / `compile` don't
 pollute `emp`). Header-only over emp-tool; **C++20**. Pull it in with
-`#include "emp-tool/frontend/frontend.h"` (or directly
-`#include "emp-tool/frontend/circuit_fn.h"`).
+`#include "emp-tool/circuits/frontend/frontend.h"` (or directly
+`#include "emp-tool/circuits/frontend/circuit_fn.h"`).
 
 This is the BooleanContext frontend: it compiles and replays over the typed
 context-bound values (`Bit_T<Ctx>` / `UInt_T<Ctx,N>` / …), with the context
 passed explicitly and no global backend.
 
 For the typed values it builds on, read [circuits.md](circuits.md); for the
-gate-context concept it replays over, read the header of `context/context.h`;
-for the session that owns I/O around it, read `session/concept.h`.
+gate-context concept it replays over, read the header of `ir/context/context.h`;
+for the session that owns I/O around it, read `ir/session/session.h`.
 
 ## What a circuit is — a pure function over a context
 
@@ -36,10 +36,11 @@ I/O stays the session's job, around the circuit:
 
 ```cpp
 ClearSession sess;                                    // session owns the I/O boundary
-using UInt32 = ClearSession::UInt<32>;                // a protocol session (SH2PCSession, AG2PCSession) exposes the same surface
+using Ctx = ClearSession::DirectCtx;                  // a protocol session (SH2PCSession, AG2PCSession) exposes the same surface
+using UInt32 = UInt_T<Ctx, 32>;
 auto a = sess.input<UInt32>(ALICE, av);               // session feeds inputs
 auto b = sess.input<UInt32>(BOB,   bv);
-auto c = frontend::run(sess.ctx(), circuit, a, b);    // pure replay over the context
+auto c = frontend::run(sess.direct_ctx(), circuit, a, b);    // pure replay over the context
 uint32_t r = sess.reveal<uint32_t>(c, PUBLIC).value(); // session reveals -> std::optional<uint32_t>
 ```
 
@@ -76,8 +77,8 @@ non-circuit argument, or being callable in **both** context forms are all
 compile-time errors with a precise message — in `compile<ArgVs...>` and live
 `run` alike.
 
-A circuit value is anything satisfying the `CircuitValue` concept
-(`circuit_fn.h`): it exposes `Wire`, `context_type`, `clear_t`, `width()`,
+A circuit value is anything satisfying the `WireValue` concept
+(`ir/wire_value.h`): it exposes `Wire`, `context_type`, `clear_t`, `width()`,
 `context()`, `pack_wires` / `from_wires`, `encode` / `decode`, and a
 `rebind<Ctx>` that maps the same value family onto another context. The four
 built-in families (`Bit_T`, `UInt_T`, `Int_T`, `Float_T` in `circuits/typed.h`)
@@ -90,7 +91,7 @@ satisfy it at fixed width. The runtime-width forms `UInt_T<Ctx,0>` / `Int_T<Ctx,
 ## Recording value types — context-free signatures
 
 `compile` is parameterized by the **circuit value types over the recording
-context** (`RecordCtx`). The `emp::rec::` aliases (`frontend/rec.h`) name those
+context** (`RecordCtx`). The `emp::rec::` aliases (`circuits/frontend/rec.h`) name those
 types without spelling `RecordCtx`:
 
 | value (per context)  | recording alias (`emp::rec::`)         |
@@ -113,8 +114,8 @@ UInt_T<ClearCtx,32>`); `run` uses it to reconstruct the live result type.
 ## compile / run
 
 ```cpp
-#include "emp-tool/frontend/circuit_fn.h"
-#include "emp-tool/frontend/rec.h"
+#include "emp-tool/circuits/frontend/circuit_fn.h"
+#include "emp-tool/circuits/frontend/rec.h"
 namespace cf = emp::frontend;
 using namespace emp;
 
@@ -155,7 +156,7 @@ rejected at construction rather than silently mis-running. Accessors:
 
 No analyses are baked into the circuit — gate counts, liveness, and the AND-depth
 schedule are free functions over the program (`ir/passes.h`,
-`context/context.h`), computed when wanted.
+`ir/context/context.h`), computed when wanted.
 
 ## What's inside (internals)
 
@@ -164,15 +165,16 @@ schedule are free functions over the program (`ir/passes.h`,
   the bare-wire arithmetic kernels in `emp::kernel`.
 - `circuits/value_traits.h` — `value_traits<T>`: the uniform metadata accessor
   (width, clear codec, `rebind<Ctx>`) over a circuit value's own static members.
-- `frontend/rec.h` — `rec::Bit`/`rec::BitVec<N>`/`rec::UInt<N>`/`rec::Int<N>`/`rec::Float<W>`,
+- `circuits/frontend/rec.h` — `rec::Bit`/`rec::BitVec<N>`/`rec::UInt<N>`/`rec::Int<N>`/`rec::Float<W>`,
   the value types over `RecordCtx` used as `compile` arguments.
-- `context/context.h` — the `BooleanContext` concept and the contexts
+- `ir/wire_value.h` — the generic `WireValue` concept (the structural value contract).
+- `ir/context/context.h` — the `BooleanContext` concept and the contexts
   `ClearCtx` (plaintext) and `RecordCtx` (records a `BooleanProgram`), plus the
   `CountCtx` / `DigestCtx` analysis helpers, `execute_program(ctx, prog, inputs,
   ws)` (value-return replay over any `BooleanContext`), and `ProgramWorkspace`.
 - `ir/artifact.h` — `CircuitArtifact` (program + signature) +
   `validate_artifact`.
-- `frontend/circuit_fn.h` — the `CircuitValue` / `RecordValue` concepts,
+- `circuits/frontend/circuit_fn.h` — the `RecordValue` concept (refining `WireValue`),
   `circuit_fn_traits` / `circuit_contract`, `Circuit<RetV,ArgVs...>`, `compile`,
   `run`.
 - `ir/passes.h` — analyses over the IR (`count`, `liveness`, `schedule`,

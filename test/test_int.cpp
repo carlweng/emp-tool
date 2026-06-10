@@ -6,16 +6,16 @@
 // through a ClearSession — the I/O boundary; the values are pure circuit values.
 #include "emp-tool/circuits/signed_int.h"
 #include "emp-tool/circuits/unsigned_int.h"
-#include "emp-tool/session/clear_session.h"
-#include "emp-tool/core/constants.h"
+#include "emp-tool/ir/session/clear_session.h"
+#include "emp-tool/runtime/core/constants.h"
 #include <cstdint>
 #include <cstdio>
 #include <random>
 using namespace emp;
 
-using Int32   = ClearSession::Int<32>;
-using UInt32  = ClearSession::UInt<32>;
-using IntDyn  = ClearSession::Int<0>;   // runtime-width form (in-circuit only)
+using Int32   = Int_T<ClearCtx, 32>;
+using UInt32  = UInt_T<ClearCtx, 32>;
+using IntDyn  = Int_T<ClearCtx, 0>;   // runtime-width form (in-circuit only)
 
 // ---- local check helpers (no global backend, no raw .w in the examples) ----
 
@@ -195,7 +195,7 @@ static void width_changes() {
 
 static void runtime_width_section() {
   ClearSession sess;
-  ClearCtx& ctx = sess.ctx();
+  ClearCtx& ctx = sess.direct_ctx();
   const int W = 24;
 
   // ::constant feeds a value sign-extended into a runtime-width wire vector.

@@ -4,7 +4,7 @@
 
 #include "emp-tool/emp-tool.h"
 #include "emp-tool/circuits/typed.h"
-#include "emp-tool/context/context.h"
+#include "emp-tool/ir/context/context.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>

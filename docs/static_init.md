@@ -104,7 +104,7 @@ SIOF-immune:
 
 | File | Constant |
 |---|---|
-| `emp-tool/core/block.hpp` | `zero_block`, `all_one_block`, `select_mask[2]` |
+| `emp-tool/runtime/core/block.hpp` | `zero_block`, `all_one_block`, `select_mask[2]` |
 | `emp-ot/ot_extension/cggm.h` | `kCggmLsbClearMask` |
 | `emp-ot/ot_extension/ferret/constants.h` | `lsb_clear_mask`, `lsb_only_mask` |
 | `emp-zk/emp-svole/fp_utility.h` | `prs`, `PRs` |

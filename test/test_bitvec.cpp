@@ -9,8 +9,8 @@
 // BitVec is the natural multi-bit block; for an arithmetic view of the same
 // wires use as_uint() (zero gates). clear_t is std::array<bool,N>, LSB at
 // index 0.
-#include "emp-tool/session/clear_session.h"
-#include "emp-tool/core/constants.h"
+#include "emp-tool/ir/session/clear_session.h"
+#include "emp-tool/runtime/core/constants.h"
 #include "emp-tool/circuits/bitvec.h"
 #include "emp-tool/circuits/unsigned_int.h"
 #include <array>
@@ -19,8 +19,8 @@
 #include <random>
 using namespace emp;
 
-template <int N> using BV  = ClearSession::BitVec<N>;
-using BV128 = ClearSession::BitVec<128>;
+template <int N> using BV  = BitVec_T<ClearCtx, N>;
+using BV128 = BitVec_T<ClearCtx, 128>;
 
 static int g_fail = 0;
 static void check(const char* name, bool ok) {
@@ -51,8 +51,8 @@ template <int N> static uint64_t from_bits(const std::array<bool, N>& b) {
 // party, combine with operators, read windows out, and reveal.
 static void example() {
   ClearSession sess;
-  using Byte = ClearSession::BitVec<8>;
-  using Word = ClearSession::BitVec<32>;
+  using Byte = BitVec_T<ClearCtx, 8>;
+  using Word = BitVec_T<ClearCtx, 32>;
 
   // Feed two 32-bit values as ALICE's and BOB's inputs (public wires here).
   auto a = sess.input<Word>(ALICE, to_bits<32>(0xCAFEBABE));
@@ -76,7 +76,7 @@ static void example() {
 // ---- bitwise: & | ^ ~ ----------------------------------------------------
 template <int N> static void sweep_bitwise(std::mt19937_64& rng, const char* tag) {
   ClearSession sess;
-  using V = ClearSession::BitVec<N>;
+  using V = BitVec_T<ClearCtx, N>;
   const uint64_t mask = (N >= 64) ? ~0ull : ((1ull << N) - 1);
   for (int it = 0; it < 1000; ++it) {
     uint64_t ia = rng() & mask, ib = rng() & mask;
@@ -92,7 +92,7 @@ template <int N> static void sweep_bitwise(std::mt19937_64& rng, const char* tag
 // ---- equality: == / != ---------------------------------------------------
 template <int N> static void sweep_equality(std::mt19937_64& rng) {
   ClearSession sess;
-  using V = ClearSession::BitVec<N>;
+  using V = BitVec_T<ClearCtx, N>;
   const uint64_t mask = (N >= 64) ? ~0ull : ((1ull << N) - 1);
   for (int it = 0; it < 500; ++it) {
     uint64_t v = rng() & mask;
@@ -109,9 +109,9 @@ template <int N> static void sweep_equality(std::mt19937_64& rng) {
 // ---- select (oblivious bitwise mux) --------------------------------------
 template <int N> static void sweep_select(std::mt19937_64& rng) {
   ClearSession sess;
-  ClearCtx& ctx = sess.ctx();
-  using V = ClearSession::BitVec<N>;
-  using B = ClearSession::Bit;
+  ClearCtx& ctx = sess.direct_ctx();
+  using V = BitVec_T<ClearCtx, N>;
+  using B = Bit_T<ClearCtx>;
   const uint64_t mask = (N >= 64) ? ~0ull : ((1ull << N) - 1);
   for (int it = 0; it < 500; ++it) {
     uint64_t va = rng() & mask, vb = rng() & mask;
@@ -126,7 +126,7 @@ template <int N> static void sweep_select(std::mt19937_64& rng) {
 // ---- public-amount shifts, including >= width ----------------------------
 static void sweep_shifts() {
   ClearSession sess;
-  using V = ClearSession::BitVec<32>;
+  using V = BitVec_T<ClearCtx, 32>;
   const uint32_t vs[] = {0u, 1u, 0xFFFFFFFFu, 0x80000000u, 0xCAFEBABEu, 0x00000001u};
   for (uint32_t v : vs)
     for (int s = 0; s <= 33; ++s) {   // 32 and 33 exercise shift >= width
@@ -141,7 +141,7 @@ static void sweep_shifts() {
 // ---- slice / concat ------------------------------------------------------
 static void sweep_slice_concat(std::mt19937_64& rng) {
   ClearSession sess;
-  using V32 = ClearSession::BitVec<32>;
+  using V32 = BitVec_T<ClearCtx, 32>;
   for (int it = 0; it < 200; ++it) {
     uint32_t lo = (uint32_t)rng(), hi = (uint32_t)rng();
     auto L = sess.input<V32>(ALICE, to_bits<32>(lo));
@@ -164,8 +164,8 @@ static void sweep_slice_concat(std::mt19937_64& rng) {
 // ---- as_uint round-trip with UInt_T (same wires, zero gates) -------------
 static void sweep_as_uint(std::mt19937_64& rng) {
   ClearSession sess;
-  ClearCtx& ctx = sess.ctx();
-  using V = ClearSession::BitVec<32>;
+  ClearCtx& ctx = sess.direct_ctx();
+  using V = BitVec_T<ClearCtx, 32>;
   for (int it = 0; it < 500; ++it) {
     uint32_t v = (uint32_t)rng();
     auto a = sess.input<V>(ALICE, to_bits<32>(v));
@@ -179,7 +179,7 @@ static void sweep_as_uint(std::mt19937_64& rng) {
 // ---- operator[] yields a Bit_T at each position --------------------------
 static void sweep_index(std::mt19937_64& rng) {
   ClearSession sess;
-  using V = ClearSession::BitVec<32>;
+  using V = BitVec_T<ClearCtx, 32>;
   for (int it = 0; it < 200; ++it) {
     uint32_t v = (uint32_t)rng();
     auto a = sess.input<V>(ALICE, to_bits<32>(v));
@@ -194,7 +194,7 @@ static void sweep_index(std::mt19937_64& rng) {
 // The codec is a pure static value-level transform (no I/O boundary): it maps
 // clear_t <-> wire bits, so it is exercised directly, not through the session.
 static void sweep_codec() {
-  using V = ClearSession::BitVec<8>;
+  using V = BitVec_T<ClearCtx, 8>;
   for (int v = 0; v < 256; ++v) {
     auto clear = to_bits<8>((uint64_t)v);
     auto enc = V::encode(clear);

@@ -7,7 +7,7 @@
 // odd-even mergesort network (any length), so the gate stream is identical for
 // every input — independent of the data and of `ascending`.
 
-#include "emp-tool/core/utils.h"   // error()
+#include "emp-tool/runtime/core/utils.h"   // error()
 #include <cstddef>
 #include <vector>
 

@@ -1,6 +1,6 @@
 // Bit_T<Ctx> over ClearCtx: the boolean gate operators and select.
 #include "emp-tool/circuits/bit.h"
-#include "emp-tool/context/clear.h"
+#include "emp-tool/ir/context/clear.h"
 #include <cstdio>
 using namespace emp;
 

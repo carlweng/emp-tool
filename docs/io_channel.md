@@ -1,4 +1,4 @@
-# IO channel layer (`emp-tool/io/`)
+# IO channel layer (`emp-tool/runtime/io/`)
 
 Conventions for `NetIO` and any code that uses it. Read this when
 writing protocol code that does sends / recvs / flushes across multiple
@@ -49,7 +49,7 @@ race, the answer falls out of a Debug build.
 
 ## TLS variant
 
-`TLSIO` (in `emp-tool/io/tls_io_channel.h`) is a third `IOChannel` for
+`TLSIO` (in `emp-tool/runtime/io/tls_io_channel.h`) is a third `IOChannel` for
 deployments where the wire crosses an untrusted network. Same flush
 contract, same single-thread-owned discipline, same telemetry counters
 as NetIO; the only difference is the wire — TLS 1.3 over OpenSSL

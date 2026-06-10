@@ -9,11 +9,11 @@
 //   AND count               -- sha3_256(BitVec<256>) == 38400, plus record==live
 //
 // The readable sections feed inputs and reveal results through a ClearSession —
-// the I/O boundary — and call the kernels on sess.ctx(). A tiny generic driver
+// the I/O boundary — and call the kernels on sess.direct_ctx(). A tiny generic driver
 // is kept ONLY for the record/replay equivalence and the gate count (legitimate
 // low-level IR plumbing, not a user-facing example).
-#include "emp-tool/session/clear_session.h"
-#include "emp-tool/core/constants.h"
+#include "emp-tool/ir/session/clear_session.h"
+#include "emp-tool/runtime/core/constants.h"
 #include "emp-tool/circuits/crypto/keccak.h"
 #include "test_crypto_common.h"
 #include <openssl/evp.h>
@@ -29,9 +29,9 @@ using namespace emp;
 using namespace emp::circuit::crypto;
 using namespace test_crypto;
 
-using BV24  = ClearSession::BitVec<24>;
-using BV256 = ClearSession::BitVec<256>;
-using U64   = ClearSession::UInt<64>;
+using BV24  = BitVec_T<ClearCtx, 24>;
+using BV256 = BitVec_T<ClearCtx, 256>;
+using U64   = UInt_T<ClearCtx, 64>;
 
 // --- local check helpers ---------------------------------------------------
 static int g_fail = 0;
@@ -91,7 +91,7 @@ static void example() {
   for (int i = 0; i < 24; ++i) in[i] = abc[i] != 0;
 
   auto msg = sess.input<BV24>(ALICE, in);     // feed "abc" as ALICE's input
-  BV256 dig = sha3_256(sess.ctx(), msg);
+  BV256 dig = sha3_256(sess.direct_ctx(), msg);
 
   std::array<bool, 256> bits = sess.reveal(dig, PUBLIC).value();
   std::vector<uint8_t> ov(bits.begin(), bits.end());
@@ -108,7 +108,7 @@ static void run_permute_case(const char* label, const uint64_t start[25]) {
   U64 A[25];
   for (int l = 0; l < 25; ++l) A[l] = sess.input<U64>(ALICE, start[l]);
 
-  keccak_f1600(sess.ctx(), A);
+  keccak_f1600(sess.direct_ctx(), A);
 
   uint64_t want[25];
   std::memcpy(want, start, sizeof want);
@@ -149,13 +149,13 @@ template <int Bytes>
 static std::vector<uint8_t> sha3_clear(const uint8_t* msg) {
   constexpr int N = Bytes * 8;
   ClearSession sess;
-  using Msg = ClearSession::BitVec<N>;
+  using Msg = BitVec_T<ClearCtx, N>;
   std::array<bool, N> in{};
   for (int b = 0; b < Bytes; ++b)
     for (int k = 0; k < 8; ++k) in[b * 8 + k] = ((msg[b] >> k) & 1) != 0;
 
   auto m = sess.input<Msg>(ALICE, in);   // feed the message bytes as ALICE's input
-  BV256 dig = sha3_256(sess.ctx(), m);
+  BV256 dig = sha3_256(sess.direct_ctx(), m);
   std::array<bool, 256> bits = sess.reveal(dig, PUBLIC).value();
   return std::vector<uint8_t>(bits.begin(), bits.end());
 }

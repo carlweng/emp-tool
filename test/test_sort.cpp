@@ -1,7 +1,7 @@
 // Data-oblivious sort over circuit values (sort.h), checked on ClearCtx against
 // std::sort. Covers a non-power-of-2 length with duplicates.
 #include "emp-tool/circuits/sort.h"
-#include "emp-tool/context/clear.h"
+#include "emp-tool/ir/context/clear.h"
 #include "emp-tool/circuits/unsigned_int.h"
 #include "emp-tool/circuits/signed_int.h"
 #include <algorithm>

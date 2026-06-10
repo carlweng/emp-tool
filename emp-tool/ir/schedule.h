@@ -13,9 +13,9 @@
 #include "emp-tool/ir/program.h"
 #include "emp-tool/ir/passes.h"        // schedule_pass
 #include "emp-tool/ir/execute.h"       // ProgramWorkspace
-#include "emp-tool/context/concept.h"
-#include "emp-tool/context/digest.h"   // digest_program (plan staleness guard)
-#include "emp-tool/core/utils.h"       // error()
+#include "emp-tool/ir/context/concept.h"
+#include "emp-tool/ir/context/digest.h"   // digest_program (plan staleness guard)
+#include "emp-tool/runtime/core/utils.h"       // error()
 #include <span>
 #include <vector>
 

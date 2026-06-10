@@ -11,7 +11,7 @@
 
 #include "emp-tool/ir/program.h"
 #include "emp-tool/ir/visit.h"
-#include "emp-tool/context/concept.h"
+#include "emp-tool/ir/context/concept.h"
 #include <cstddef>
 #include <span>
 #include <stdexcept>

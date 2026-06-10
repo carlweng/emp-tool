@@ -190,6 +190,47 @@ static bool check_sse_trans_roundtrip() {
 	return true;
 }
 
+// Parity: the tier-dispatched sse_trans_n128 must match the generic
+// (SSE2-only) sse_trans byte-for-byte. Exercises every variant the build
+// instantiates (SSE2 / AVX2 / AVX-512BW): on x86 the dispatcher picks the
+// widest; on aarch64 it falls through to sse_trans. Sweep covers AVX-512BW
+// bulk multiples (mult of 512 cols = 4 col_blocks), AVX2 multiples (256 cols
+// = 2 col_blocks), and tail sizes 1/2/3 col_blocks past those.
+static bool check_sse_trans_n128_parity() {
+	PRG prg;
+	const uint64_t ncols_list[] = {
+		128, 256, 384, 512, 640, 768, 896, 1024,    // 1..8 col_blocks
+		1280, 1536, 1664,                            // odd boundaries
+		2048, 4096, 8192, 16384,                     // typical SoftSpoken sizes
+		131072,                                      // SoftSpoken k=8 at kChunkBlocks=1024
+		74240                                        // Ferret bootstrap (kChunkBlocks=580)
+	};
+	for (uint64_t ncols : ncols_list) {
+		const size_t n_bytes = (128 * ncols) / 8;
+		const size_t n_blocks = n_bytes / sizeof(block);
+		vector<block> in(n_blocks), out_ref(n_blocks), out_n128(n_blocks);
+		prg.random_block(in.data(), (int64_t)n_blocks);
+		sse_trans(reinterpret_cast<uint8_t *>(out_ref.data()),
+		          reinterpret_cast<const uint8_t *>(in.data()), 128, ncols);
+		sse_trans_n128(out_n128.data(), in.data(), ncols);
+		if (memcmp(out_ref.data(), out_n128.data(), n_bytes) != 0) {
+			cout << "    sse_trans_n128 PARITY FAIL at ncols=" << ncols << "\n";
+			return false;
+		}
+		// Also verify the round-trip: transpose, transpose back via the generic
+		// reverse direction; output must equal input.
+		vector<block> back_blocks(n_blocks);
+		sse_trans(reinterpret_cast<uint8_t *>(back_blocks.data()),
+		          reinterpret_cast<const uint8_t *>(out_n128.data()),
+		          ncols, 128);
+		if (memcmp(in.data(), back_blocks.data(), n_bytes) != 0) {
+			cout << "    sse_trans_n128 ROUNDTRIP FAIL at ncols=" << ncols << "\n";
+			return false;
+		}
+	}
+	return true;
+}
+
 static bool check_bits_bytes_roundtrip() {
 	PRG prg;
 	for (int t = 0; t < 256; ++t) {
@@ -252,6 +293,7 @@ static bool run_correctness() {
 		{"xorBlocks_arr / xorBlocksTo", check_xorBlocks_arr},
 		{"cmpBlock",                    check_cmpBlock},
 		{"sse_trans round-trip",        check_sse_trans_roundtrip},
+		{"sse_trans_n128 parity",       check_sse_trans_n128_parity},
 		{"bytes<->bits32 round-trip",   check_bits_bytes_roundtrip},
 		{"bools<->bits round-trip",     check_bools_bits_roundtrip},
 	};

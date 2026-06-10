@@ -8,8 +8,8 @@ build the framework:
 
 | Header | Role |
 |---|---|
-| [`emp-tool/core/test_mode.h`](../emp-tool/core/test_mode.h) | The toggle. `is_test_mode()`, `set_test_mode(bool)`, `next_test_seed()`, `reset_test_seed_counter()`. |
-| [`emp-tool/io/trace_io.h`](../emp-tool/io/trace_io.h) | `TraceIO` IOChannel adapter that tees wire bytes to a pair of files alongside delivering them. |
+| [`emp-tool/runtime/core/test_mode.h`](../emp-tool/runtime/core/test_mode.h) | The toggle. `is_test_mode()`, `set_test_mode(bool)`, `next_test_seed()`, `reset_test_seed_counter()`. |
+| [`emp-tool/runtime/io/trace_io.h`](../emp-tool/runtime/io/trace_io.h) | `TraceIO` IOChannel adapter that tees wire bytes to a pair of files alongside delivering them. |
 
 ## When to use it
 

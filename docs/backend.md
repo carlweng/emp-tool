@@ -1,10 +1,10 @@
-# Execution layer (`emp-tool/execution/`)
+# Execution layer (`emp-tool/runtime/execution/`)
 
 emp-tool's circuits are evaluated by a **`BooleanContext`** — a type with a cheap,
 copyable `Wire` and value-return `public_bit` / `and_gate` / `xor_gate` /
 `not_gate`. There is no global backend and no `void*` virtual dispatch: a context
 is passed explicitly and the gate ops are statically dispatched and inlineable. See
-[circuits.md](circuits.md) for the value layer and `context/context.h` for the
+[circuits.md](circuits.md) for the value layer and `ir/context/context.h` for the
 concept and the built-in analysis contexts (`ClearCtx` / `CountCtx` / `DigestCtx` /
 `RecordCtx`).
 
@@ -39,9 +39,9 @@ The execution layer ships the per-gate garble/evaluate primitives a garbled cont
 builds on, as free functions over `block` labels (XOR/NOT are free; only AND needs
 ciphertext):
 
-- [half_gate.h](../emp-tool/execution/half_gate.h) — `halfgates_garble` /
+- [half_gate.h](../emp-tool/runtime/execution/half_gate.h) — `halfgates_garble` /
   `halfgates_eval` (Zahur–Rosulek–Evans half-gates).
-- [privacy_free.h](../emp-tool/execution/privacy_free.h) — `privacy_free_garble` /
+- [privacy_free.h](../emp-tool/runtime/execution/privacy_free.h) — `privacy_free_garble` /
   `privacy_free_eval`.
 
 `SH2PCCtx` calls `halfgates_garble`/`halfgates_eval` directly inside its `and_gate`;

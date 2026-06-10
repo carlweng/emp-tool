@@ -7,8 +7,8 @@
 // and the iterative recip/rsqrt/sqrt builtins are checked within tolerance.
 // Inputs are fed and results revealed through a ClearSession — the I/O boundary;
 // the values themselves are pure context-bound circuit values.
-#include "emp-tool/session/clear_session.h"
-#include "emp-tool/core/constants.h"
+#include "emp-tool/ir/session/clear_session.h"
+#include "emp-tool/runtime/core/constants.h"
 #include "emp-tool/circuits/float.h"
 #include <algorithm>
 #include <cmath>
@@ -18,7 +18,7 @@
 #include <random>
 using namespace emp;
 
-using F32 = ClearSession::Float<32>;
+using F32 = Float_T<ClearCtx, 32>;
 
 static int g_fail = 0;
 static void check(const char* name, bool ok) {
@@ -83,7 +83,7 @@ static void example() {
 // ---------------------------------------------------------------------------
 template <int W>
 static void width_examples(const char* tag) {
-  using F = ClearSession::Float<W>;
+  using F = Float_T<ClearCtx, W>;
   using host_t = typename FloatTraits<W>::host_t;
   ClearSession sess;
   auto C = [&](host_t v) { return sess.input<F>(ALICE, v); };
@@ -127,7 +127,7 @@ static void width_examples(const char* tag) {
   check(name("isinf"),    sess.reveal(a.is_inf(), PUBLIC).value() == false);
 
   // select(sel, other): sel ? other : *this.
-  auto t = sess.input<ClearSession::Bit>(ALICE, true), f = sess.input<ClearSession::Bit>(ALICE, false);
+  auto t = sess.input<Bit_T<ClearCtx>>(ALICE, true), f = sess.input<Bit_T<ClearCtx>>(ALICE, false);
   check_eq<host_t>(name("select t"), sess.reveal(a.select(t, b), PUBLIC).value(), (host_t)3.0);
   check_eq<host_t>(name("select f"), sess.reveal(a.select(f, b), PUBLIC).value(), (host_t)2.0);
 }
@@ -143,7 +143,7 @@ static void width_examples(const char* tag) {
 // ---------------------------------------------------------------------------
 template <int W>
 static void random_sweep(const char* tag, int runs) {
-  using F = ClearSession::Float<W>;
+  using F = Float_T<ClearCtx, W>;
   using host_t = typename FloatTraits<W>::host_t;
   ClearSession sess;
   std::mt19937_64 rng(0xF10A7ULL + (uint64_t)W);
@@ -216,7 +216,7 @@ static void random_sweep(const char* tag, int runs) {
 // ---------------------------------------------------------------------------
 template <int W>
 static void compare_sweep(const char* tag, int runs) {
-  using F = ClearSession::Float<W>;
+  using F = Float_T<ClearCtx, W>;
   using host_t = typename FloatTraits<W>::host_t;
   ClearSession sess;
   std::mt19937_64 rng(0xC0FFEEULL + (uint64_t)W);
@@ -249,7 +249,7 @@ static void compare_sweep(const char* tag, int runs) {
 // ---------------------------------------------------------------------------
 template <int W>
 static void boundary_cases(const char* tag) {
-  using F = ClearSession::Float<W>;
+  using F = Float_T<ClearCtx, W>;
   using host_t = typename FloatTraits<W>::host_t;
   ClearSession sess;
   auto name = [&](const char* op) {
@@ -317,7 +317,7 @@ static void boundary_cases(const char* tag) {
 // ---------------------------------------------------------------------------
 template <int W>
 static void codec_roundtrip(const char* tag) {
-  using F = ClearSession::Float<W>;
+  using F = Float_T<ClearCtx, W>;
   using host_t = typename FloatTraits<W>::host_t;
   std::mt19937_64 rng(0xDEC0DEULL + (uint64_t)W);
   std::uniform_real_distribution<double> d(-1000.0, 1000.0);

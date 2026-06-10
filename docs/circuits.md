@@ -4,22 +4,23 @@ Conventions for the circuit value types under `emp-tool/circuits/`.
 
 The circuit value layer is the **context-bound typed values**: `Bit_T<Ctx>`,
 `UInt_T<Ctx,N>`, `Int_T<Ctx,N>`, `Float_T<Ctx,W>`, and `BitVec_T<Ctx,N>`,
-templated on a `BooleanContext` (`context/context.h`). Static dispatch, no global
+templated on a `BooleanContext` (`ir/context/context.h`). Static dispatch, no global
 backend; each value carries its own `Ctx*` and issues value-return gates on it.
 This is the layer the [frontend](frontend.md) compiles and replays. The
 `BooleanContext` is pure circuit execution (gates only); concrete values enter and
 leave through a **session** (emp-tool's `ClearSession` in
-`session/clear_session.h`, or a protocol library's own session), which owns the
-`input`/`reveal` boundary and a context. Pure circuit bodies stay `Ctx`-templated
-values.
+`ir/session/clear_session.h`, or a protocol library's own session), which owns the
+`input`/`reveal` boundary and a direct context. Pure circuit bodies stay
+`Ctx`-templated values.
 
 Each value type lives in its own header — `circuits/{bit,bitvec,unsigned_int,
 signed_int,float}.h` — over the shared arithmetic in `circuits/numeric_kernels.h`.
 Two umbrellas gather them:
 
 - `circuits/typed.h` — the value types (`#include` it to get all five).
-- `circuits/circuit.h` — values + `value_traits.h` + sorting (`sort.h`) + the
-  crypto primitives (`circuits/crypto/crypto.h` = aes128 / sha256 / keccak).
+- `circuits/circuits.h` — the whole circuits layer: values + `value_traits.h` +
+  numeric kernels + sorting (`sort.h`) + the in-circuit crypto
+  (`circuits/crypto/crypto.h` = aes128 / sha256 / keccak) + the compile/run frontend.
 
 For numeric semantics (wrap, division, comparison), read
 [numeric_semantics.md](numeric_semantics.md). For protocol code that *uses* these
@@ -51,15 +52,16 @@ These static members are exposed uniformly through
 [`emp::value_traits<T>`](../emp-tool/circuits/value_traits.h)
 (`width()`/`encode`/`decode`/`rebind<Ctx>`) — the single metadata accessor over a
 value's own static members. A type meeting all three contracts satisfies the
-`CircuitValue` concept (`frontend/circuit_fn.h`); a session can `input`/`reveal` it
+`WireValue` concept (`ir/wire_value.h`); a session can `input`/`reveal` it
 and the frontend can `compile`/`run` it.
 
 ```cpp
-#include "emp-tool/session/clear_session.h"
+#include "emp-tool/emp-tool.h"
 using namespace emp;
 
 ClearSession sess;                          // owns a ClearCtx + the I/O boundary
-using UInt32 = ClearSession::UInt<32>;
+using Ctx = ClearSession::DirectCtx;
+using UInt32 = UInt_T<Ctx, 32>;
 auto a = sess.input<UInt32>(ALICE, 7);      // feed inputs through the session
 auto b = sess.input<UInt32>(BOB,   5);
 auto s = a + b;                             // pure value-return gates on the values
@@ -67,12 +69,13 @@ auto lt = a < b;                            // -> Bit_T<ClearCtx>
 uint32_t r = sess.reveal<uint32_t>(s, PUBLIC).value();  // reveal -> std::optional<uint32_t>
 ```
 
-A session exposes `input` (and `input_batch` where applicable), `reveal`, the value
-aliases `UInt<N>`/`Int<N>`/`BitVec<N>`/`Float<W>`/`Bit`, and `ctx()` for
-value/context-level work such as public constants (`UInt32::constant(sess.ctx(),
-7)`). A protocol library provides its own session over a garbled / secret-shared
-context with the same surface — only the constructor (IO, party, preprocessing)
-differs. Pure circuit bodies never call `input`/`reveal`; they take and return
+A session exposes `input` (and `input_batch` where applicable), `reveal`, and
+`direct_ctx()` for value/context-level work such as public constants
+(`UInt32::constant(sess.direct_ctx(), 7)`). It names no value family — values are
+context-bound (`UInt_T<DirectCtx,N>` etc.), so adding a value family needs no
+session edit. A protocol library provides its own session over a garbled /
+secret-shared context with the same surface — only the constructor (IO, party,
+preprocessing) differs. Pure circuit bodies never call `input`/`reveal`; they take and return
 values. `reveal` returns `std::optional<clear_t>`: the value on a party that learns
 it (every party for `PUBLIC`, the named recipient otherwise) and `std::nullopt` on a
 party that does not; a plaintext `ClearSession` always populates it.
@@ -88,7 +91,7 @@ party that does not; a plaintext `ClearSession` always populates it.
   comparisons, `& | ^ ~`, logical-left / arithmetic-right shifts, `sext`/`trunc`,
   `as_unsigned`.
 
-**Fixed vs runtime width.** `N > 0` is a fixed-width value and a `CircuitValue`
+**Fixed vs runtime width.** `N > 0` is a fixed-width value and a `WireValue`
 (compile-time width, clear codec, wire layout — the form a session feeds through
 `input`/`reveal` and the frontend compiles). `N == 0` (the `runtime_width` sentinel) is
 the *same* `UInt_T` / `Int_T` family with the width carried in the wire vector and
@@ -98,7 +101,7 @@ compile-time-width surface (`slice`/`extract`/`concat`/`zext`/`trunc`, secret-am
 barrel shifts, the clear codec, `popcount<R>`) is `requires (N > 0)` and so absent,
 and it adds `resize(width)` plus fixed↔runtime conversion (`to_dynamic()` on a fixed
 value, `to_fixed<M>()` on a runtime one). A runtime-width value is **not** a
-`CircuitValue` — it is for data-driven in-circuit computation, not the frontend
+`WireValue` — it is for data-driven in-circuit computation, not the frontend
 `input`/`compile` boundary. (Width must be `>= 1`; wider-than-64 constants
 zero-extend for `UInt_T` and sign-extend for `Int_T`.)
 - `Float_T<W>` — `+ - * / min max sqrt recip rsqrt fma`, comparisons / `is_nan` /

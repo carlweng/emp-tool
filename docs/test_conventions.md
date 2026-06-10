@@ -1,8 +1,8 @@
 # Test file conventions
 
 How `test/*.cpp` files are structured. Read this when writing a new
-test file for a header under `emp-tool/core/`, `emp-tool/crypto/`,
-`emp-tool/io/`, or `emp-tool/circuits/`, or when modifying an existing
+test file for a header under `emp-tool/runtime/core/`, `emp-tool/runtime/crypto/`,
+`emp-tool/runtime/io/`, or `emp-tool/circuits/`, or when modifying an existing
 test.
 
 ## One file per component

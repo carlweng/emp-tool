@@ -3,8 +3,10 @@
 // semantics). Inputs are fed and results revealed through a ClearSession — the
 // I/O boundary; the values themselves are pure context-bound circuit values.
 // Read example() to see how a normal user writes UInt_T code.
-#include "emp-tool/session/clear_session.h"
-#include "emp-tool/core/constants.h"
+#include "emp-tool/circuits/unsigned_int.h"
+#include "emp-tool/circuits/signed_int.h"
+#include "emp-tool/ir/session/clear_session.h"
+#include "emp-tool/runtime/core/constants.h"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -12,8 +14,8 @@
 
 using namespace emp;
 
-using UInt32  = ClearSession::UInt<32>;
-using DynUInt = ClearSession::UInt<0>;   // runtime-width form (in-circuit only)
+using UInt32  = UInt_T<ClearCtx, 32>;
+using DynUInt = UInt_T<ClearCtx, 0>;   // runtime-width form (in-circuit only)
 
 // ---- check helpers -------------------------------------------------------
 
@@ -228,7 +230,7 @@ static void sweep_bitcount_signed() {
 
 static void sweep_dynamic() {
   ClearSession sess;
-  ClearCtx& ctx = sess.ctx();
+  ClearCtx& ctx = sess.direct_ctx();
 
   // Construct at a chosen runtime width, read back.
   {

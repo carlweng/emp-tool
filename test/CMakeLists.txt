@@ -65,6 +65,7 @@ add_test_case_cxx20(test_runtime_int) # runtime-width UInt_T<Ctx,0> / Int_T<Ctx,
 add_test_case(test_halfgate)         # half-gate garble/eval free functions
 add_test_case_cxx20(test_circuit_fn) # C++20: compile-once / run-on-any-context frontend (rec:: value types)
 add_test_case_cxx20(test_context)    # C++20: BooleanContext concept + contexts cross-check
+add_test_case_cxx20(test_session_concepts)   # C++20: Session/DirectSession/SessionIO + WireValue (incl. synthetic value family)
 add_test_case_cxx20(test_builtin_circuits)   # C++20: AES/SHA/SHA3 IR-replay == live kernels
 add_test_case_cxx20(test_typed)              # C++20: typed values (Bit/BitVec/UInt/Int/Float) over Ctx
 add_test_case_cxx20(test_crypto_aes)         # C++20: AES-128 block over the value layer (vector/record/count)

@@ -60,7 +60,6 @@ binary that runs on any AES-NI + PCLMUL + SSE4.2 (x86_64) or
 | `EMP_TOOL_BUILD_TESTS` | `ON` when top-level | Build the test suite under `test/`. |
 | `EMP_TOOL_BUILD_BENCHMARKS` | `OFF` | Build throughput benchmarks under `bench/`; not registered with `ctest`. |
 | `EMP_TOOL_INSTALL` | `ON` when top-level | Generate install + export rules. |
-| `EMP_TOOL_THREADING` | `OFF` | Make the process-wide execution pointers thread-local. Required if multiple threads run circuits concurrently against different execution targets. |
 
 ## Consuming from another CMake project
 
@@ -85,28 +84,48 @@ add_subdirectory(third_party/emp-tool)
 target_link_libraries(my-app PRIVATE emp-tool::emp-tool)
 ```
 
-A single header pulls in the substrate (core / crypto / IO):
+A single header pulls in the whole library (runtime + ir + circuits):
 
 ```cpp
 #include <emp-tool/emp-tool.h>
 using namespace emp;
 ```
 
+Code that needs only one layer includes that layer's umbrella
+(`emp-tool/runtime/runtime.h`, `emp-tool/ir/ir.h`, `emp-tool/circuits/circuits.h`).
 The context-bound circuit values live in `emp-tool/circuits/typed.h` and the
-frontend in `emp-tool/frontend/`; include those directly when you write
+frontend in `emp-tool/circuits/frontend/`; include those directly when you write
 circuits (see "Circuit frontend" below).
+
+A **session** owns the I/O boundary and protocol state; it exposes a **direct
+context** via `direct_ctx()` (`Session` / `DirectSession` in `ir/session/`). Circuit
+values are context-bound (`UInt_T<DirectCtx,N>` etc.), so a session names no value
+family and adding a value family needs no session edit — `input`/`reveal` are
+generic over any `WireValue`. `ClearSession` is the trivial plaintext session;
+protocol libraries (emp-sh2pc, emp-ag2pc) provide their own over a garbled context.
 
 ## Layout
 
+Three layers, depending **circuits → ir → runtime**. Each has an umbrella
+(`runtime/runtime.h`, `ir/ir.h`, `circuits/circuits.h`); `emp-tool/emp-tool.h`
+includes all three.
+
 ```
 emp-tool/
-├── core/         block, constants, utils
-├── crypto/       PRG, PRP, AES, Hash, CCRH, MITCCRH, f2k, ec (Scalar/Point/ECGroup)
-├── io/           IOChannel, NetIO, TLSIO, TraceIO
-├── context/      BooleanContext concept + Clear/Record/Count/Digest contexts
-├── circuits/     typed values (Bit_T/BitVec_T/UInt_T/Int_T/Float_T<Ctx>) + circuit kernels
-├── ir/           BooleanProgram IR + .empbc assets/replay/passes
-├── frontend/     compile / run pure circuit functions on any context (emp::frontend)
+├── runtime/      substrate
+│   ├── core/        block, constants, utils, test_mode
+│   ├── crypto/      PRG, PRP, AES, Hash, CCRH, MITCCRH, f2k, ec
+│   ├── io/          IOChannel, NetIO, TLSIO, TraceIO
+│   └── execution/   half-gate / privacy-free garbling leaf primitives
+├── ir/           context-free Boolean IR + execution contracts
+│   ├── program/validate/visit/passes/execute/schedule + .empbc assets/builtins/artifact
+│   ├── wire_value.h   the generic WireValue concept
+│   ├── context/       BooleanContext concept + Clear/Record/Count/Digest contexts
+│   └── session/       Session / DirectSession / SessionIO contracts + ClearSession
+├── circuits/     concrete value families + circuit libraries + frontend
+│   ├── typed values (Bit_T/BitVec_T/UInt_T/Int_T/Float_T<Ctx>) + numeric kernels + sort
+│   ├── crypto/        in-circuit AES-128 / SHA-256 / Keccak
+│   └── frontend/      compile / run pure circuit functions on any context (emp::frontend)
 └── third_party/  ThreadPool, sse2neon
 ```
 
@@ -231,22 +250,23 @@ cleartext with no crypto, so a circuit's gate counts match what a protocol
 context would run exactly. Build typed values over it and operate directly:
 
 ```cpp
-#include <emp-tool/session/clear_session.h>
+#include <emp-tool/emp-tool.h>
 using namespace emp;
 
 ClearSession sess;                               // owns a ClearCtx + the I/O boundary
-using S32 = ClearSession::Int<32>;
+using Ctx = ClearSession::DirectCtx;             // the gate context values are built over
+using S32 = Int_T<Ctx, 32>;
 
 auto a = sess.input<S32>(ALICE, 7);              // feed inputs through the session
 auto b = sess.input<S32>(BOB,   35);
-auto c = a * b + S32::constant(sess.ctx(), 1);   // pure value-return gates; +1 is a public constant
+auto c = a * b + S32::constant(sess.direct_ctx(), 1);   // pure value-return gates; +1 is a public constant
 
 std::cout << sess.reveal(c, PUBLIC).value() << "\n";  // reveal -> std::optional<clear_t>
 
 // Wrap on overflow is well-defined and matches int32_t / uint32_t hardware:
-using U32 = ClearSession::UInt<32>;
+using U32 = UInt_T<Ctx, 32>;
 auto big = sess.input<U32>(ALICE, UINT32_MAX);
-auto wrapped = big + U32::constant(sess.ctx(), 1u);   // == 0
+auto wrapped = big + U32::constant(sess.direct_ctx(), 1u);   // == 0
 ```
 
 `UInt_T` wraps mod 2^N, `Int_T` is two's-complement, `Float_T` is IEEE
@@ -263,11 +283,11 @@ Write a **pure circuit function** (inputs are arguments, the output is the retur
 value — no `input`/`reveal` inside) over the typed values
 `Bit/BitVec/UInt/Int/Float<Ctx>`. Call it live, or **compile it once into a context-free `Circuit`** and `run` it on
 any context — plaintext, garbled 2PC, ZK — with no global backend. I/O is the
-context's job, around the circuit. Add `#include <emp-tool/frontend/circuit_fn.h>`.
+context's job, around the circuit. Add `#include <emp-tool/circuits/frontend/circuit_fn.h>`.
 
 ```cpp
-#include <emp-tool/frontend/circuit_fn.h>
-#include <emp-tool/frontend/rec.h>
+#include <emp-tool/circuits/frontend/circuit_fn.h>
+#include <emp-tool/circuits/frontend/rec.h>
 using namespace emp;
 namespace cf = emp::frontend;
 
@@ -302,7 +322,7 @@ circuit function (above) or capture a recorded program and load it through this
 API.
 
 ```cpp
-#include <emp-tool/context/context.h>   // execute_program, ClearCtx
+#include <emp-tool/ir/context/context.h>   // execute_program, ClearCtx
 #include <emp-tool/ir/empbc.h>     // load_empbc_file
 using namespace emp;
 using namespace emp::circuit;

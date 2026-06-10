@@ -4,7 +4,7 @@
 // Proves the "big circuits -> IR replay" path is faithful, and that the new kernels
 // agree with the shipped assets. C++20.
 
-#include "emp-tool/context/context.h"
+#include "emp-tool/ir/context/context.h"
 #include "emp-tool/ir/builtins.h"
 #include "emp-tool/circuits/crypto/aes128.h"
 #include "emp-tool/circuits/crypto/sha256.h"

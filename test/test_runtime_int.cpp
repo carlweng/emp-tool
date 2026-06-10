@@ -2,7 +2,7 @@
 // over ClearCtx. Same family as the fixed-width forms; here the width lives in the
 // wire vector and is chosen at construction.
 #include "emp-tool/circuits/unsigned_int.h"
-#include "emp-tool/context/clear.h"
+#include "emp-tool/ir/context/clear.h"
 #include "emp-tool/circuits/signed_int.h"
 #include <cstdint>
 #include <cstdio>

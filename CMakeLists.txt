@@ -24,7 +24,6 @@ option(EMP_TOOL_BUILD_TESTS       "Build emp-tool tests"               ${PROJECT
 option(EMP_TOOL_BUILD_BENCHMARKS  "Build emp-tool benchmarks"          OFF)
 option(EMP_TOOL_INSTALL           "Generate install / export rules"    ${PROJECT_IS_TOP_LEVEL})
 option(EMP_TOOL_NATIVE_ARCH       "Build for the host CPU (-march=native) so compile-time SIMD tiers such as VAES, VPCLMULQDQ, and AVX-512 are enabled when available. Default ON for performance; turn OFF to produce a portable binary that runs on any AES-NI + PCLMUL + SSE4.2 CPU." ON)
-option(EMP_TOOL_THREADING         "Use thread-local protocol/circuit execution pointers" OFF)
 
 # ---------------------------------------------------------------------
 # Dependencies
@@ -55,7 +54,7 @@ endif()
 set(emp_tool_sources
     emp-tool/ir/assets.cpp
     emp-tool/ir/builtins.cpp
-    emp-tool/crypto/ec.cpp)
+    emp-tool/runtime/crypto/ec.cpp)
 
 # ---------------------------------------------------------------------
 # Default search roots for shipped circuit assets. ir/assets.cpp owns the actual
@@ -80,7 +79,7 @@ set_target_properties(emp-tool PROPERTIES
     SOVERSION      ${PROJECT_VERSION_MAJOR}
     CXX_EXTENSIONS OFF)
 
-# The canonical BooleanContext surface (context/context.h, circuits/typed.h)
+# The canonical BooleanContext surface (ir/context/context.h, circuits/typed.h)
 # requires C++20 (concepts, std::regular, std::span), so emp-tool's public
 # contract is C++20 — consumers that include those headers must build as C++20.
 target_compile_features(emp-tool PUBLIC cxx_std_20)
@@ -128,9 +127,6 @@ endif()
 if(EMP_TOOL_HAS_RDSEED)
     target_compile_definitions(emp-tool PUBLIC ENABLE_RDSEED)
     target_compile_options(emp-tool PUBLIC -mrdseed)
-endif()
-if(EMP_TOOL_THREADING)
-    target_compile_definitions(emp-tool PUBLIC THREADING)
 endif()
 
 # ---------------------------------------------------------------------

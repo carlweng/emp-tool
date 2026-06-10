@@ -2,7 +2,7 @@
 #define EMP_CIRCUIT_SIGNED_INT_H__
 
 // Int_T<Ctx,N>: a two's-complement signed integer over a BooleanContext. As with
-// UInt_T, N > 0 is a fixed-width CircuitValue and N == 0 (== runtime_width) is a
+// UInt_T, N > 0 is a fixed-width WireValue and N == 0 (== runtime_width) is a
 // runtime-width value. Add/sub/multiply share the unsigned ripple kernels (low N
 // bits are identical); comparison is signed; right shift is arithmetic
 // (sign-extending); division / remainder truncate toward zero. The fixed-only
@@ -13,7 +13,7 @@
 #include "emp-tool/circuits/bit.h"
 #include "emp-tool/circuits/unsigned_int.h"
 #include "emp-tool/circuits/numeric_kernels.h"
-#include "emp-tool/core/utils.h"
+#include "emp-tool/runtime/core/utils.h"
 #include <array>
 #include <cstdint>
 #include <type_traits>

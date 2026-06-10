@@ -55,10 +55,10 @@ static void print_vec(const string &lbl, double calls, int blocks_per_call) {
 	     << setw(7) << cy_per_blk << " cy/blk @3GHz\n";
 }
 
-template <int K, int H>
+template <int K, int H, int RS = 3>
 static double bench_hash(double sec) {
 	static_assert(K <= 8 && 8 % K == 0, "MITCCRH<8> requires K | 8");
-	MITCCRH<8> mit;
+	MITCCRH<8, RS> mit;
 	mit.setS(makeBlock(1, 2));
 	mit.renew_ks(uint64_t{0});
 	block buf[K * H];
@@ -66,10 +66,10 @@ static double bench_hash(double sec) {
 	return run_for(sec, [&]() { mit.template hash<K, H>(buf); }, &buf[0]);
 }
 
-template <int K, int H>
+template <int K, int H, int RS = 3>
 static double bench_hash_cir(double sec) {
 	static_assert(K <= 8 && 8 % K == 0, "MITCCRH<8> requires K | 8");
-	MITCCRH<8> mit;
+	MITCCRH<8, RS> mit;
 	mit.setS(makeBlock(1, 2));
 	mit.renew_ks(uint64_t{0});
 	block buf[K * H];
@@ -78,7 +78,7 @@ static double bench_hash_cir(double sec) {
 }
 
 static void bench(double sec) {
-	cout << "=== MITCCRH<8>::hash<K, H>  (renew_ks amortized over B/K = 8/K calls) ===\n";
+	cout << "=== MITCCRH<8>::hash<K, H>  (default ReuseShift=3: schedule once per 8-gid bucket) ===\n";
 	print_vec("hash<1,1>", bench_hash<1, 1>(sec), 1);
 	print_vec("hash<1,4>", bench_hash<1, 4>(sec), 4);
 	print_vec("hash<1,8>", bench_hash<1, 8>(sec), 8);
@@ -90,6 +90,13 @@ static void bench(double sec) {
 	print_vec("hash<8,2>", bench_hash<8, 2>(sec), 16);
 	print_vec("hash<8,4>", bench_hash<8, 4>(sec), 32);
 	print_vec("hash<8,8>", bench_hash<8, 8>(sec), 64);
+
+	cout << "\n=== MITCCRH<8, 0>  (one key per gid, no tweak reuse) ===\n";
+	print_vec("hash<2,4>  shift0", bench_hash<2, 4, 0>(sec), 8);
+	print_vec("hash<8,2>  shift0", bench_hash<8, 2, 0>(sec), 16);
+	print_vec("hash<8,8>  shift0", bench_hash<8, 8, 0>(sec), 64);
+	print_vec("hash_cir<2,1> shift0", bench_hash_cir<2, 1, 0>(sec), 2);
+	print_vec("hash_cir<2,2> shift0", bench_hash_cir<2, 2, 0>(sec), 4);
 
 	cout << "\n=== MITCCRH<8>::hash_cir<K, H>  (sigma + hash) ===\n";
 	print_vec("hash_cir<1,1>", bench_hash_cir<1, 1>(sec), 1);

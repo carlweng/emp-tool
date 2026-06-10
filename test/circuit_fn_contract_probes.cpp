@@ -4,10 +4,10 @@
 // PASS_REGULAR_EXPRESSION). C++20.
 
 #include "emp-tool/emp-tool.h"
-#include "emp-tool/context/context.h"
+#include "emp-tool/ir/context/context.h"
 #include "emp-tool/circuits/typed.h"
-#include "emp-tool/frontend/circuit_fn.h"
-#include "emp-tool/frontend/rec.h"
+#include "emp-tool/circuits/frontend/circuit_fn.h"
+#include "emp-tool/circuits/frontend/rec.h"
 #include <cstdio>
 #include <type_traits>
 

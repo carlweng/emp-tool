@@ -9,8 +9,8 @@
 #include "emp-tool/circuits/bit.h"
 #include "emp-tool/circuits/unsigned_int.h"
 #include "emp-tool/circuits/numeric_kernels.h"   // kernel::or_gate/equal/mux
-#include "emp-tool/context/checks.h"             // check_same_context
-#include "emp-tool/core/utils.h"                  // error()
+#include "emp-tool/ir/context/checks.h"             // check_same_context
+#include "emp-tool/runtime/core/utils.h"                  // error()
 #include <array>
 #include <vector>
 

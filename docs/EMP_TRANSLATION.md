@@ -131,8 +131,9 @@ emp-tool's `ClearSession` as the reference. `sess` below is that session.
 ### 3.1. Feeding input values
 
 ```cpp
-using S32 = SH2PCSession::Int<32>;
-using U32 = SH2PCSession::UInt<32>;
+using Ctx = SH2PCSession::DirectCtx;
+using S32 = Int_T<Ctx, 32>;
+using U32 = UInt_T<Ctx, 32>;
 auto a = sess.input<S32>(ALICE,  alice_value);   // owned by Alice
 auto b = sess.input<U32>(BOB,    bob_value);     // owned by Bob
 auto k = sess.input<S32>(PUBLIC, 17);            // both parties agree on the literal
@@ -141,7 +142,7 @@ auto k = sess.input<S32>(PUBLIC, 17);            // both parties agree on the li
 `sess.input<T>(owner, clear)` is called by both parties; the `clear` argument on a
 non-`PUBLIC` owner is **only read on that party's process**. The other party passes
 a dummy of the same type; the protocol routes the real bits through OT. A `PUBLIC`
-constant inside a body uses `T::constant(sess.ctx(), v)` instead.
+constant inside a body uses `T::constant(sess.direct_ctx(), v)` instead.
 
 ### 3.2. Revealing outputs
 
@@ -250,7 +251,7 @@ If MAX is unknown, the program is not translatable.
 //   y = arr[idx];   // idx secret, arr public-length
 
 // EMP: linear mux. Cost is O(len(arr)) in AND gates.
-// (ctx is the body's BooleanContext parameter; at a call site it is sess.ctx().)
+// (ctx is the body's BooleanContext parameter; at a call site it is sess.direct_ctx().)
 auto y = T::constant(ctx, 0);
 for (size_t k = 0; k < arr.size(); ++k) {
     Bit_T<Ctx> eq = (idx == UIdx::constant(ctx, k));
@@ -390,11 +391,12 @@ verify a translation matches the original C++ / Python before standing up two
 real parties:
 
 ```cpp
-#include "emp-tool/session/clear_session.h"
+#include "emp-tool/emp-tool.h"
 using namespace emp;
 
 ClearSession sess;                       // owns a pure ClearCtx + the I/O boundary
-using U32 = ClearSession::UInt<32>;
+using Ctx = ClearSession::DirectCtx;
+using U32 = UInt_T<Ctx, 32>;
 auto a = sess.input<U32>(ALICE, av);     // plaintext: a session input is just a public wire
 auto b = sess.input<U32>(BOB, bv);
 auto c = a + b;
@@ -411,18 +413,19 @@ program (see [frontend.md](frontend.md)).
 
 For end-to-end semi-honest 2PC use **emp-sh2pc**'s `SH2PCSession`. It owns the
 protocol state (IO / OT / Delta / PRG / half-gate) and exposes the same surface
-as `ClearSession` — `input` / `reveal` for the I/O boundary and `ctx()` for the
-garbled `SH2PCCtx` gate context that value construction and `frontend::run` use:
+as `ClearSession` — `input` / `reveal` for the I/O boundary and `direct_ctx()` for
+the garbled `SH2PCCtx` gate context that value construction and `frontend::run` use:
 
 ```cpp
 NetIO io(party == ALICE ? nullptr : "127.0.0.1", port);
 SH2PCSession sess(&io, party);                  // owns the protocol state + I/O boundary
-using U32 = SH2PCSession::UInt<32>;
+using Ctx = SH2PCSession::DirectCtx;
+using U32 = UInt_T<Ctx, 32>;
 
 auto a = sess.input<U32>(ALICE, av);                   // private inputs
 auto b = sess.input<U32>(BOB,   bv);
-auto k = U32::constant(sess.ctx(), kv);                // public constant
-auto c = a + b + k;                                     // or frontend::run(sess.ctx(), circ, ...)
+auto k = U32::constant(sess.direct_ctx(), kv);                // public constant
+auto c = a + b + k;                                     // or frontend::run(sess.direct_ctx(), circ, ...)
 uint32_t r = (uint32_t)sess.reveal(c, PUBLIC).value();
 sess.finalize();
 ```
@@ -532,12 +535,13 @@ def f(alice_xs, bob_y):
 using namespace emp;
 
 constexpr size_t N = 16;                       // public
-using S32 = SH2PCSession::Int<32>;             // x and y are int32
+using Ctx = SH2PCSession::DirectCtx;
+using S32 = Int_T<Ctx, 32>;                    // x and y are int32
 
 int32_t f(SH2PCSession& sess, const int32_t alice_xs[N], int32_t bob_y_value) {
     auto y     = sess.input<S32>(BOB, bob_y_value);
-    auto total = S32::constant(sess.ctx(), 0);
-    auto zero  = S32::constant(sess.ctx(), 0);
+    auto total = S32::constant(sess.direct_ctx(), 0);
+    auto zero  = S32::constant(sess.direct_ctx(), 0);
 
     for (size_t i = 0; i < N; ++i) {
         // Each party feeds its own value; the other passes a dummy.
@@ -582,7 +586,7 @@ Notes on what changed:
 ## 10. Quick reference: API surface
 
 The value types are over a `BooleanContext` `Ctx`. Make a public constant with
-`T::constant(sess.ctx(), v)`; feed a secret through the session with
+`T::constant(sess.direct_ctx(), v)`; feed a secret through the session with
 `sess.input<T>(owner, v)`; open with `sess.reveal(v, recipient)` — a
 `std::optional<clear_t>`, populated only on a party that learns the value.
 
@@ -650,13 +654,13 @@ of the README).
 * `emp-tool/circuits/typed.h` — the context-bound value types
   (`Bit_T`/`BitVec_T`/`UInt_T`/`Int_T`/`Float_T<Ctx>`) and the `emp::kernel`
   arithmetic kernels. The header is the source of truth for the op set.
-* `emp-tool/context/context.h` — the `BooleanContext` concept and the
+* `emp-tool/ir/context/context.h` — the `BooleanContext` concept and the
   contexts (`ClearCtx`, `RecordCtx`, `CountCtx`, `DigestCtx`), plus
   `execute_program(ctx, prog, inputs)` for replaying a loaded program.
-* `emp-tool/frontend/circuit_fn.h` + `frontend/rec.h` — `compile` / `run`
+* `emp-tool/circuits/frontend/circuit_fn.h` + `circuits/frontend/rec.h` — `compile` / `run`
   for pure circuit functions; see [frontend.md](frontend.md).
 * `emp-sh2pc/emp-sh2pc/sh2pc_session.h` — `SH2PCSession`, the garbled 2PC
-  session: typed `input` / `reveal` over its `SH2PCCtx` gate context (`sess.ctx()`).
+  session: typed `input` / `reveal` over its `SH2PCCtx` gate context (`sess.direct_ctx()`).
 * `test/test_typed.cpp` — tutorial for the context-bound value types over
   `ClearCtx`.
 * `test/test_circuit_fn.cpp` — compile-once / run-on-any-context, both body

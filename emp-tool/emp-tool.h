@@ -1,38 +1,20 @@
-// emp-tool's wire formats and most internal byte/bit packings assume
-// little-endian. KDF (hash.h), block packing (block.h), and any IO that
-// memcpy's an integer over the wire would silently produce mismatched
-// output on a big-endian peer. Refuse to build there rather than ship a
-// binary that subtly disagrees with little-endian counterparties.
-static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
-              "emp-tool requires a little-endian target");
+#ifndef EMP_TOOL_H__
+#define EMP_TOOL_H__
 
-#include <thread>
-#include "emp-tool/io/io_channel.h"
-#include "emp-tool/io/net_io_channel.h"
-#include "emp-tool/io/tls_io_channel.h"
-#include "emp-tool/io/trace_io.h"
+// emp-tool — the complete public umbrella over the three layers:
+//   runtime  — the substrate: core / crypto / io / garbling leaf primitives.
+//   ir       — context-free Boolean IR, the reusable contexts, and the generic
+//              WireValue + session (Session / DirectSession / SessionIO) contracts.
+//   circuits — concrete value families, numeric kernels, sort, in-circuit crypto,
+//              and the compile/run frontend.
+//
+// Normal users include this header. Code that needs only one layer includes that
+// layer's umbrella (runtime/runtime.h, ir/ir.h, circuits/circuits.h); internal
+// headers include the narrowest layer header or direct dependency they need, never
+// this top umbrella.
 
-#include "emp-tool/core/block.h"
-#include "emp-tool/core/block_vector.h"
-#include "emp-tool/core/constants.h"
-#include "emp-tool/core/test_mode.h"
-#include "emp-tool/core/utils.h"
-#include "emp-tool/crypto/hash.h"
-#include "emp-tool/crypto/prg.h"
-#include "emp-tool/crypto/prp.h"
-#include "emp-tool/crypto/ccrh.h"
-#include "emp-tool/crypto/mitccrh.h"
-#include "emp-tool/crypto/aes.h"
-#include "emp-tool/crypto/session_id.h"
-#include "emp-tool/crypto/f2k.h"
-#include "emp-tool/crypto/ec.h"
-#include "emp-tool/crypto/ro.h"
-#include "emp-tool/third_party/ThreadPool.h"
+#include "emp-tool/runtime/runtime.h"
+#include "emp-tool/ir/ir.h"
+#include "emp-tool/circuits/circuits.h"
 
-#include "emp-tool/execution/half_gate.h"
-#include "emp-tool/execution/privacy_free.h"
-
-// emp-tool.h is the substrate (IO, core, crypto, GC primitives). It defines no
-// circuit value types: protocol libraries and applications include the circuit
-// layer they need explicitly — circuits/typed.h for the BooleanContext values, or
-// circuits/circuit.h for the values plus the crypto primitives.
+#endif  // EMP_TOOL_H__

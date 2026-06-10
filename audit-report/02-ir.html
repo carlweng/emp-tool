@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>emp-tool Audit · Boolean IR, contexts &amp; sessions</title>
+<style>
+:root{
+  --bg:#f6f7f9; --panel:#fff; --ink:#1b2027; --muted:#5b6573;
+  --accent:#3a4fb8; --line:#e4e8ef; --code-bg:#0f1424; --code-ink:#e7ebf6;
+  --note:#1d4ed8; --warn:#c2410c; --audit:#7c3aed; --ok:#0a7d4d; --api:#0e7490;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.62 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+header.site{position:sticky;top:0;z-index:50;background:#10142a;color:#fff;
+  padding:.6rem 1.1rem;display:flex;flex-wrap:wrap;gap:.4rem 1.1rem;align-items:center;
+  box-shadow:0 1px 0 rgba(255,255,255,.06)}
+header.site .brand{font-weight:700;letter-spacing:.2px}
+header.site .brand span{color:#9fb0ff}
+header.site nav{display:flex;flex-wrap:wrap;gap:.1rem .2rem;margin-left:auto;font-size:.82rem}
+header.site nav a{color:#c9d2ff;padding:.2rem .5rem;border-radius:6px}
+header.site nav a.cur{background:#2b3566;color:#fff}
+header.site nav a:hover{background:#222a52;text-decoration:none}
+main{max-width:62rem;margin:0 auto;padding:2rem 1.2rem 5rem}
+h1{font-size:1.85rem;line-height:1.2;margin:.2rem 0 .4rem}
+h2{font-size:1.35rem;margin:2.6rem 0 .7rem;padding-top:.5rem;border-top:2px solid var(--line)}
+h3{font-size:1.12rem;margin:1.8rem 0 .5rem;color:#26314f}
+h4{font-size:1rem;margin:1.2rem 0 .4rem;color:#33405f}
+p{margin:.6rem 0}
+code{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;font-size:.86em}
+p code,li code,td code{background:#eef1f7;padding:.06em .36em;border-radius:5px;color:#293150}
+code.ref{background:#e7ecfb;color:#2a3a86;white-space:nowrap}
+pre{background:var(--code-bg);color:var(--code-ink);padding:.85rem 1rem;border-radius:9px;
+  overflow:auto;font-size:.82rem;line-height:1.5;margin:.7rem 0;border:1px solid #1d2540}
+pre code{background:none;padding:0;color:inherit;font-size:inherit}
+.meta{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:.9rem 1.1rem;margin:1.1rem 0 1.6rem;font-size:.9rem;color:var(--muted)}
+.meta b{color:var(--ink)}
+.meta table{border-collapse:collapse;width:100%}
+.meta td{padding:.18rem .4rem;vertical-align:top}
+.meta td:first-child{color:var(--ink);font-weight:600;white-space:nowrap;width:9.5rem}
+.toc{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem 1.2rem;margin:1.4rem 0}
+.toc h2{border:0;margin:0 0 .5rem;font-size:1rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.toc ol{margin:0;padding-left:1.2rem;columns:2;column-gap:2rem}
+.toc li{margin:.18rem 0;break-inside:avoid}
+.toc a{color:#2c3550}
+.callout{border-left:4px solid var(--note);background:#fff;border-radius:0 8px 8px 0;
+  padding:.7rem .95rem;margin:.9rem 0;box-shadow:0 1px 2px rgba(20,30,60,.05)}
+.callout .lbl{font-weight:700;font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;display:block;margin-bottom:.25rem}
+.callout p{margin:.35rem 0}
+.callout p:first-of-type{margin-top:0}
+.callout p:last-child{margin-bottom:0}
+.c-note{border-color:var(--note)} .c-note .lbl{color:var(--note)}
+.c-warn{border-color:var(--warn);background:#fff8f4} .c-warn .lbl{color:var(--warn)}
+.c-audit{border-color:var(--audit);background:#faf7ff} .c-audit .lbl{color:var(--audit)}
+.c-api{border-color:var(--api);background:#f2fbfd} .c-api .lbl{color:var(--api)}
+.c-ok{border-color:var(--ok);background:#f3fbf6} .c-ok .lbl{color:var(--ok)}
+table.grid{border-collapse:collapse;width:100%;margin:.9rem 0;font-size:.9rem}
+table.grid th,table.grid td{border:1px solid var(--line);padding:.45rem .6rem;text-align:left;vertical-align:top}
+table.grid th{background:#eef1f8;font-weight:600}
+table.grid tr:nth-child(even) td{background:#fafbfd}
+ul,ol{margin:.5rem 0;padding-left:1.4rem}
+li{margin:.28rem 0}
+.tag{display:inline-block;font-size:.7rem;font-weight:700;letter-spacing:.05em;
+  padding:.12rem .5rem;border-radius:20px;background:#e7ecfb;color:#2a3a86;vertical-align:middle}
+.lead{font-size:1.05rem;color:#39414f}
+.pipe{background:var(--code-bg);color:#cfe0ff;font-size:.78rem;line-height:1.45;padding:1rem 1.1rem;border-radius:9px;overflow:auto;border:1px solid #1d2540}
+footer{max-width:62rem;margin:0 auto;padding:1.5rem 1.2rem 3rem;color:var(--muted);font-size:.82rem;border-top:1px solid var(--line)}
+@media (max-width:680px){.toc ol{columns:1}}
+@media print{header.site{position:static}pre,.pipe{white-space:pre-wrap}}
+</style>
+</head>
+<body>
+<header class="site">
+  <div class="brand">emp-tool <span>· implementation audit</span></div>
+  <nav>
+    <a href="00-overview.html">Overview</a>
+    <a href="01-runtime.html">1 · Runtime</a>
+    <a class="cur" href="02-ir.html">2 · IR</a>
+    <a href="03-circuits.html">3 · Circuits</a>
+  </nav>
+</header>
+<main>
+
+<h1>Boolean IR, contexts &amp; sessions</h1>
+<p class="lead">The middle layer of the stack: a flat, protocol-neutral boolean-circuit IR with a native
+<code>.empbc</code> wire format, the C++20 <code>BooleanContext</code> concept and its reusable realizations, the
+generic <code>WireValue</code> structural-value contract, and the session layer that owns the I/O boundary. The
+central principle is <b>one circuit source, many semantics</b>: a circuit is written once over a
+<code>BooleanContext</code> and evaluated under any context — plaintext eval, gate counting, fingerprinting, IR
+recording, or a cryptographic backend — with the gate stream guaranteed identical across all of them. I/O
+(<code>input</code>/<code>reveal</code>) lives outside the gate concept, at the session.</p>
+
+<div class="meta">
+<table>
+<tr><td>Report</td><td>2 of 3 — Boolean IR, contexts &amp; sessions</td></tr>
+<tr><td>Source tree</td><td><code>/Users/wangxiao/Documents/emp-tool</code> · working tree on <code>main</code> (uncommitted; HEAD <code>7f21adc</code>)</td></tr>
+<tr><td>Files in scope</td><td><code>ir/{program,validate,visit,passes,schedule,execute,artifact,empbc,assets,builtins}.h</code> · <code>ir/{assets,builtins}.cpp</code> · <code>ir/wire_value.h</code> · <code>ir/context/{concept,checks,clear,count,digest,record}.h</code> · <code>ir/session/{session,session_io,clear_session}.h</code></td></tr>
+<tr><td>Wire value</td><td>A context names its own <code>Wire</code> type: <code>uint8_t</code> (Clear/Count), <code>uint32_t</code> (Record/Digest wire ids), or <code>block</code> (a downstream garbling backend label).</td></tr>
+<tr><td>Layering</td><td><code>ir/program.h</code> (the <code>BooleanProgram</code> IR) and <code>ir/context/concept.h</code> (the <code>BooleanContext</code> concept) are the two pure design roots — zero internal includes, usable without any backend. Everything else here is built on them.</td></tr>
+</table>
+</div>
+
+<div class="toc">
+<h2>Contents</h2>
+<ol>
+<li><a href="#program">A · IR data model (program)</a></li>
+<li><a href="#validate">A · Validation invariants</a></li>
+<li><a href="#empbc">A · <code>.empbc</code> format</a></li>
+<li><a href="#passes">A · Analysis passes</a></li>
+<li><a href="#schedule">A · Scheduled replay</a></li>
+<li><a href="#visit-exec">A · visit &amp; execute</a></li>
+<li><a href="#assets">A · Artifacts / assets / builtins</a></li>
+<li><a href="#concept">B · The <code>BooleanContext</code> concept</a></li>
+<li><a href="#taxonomy">B · Context taxonomy</a></li>
+<li><a href="#checks">B · Cross-context checks &amp; digest duality</a></li>
+<li><a href="#wirevalue">C · The <code>WireValue</code> concept</a></li>
+<li><a href="#session">D · Session layer &amp; reveal</a></li>
+<li><a href="#clearsession">D · <code>ClearSession</code></a></li>
+<li><a href="#risk">Auditor risk register</a></li>
+</ol>
+</div>
+
+<!-- ============================== PART A ============================== -->
+<h2 id="program">A.1 · The IR data model</h2>
+<p><span class="tag">ir/program.h</span></p>
+<p>One in-memory representation, one gate encoding, <b>protocol-neutral</b> — the IR knows nothing about parties,
+owners, argument boundaries, labels, or MACs (those live in the layers that produce and consume it). Opcodes
+(<code class="ref">program.h:25</code>):</p>
+<pre><code>enum class Op : uint8_t { And=0, Xor=1, Not=2, Const0=3, Const1=4 };  // == on-disk .empbc codes</code></pre>
+<p>Linear gates (<code>Xor</code>/<code>Not</code>) are free; <code>And</code> is the only costed op; public
+constants are <b>first-class <code>Const0</code>/<code>Const1</code> gates</b> with no operands, so each backend
+realizes a known 0/1 wire however its protocol prescribes. A <code>Gate</code> is
+<code>{in0,in1,out,op}</code> with <code>in1</code> normalized to <code>0</code> for <code>Not</code>/<code>Const*</code>
+(<code class="ref">program.h:30-38</code>). A <code>BooleanProgram</code> is a dense, SSA-like form
+(<code class="ref">program.h:40-50</code>):</p>
+<pre><code>uint32_t num_wires;     // total wire ids; valid ids [0, num_wires)
+uint32_t num_inputs;    // input wires [0, num_inputs)
+std::vector&lt;Gate&gt;     gates;     // topological (emission) order
+std::vector&lt;uint32_t&gt; outputs;   // wire ids of the return value (may name inputs = passthrough)</code></pre>
+<p>Inputs are wires <code>[0,num_inputs)</code>; every other wire is produced by <b>exactly one</b> gate in
+topological order; wire id == position, no holes.</p>
+
+<h2 id="validate">A.2 · Validation invariants</h2>
+<p><span class="tag">ir/validate.h</span></p>
+<p><code>validate_program</code> (<code class="ref">validate.h:19-79</code>) is the single validation path — run at
+construct / load / before executing externally-supplied programs, <b>never in the hot loop</b>. It throws
+<code>std::runtime_error</code> on the first violation. Invariants:</p>
+<ol>
+<li><code>num_inputs ≤ num_wires</code> (<code class="ref">validate.h:20-22</code>).</li>
+<li><b>Density</b>: <code>num_gates == num_wires − num_inputs</code> — every non-input wire produced exactly once,
+no holes (<code class="ref">validate.h:24-27</code>). This is what lets <code>num_wires</code> size the scratch
+buffer exactly.</li>
+<li><b>Read-before-define / in-range reads</b> in topological order (<code class="ref">validate.h:39-43</code>).</li>
+<li><b>Canonical operands</b>: <code>Not</code> has <code>in1==0</code> (<code class="ref">validate.h:54-55</code>);
+<code>Const*</code> have <code>in0==in1==0</code> (<code class="ref">validate.h:58-59</code>).</li>
+<li><b>Output validity</b>: each gate's <code>out</code> is in range, is not an input wire, and is defined exactly
+once (<code class="ref">validate.h:64-71</code>).</li>
+<li>Every output wire is in range and defined (<code class="ref">validate.h:74-78</code>).</li>
+</ol>
+<div class="callout c-ok"><span class="lbl">Hardened against malformed headers</span>
+<p>The <code>defined_non_input</code> bitmap is sized to <code>num_wires − num_inputs</code> (not
+<code>num_wires</code>), so a malformed file declaring a huge <code>num_inputs</code> cannot force a giant
+allocation during validation (<code class="ref">validate.h:30-33</code>). The dense-count check at
+<code class="ref">validate.h:24-27</code> runs <em>before</em> that allocation. Each invariant is independently
+exercised in <code class="ref">test_boolean_program.cpp:54-67</code>, and the huge-sparse-header guard at
+<code class="ref">test_boolean_program.cpp:121-130</code>.</p></div>
+<div class="callout c-warn"><span class="lbl"><code>validate_program</code> throws even in Release</span>
+<p>Unlike most fail-fast paths in the tree (which call <code>error()</code> → <code>exit(1)</code>), the IR
+validator <b>throws</b> and is unconditional — it is not guarded by <code>NDEBUG</code>. A consumer that passes an
+externally-supplied program through <code>validate_program</code> (the <code>.empbc</code> loader does) gets a
+catchable exception in both Debug and Release, never silent corruption. This is the structural-safety baseline the
+rest of the layer relies on.</p></div>
+
+<h2 id="empbc">A.3 · The <code>.empbc</code> serialization format</h2>
+<p><span class="tag">ir/empbc.h</span></p>
+<p>The one native persisted format. Layout (<code class="ref">empbc.h:17-29</code>): magic <code>EMPB</code>,
+<code>version u16</code> (currently <code>1</code>), <code>index_width u8</code> (2 or 4), <code>flags u8</code>
+(reserved, must be 0), then <code>num_wires/num_inputs/num_outputs/num_gates</code> as u32, then gate records, then
+outputs. Indices are stored 16- or 32-bit on disk (the writer auto-selects u16 when <code>num_wires ≤ 0xFFFF</code>,
+<code class="ref">empbc.h:89</code>) but always decode into a uint32_t <code>BooleanProgram</code> — the compact width
+is a disk detail, never a second in-memory IR.</p>
+<div class="callout c-ok"><span class="lbl">Hostile-input-safe parser</span>
+<p>A bounds-checked <code>Reader</code> (<code class="ref">empbc.h:59-75</code>) does fixed little-endian field reads
+(never a struct overlay / <code>reinterpret_cast</code>, so it is endian- and layout-independent).
+<code>load_empbc</code> (<code class="ref">empbc.h:116-161</code>) checks magic / version / index_width /
+reserved-flags, performs an <b>overflow-checked exact size</b> equation in 64-bit
+(<code class="ref">empbc.h:137-141</code>, rejecting both truncation and trailing bytes), range-checks each op code
+(<code class="ref">empbc.h:150</code>), and runs a final <code>validate_program</code>
+(<code class="ref">empbc.h:159</code>). The writer <code>save_empbc</code> validates <em>first</em>
+(<code class="ref">empbc.h:88</code>) so a malformed program can't be silently truncated by the u16 writer. The
+malformed/truncated/trailing/bad-magic/bad-op cases are all exercised in
+<code class="ref">test_boolean_program.cpp:107-130</code>.</p></div>
+<div class="callout c-audit"><span class="lbl">Minor forward-compat ambiguity</span>
+<p>The header <code>flags</code> byte must be 0 on read (<code class="ref">empbc.h:126</code>), but per-gate
+<b>reserved padding bytes are read without value-checking</b> (<code class="ref">empbc.h:152-153</code>) — a nonzero
+gate-record reserved byte is silently accepted. <code>load_empbc_file</code> reads the whole file into memory via
+<code>ftell</code> before the exact-size check (<code class="ref">empbc.h:167-182</code>).</p></div>
+
+<h2 id="passes">A.4 · Analysis passes</h2>
+<p><span class="tag">ir/passes.h</span></p>
+<p>Protocol-neutral pure-function analyses over a <code>BooleanProgram</code>, each computed once and optionally
+cached on the frontend <code>Circuit</code>. Per-wire scratch (first-def / last-use / level) uses signed vectors
+with a <code>−1</code> "none" sentinel — local analysis state, never serialized
+(<code class="ref">passes.h:8-12</code>).</p>
+<ul>
+<li><b><code>count_pass</code></b> (<code class="ref">passes.h:36-52</code>) → AND/XOR/NOT/CONST tallies plus
+wire/gate/input/output counts (the stored-program analogue of <code>CountCtx</code>).</li>
+<li><b><code>liveness_pass</code></b> (<code class="ref">passes.h:59-72</code>) → per-wire <code>last_use</code> +
+<code>first_def</code>.</li>
+<li><b><code>schedule_pass</code></b> (<code class="ref">passes.h:79-104</code>) → <b>AND-depth</b> of each wire
+(<code>Const=0</code>; <code>Not</code>/<code>Xor</code> inherit max input level for free;
+<code>And = 1 + max(level(in0),level(in1))</code>, <code class="ref">passes.h:86-93</code>) and AND gates grouped by
+level — the input the scheduler consumes for round batching.</li>
+<li><b><code>layout_pass</code></b> (<code class="ref">passes.h:118-148</code>) → <code>frees[gi]</code> (slots
+recyclable after gate <code>gi</code>, with output wires excluded as roots) plus an <b>output-rooted dead-code-
+elimination sizing</b> (backward reachability counting <code>reachable_wire</code> / <code>reachable_and</code>,
+<code class="ref">passes.h:130-146</code>). Note this <em>reports</em> DCE sizes but does <b>not</b> rewrite the
+program — execution still walks all gates.</li>
+</ul>
+
+<h2 id="schedule">A.5 · Scheduled bulk replay</h2>
+<p><span class="tag">ir/schedule.h</span></p>
+<p>Level-batched replay for a <code>BulkBooleanContext</code>: walk linear gates in topological order, but batch
+every ready AND layer (grouped by AND-depth) into one <code>and_many</code> call
+(<code class="ref">schedule.h:77-99</code>). <b>Correctness is identical to the scalar <code>execute_program</code></b>;
+only batching changes. A <code>ScheduledPlan</code> (<code class="ref">schedule.h:28-39</code>) caches gate indices
+per AND-depth plus the program's identity (<code>num_inputs/num_wires/num_gates/digest</code>) for staleness
+checking. Per level: collect the level's AND operands/outputs → one <code>and_many</code> → run the level's linear
+gates in emission order.</p>
+<div class="callout c-warn"><span class="lbl">Schedule digest guard is debug-only</span>
+<p>Three staleness guards: the input count and the plan dimensions
+(<code>num_inputs/num_wires/num_gates</code>) are <b>always-on</b> <code>error()</code> checks
+(<code class="ref">schedule.h:63-67</code>), but the strong "same shape, different gate stream" guard
+<code>plan.digest == digest_program(p)</code> is wrapped in <code><b>#ifndef NDEBUG</b></code>
+(<code class="ref">schedule.h:68-71</code>). In a Release build, a <code>ScheduledPlan</code> whose dimensions match a
+<em>different but same-shaped</em> program would silently misexecute. Whether reachable depends on the backend's
+plan-caching discipline. (Scheduled == scalar replay is cross-checked on real AES/SHA/SHA3 circuits,
+<code class="ref">test_builtin_circuits.cpp:48-55</code>.)</p></div>
+
+<h2 id="visit-exec">A.6 · The single gate-walk &amp; execution</h2>
+<p><span class="tag">ir/visit.h</span> <span class="tag">ir/execute.h</span></p>
+<p><code>for_each_gate(p, visitor)</code> (<code class="ref">visit.h:23-34</code>) is the <b>only</b> place the
+op-switch lives — adding a new <code>Op</code> is a compile error at every visitor, never a silent fallthrough.
+Execution has two layers:</p>
+<ul>
+<li><b>Low level</b> <code>circuit::execute_program&lt;Wire,Dispatcher&gt;</code>
+(<code class="ref">execute.h:44-70</code>) — seed input slots, walk once via <code>for_each_gate</code> through a
+<code>Bridge</code> that maps wire ids to value slots, copy outputs out; generic over a wire <em>slot</em> type and
+an in-place <code>Dispatcher</code>. Validates input/output <em>counts</em> (throws on mismatch,
+<code class="ref">execute.h:50-53</code>), sizes scratch to <code>num_wires</code>.</li>
+<li><b>High level</b> value-return bridge <code>execute_program(ctx, program, inputs[, ws])</code>
+(<code class="ref">execute.h:102-122</code>) — the way stored <code>.empbc</code> builtins and compiled frontend
+circuits run through <em>any</em> <code>BooleanContext</code>, via a <code>CtxReplayAdapter</code>
+(<code class="ref">execute.h:89-97</code>) that turns the context's value-return gates into the in-place form. A
+<code>ProgramWorkspace&lt;Wire&gt;</code> (<code class="ref">execute.h:79-86</code>) holds reusable buffers (scratch,
+output, AND-batch buffers) — must be caller-owned or <code>thread_local</code>, never one process-wide mutable
+instance.</li>
+</ul>
+<div class="callout c-audit"><span class="lbl">Trusts prior validation</span>
+<p><code>execute_program</code> validates input/output <em>counts</em> but re-checks nothing about the program's
+internal validity — it trusts <code>validate_program</code> ran at load/record time (the comment in
+<code class="ref">validate.h:4-8</code> states this contract: validation runs at construction/load, "never inside
+the execution hot loop"). An externally-supplied, unvalidated program reaching <code>execute_program</code> would
+read out-of-range slots; the documented contract is that validation happens at the boundary, not here.</p></div>
+
+<h2 id="assets">A.7 · Artifacts, assets &amp; builtins</h2>
+<p><span class="tag">ir/artifact.h</span> <span class="tag">ir/assets.{h,cpp}</span> <span class="tag">ir/builtins.{h,cpp}</span></p>
+<p>A <code>CircuitArtifact</code> is a <code>BooleanProgram</code> + a <code>CircuitSignature</code>
+(<code>arg_widths</code> + <code>return_width</code> — the argument boundaries the flat IR omits,
+<code class="ref">artifact.h:21-33</code>). <code>validate_artifact</code> (<code class="ref">artifact.h:37-46</code>)
+runs <code>validate_program</code> and checks <code>sum(arg_widths) == num_inputs</code> and
+<code>return_width == outputs.size()</code> in 64-bit. Big circuits (AES-128, SHA-256, SHA3-256, and the per-width
+float ops) ship as <code>&lt;name&gt;.empbc</code> under <code>ir/files/</code> (63 committed assets) and are
+loaded/validated/cached once behind a mutex-guarded <code>std::map</code>
+(<code class="ref">builtins.cpp:16-34</code>, and <code>float_circuit</code> at
+<code class="ref">builtins.cpp:36-56</code>) then replayed through any context. The <code>aes128</code> builtin has
+256 inputs (<code>pt ‖ key</code>) and 128 outputs (<code class="ref">test_builtin_circuits.cpp:63-64</code>).</p>
+<div class="callout c-warn"><span class="lbl">Asset loading: structurally safe, not authenticated — and <code>EMP_CIRCUIT_DIR</code> is honored first</span>
+<p>Asset resolution searches, in order (<code class="ref">assets.cpp:34-44</code>): <code>EMP_CIRCUIT_DIR</code> (env
+var) → build-tree dir → install-tree dir. In a deployment where the environment is attacker-influenced, this allows
+<b>redirecting builtin-circuit loads to an attacker-chosen directory</b>. The <code>.empbc</code> loader's
+hostile-input safety is the only mitigation: a substituted file is still structurally validated, but it could be a
+<em>different valid circuit</em> (e.g. a weakened AES). There is <b>no hash/signature/MAC on
+<code>.empbc</code></b>. Whether this matters depends on the trust model.</p></div>
+<div class="callout c-ok"><span class="lbl">IR-replay path proven faithful</span>
+<p>Each shipped builtin, replayed through <code>ClearCtx</code> (scalar and scheduled), is compared
+<b>bit-for-bit</b> against the context-native crypto kernel on random input
+(<code class="ref">test_builtin_circuits.cpp:24-89</code>): the test cross-checks <code>aes128</code>,
+<code>sha256_256</code>, and <code>sha3_256_256</code> against the in-circuit kernels and asserts
+scalar-replay == kernel and scheduled-replay == scalar.</p></div>
+
+<!-- ============================== PART B ============================== -->
+<h2 id="concept">B.1 · The <code>BooleanContext</code> concept</h2>
+<p><span class="tag">ir/context/concept.h</span></p>
+<p>The contract (<code class="ref">concept.h:19-27</code>):</p>
+<pre><code>template &lt;class Ctx&gt;
+concept BooleanContext =
+    std::regular&lt;typename Ctx::Wire&gt; &amp;&amp;
+    requires(Ctx&amp; c, typename Ctx::Wire a, typename Ctx::Wire b, bool v) {
+        { c.public_bit(v) } -&gt; std::same_as&lt;typename Ctx::Wire&gt;;
+        { c.and_gate(a, b) } -&gt; std::same_as&lt;typename Ctx::Wire&gt;;
+        { c.xor_gate(a, b) } -&gt; std::same_as&lt;typename Ctx::Wire&gt;;
+        { c.not_gate(a) }    -&gt; std::same_as&lt;typename Ctx::Wire&gt;;
+    };</code></pre>
+<ul>
+<li><b><code>Ctx::Wire</code> must be <code>std::regular</code></b> — copyable, because "fan-out needs copies"
+(<code class="ref">concept.h:17-18</code>). A wire is a cheap handle; the context holds the real state.</li>
+<li><b>Gates return by value</b>, not in-place mutation — static, inlineable dispatch
+(<code class="ref">concept.h:4-7</code>).</li>
+<li><b>The concept does NOT require input/reveal/output</b>. There is no <code>private_input</code> or
+<code>reveal</code> at the gate level — those live in the <b>session layer</b>. <code>public_bit</code> is the only
+"input" and it is for public constants.</li>
+<li><b>No NOR/OR/MUX primitive</b> — OR, equality, select are built in the value layer on the four primitives
+(e.g. <code>a|b = a^b^(a&amp;b)</code>).</li>
+</ul>
+<p>A refinement <code>BulkBooleanContext</code> adds <code>and_many(o, a, b, n)</code> to evaluate a whole AND
+layer at once (<code class="ref">concept.h:32-37</code>); the scheduler needs only this, and the win materializes
+only when a backend overrides the default scalar loop.</p>
+
+<h2 id="taxonomy">B.2 · The context taxonomy</h2>
+<p>Four reusable in-tree realizations, each a tiny struct <code>static_assert</code>-ed to satisfy
+<code>BooleanContext</code>, each giving a <em>different interpretation</em> of the same kernel — plus the
+<code>block</code>-valued garbling backends downstream protocol repos supply.</p>
+<table class="grid">
+<tr><th>Context</th><th><code>Wire</code></th><th>Purpose</th><th>Gate semantics</th></tr>
+<tr><td><code>ClearCtx</code> <span class="tag">clear.h</span></td><td><code>uint8_t</code> (0/1)</td><td>Plaintext eval</td><td>actual bitwise ops; <b>no constant folding</b> (so gate count matches a recorded program)</td></tr>
+<tr><td><code>CountCtx</code> <span class="tag">count.h</span></td><td><code>uint8_t</code></td><td>Gate counting</td><td>increment counters; dedups the two constants to match Record</td></tr>
+<tr><td><code>DigestCtx</code> <span class="tag">digest.h</span></td><td><code>uint32_t</code> id</td><td>Fingerprint / determinism hash</td><td>FNV-1a fold of <code>(op,in0,in1,out)</code></td></tr>
+<tr><td><code>RecordCtx</code> <span class="tag">record.h</span></td><td><code>uint32_t</code> id</td><td>Emit an IR <code>BooleanProgram</code></td><td>append a <code>Gate</code></td></tr>
+<tr><td>garbling backend</td><td><code>block</code></td><td>Real 2PC/ZK protocol (downstream)</td><td>half-gate / privacy-free garble/eval (see <a href="01-runtime.html">Report 1</a>)</td></tr>
+</table>
+<p><b>ClearCtx</b> (<code class="ref">clear.h:16-26</code>): <code>not_gate</code> XORs only the low bit
+(<code>a^1</code>); the default <code>and_many</code> is a scalar loop. <b>CountCtx</b>
+(<code class="ref">count.h:16-25</code>) dedups <code>Const0</code>/<code>Const1</code> with
+<code>c0_seen</code>/<code>c1_seen</code> so its tallies match a recorded program. <b>RecordCtx</b>
+(<code class="ref">record.h:20-58</code>) is the linchpin of "record once, replay anywhere": all inputs must be
+reserved <em>before</em> any gate — <code>external_input(n)</code> reserves <code>[0,num_inputs)</code>, and a
+<em>late</em> <code>external_input</code> after the first gate hard-<code>error()</code>s
+(<code class="ref">record.h:28-38</code>; the <code>inputs_closed</code> flag is flipped by <code>alloc_()</code> at
+<code class="ref">record.h:27</code>, and the check is <b>always-on</b>, not debug-only).
+<code>finish(outputs)</code> runs <code>validate_program</code> (<code class="ref">record.h:51-57</code>), so a
+recorder cannot hand out malformed IR. <b>DigestCtx</b> (<code class="ref">digest.h:20-51</code>) mirrors RecordCtx's
+wire numbering and const-dedup precisely so the two digests agree.</p>
+
+<h2 id="checks">B.3 · Cross-context checks &amp; the digest duality</h2>
+<p><span class="tag">ir/context/checks.h</span> <span class="tag">ir/context/digest.h</span></p>
+<div class="callout c-warn"><span class="lbl">Cross-context checks are debug-only by default</span>
+<p><code>checks.h</code>'s <code>check_same_context(l,r)</code> (<code class="ref">checks.h:23-34</code>) verifies both
+operands' context pointers are non-null and equal. The default policy is <b>DEBUG-ONLY</b>
+(<code>EMP_CONTEXT_CHECKS</code> defaults to <code>1</code> only when <code>NDEBUG</code> is unset,
+<code class="ref">checks.h:15-21</code>); opt in to always-on with <code>-DEMP_CONTEXT_CHECKS=1</code> (which raises
+<code>error()</code>, not just <code>assert</code>, so it survives <code>NDEBUG</code> once opted in), or force off
+with <code>-DEMP_CONTEXT_CHECKS=0</code>. In a Release build with no opt-in, <b>mixing typed values from two
+different contexts is unchecked</b> — most dangerous for id-based wires (two <code>RecordCtx</code>es both start ids
+at 0 and silently alias).</p></div>
+<div class="callout c-audit"><span class="lbl">Digest encoder duality</span>
+<p><code>DigestCtx</code> and the standalone <code>digest_program</code> (<code class="ref">digest.h:59-69</code>) map
+ops to integers independently (the gate stream is hashed as <code>And=0…Const1=4</code>, with the same const-dedup
+and the same <code>external_input(num_inputs)</code> prefix mix at <code class="ref">digest.h:62</code>) — they
+<b>MUST stay in sync</b> (the header comment flags this at <code class="ref">digest.h:8-9</code>). Divergence would
+silently break determinism/staleness checks. <code>digest_source</code> (<code class="ref">digest.h:75-83</code>)
+streams a body through a <code>DigestCtx</code> and equals <code>digest_program</code> of the program the body
+records — the basis for the frontend's "recording is deterministic" test
+(<code class="ref">test_circuit_fn.cpp:53-55</code>). The digest is also the staleness guard on cached schedules
+(§A.5).</p></div>
+
+<!-- ============================== PART C ============================== -->
+<h2 id="wirevalue">C · The generic <code>WireValue</code> concept</h2>
+<p><span class="tag">ir/wire_value.h</span></p>
+<p><code>WireValue</code> is the generic <b>structural contract</b> for a typed value object over a
+<code>BooleanContext</code>: a fixed-width bundle of wires with a clear-value codec, packable to / constructible
+from raw <code>Ctx::Wire</code>, rebindable to another context, and reporting its own context pointer. It is the
+context-free vocabulary the IR execution and session layers speak; it names <b>no</b> concrete value family
+(<code>Bit</code>/<code>UInt</code>/<code>Int</code>/<code>Float</code>/<code>BitVec</code>) and no protocol
+(<code class="ref">wire_value.h:4-12</code>). The contract (<code class="ref">wire_value.h:26-52</code>):</p>
+<pre><code>template &lt;class V_&gt;
+concept WireValue =
+    requires { typename V::Wire; typename V::context_type; typename V::clear_t; } &amp;&amp;
+    BooleanContext&lt;typename V::context_type&gt; &amp;&amp;                         // a real gate context
+    std::same_as&lt;typename V::Wire, typename V::context_type::Wire&gt; &amp;&amp;    // its wire IS that context's wire
+    requires { typename std::integral_constant&lt;int, V::width()&gt;; } &amp;&amp;   // static, compile-time width
+    std::same_as&lt;typename V::rebind&lt;V::context_type&gt;, V&gt; &amp;&amp;             // identity rebind
+    requires(const V v, V::Wire* out)            { v.context(); v.pack_wires(out); } &amp;&amp;
+    requires(V::context_type&amp; c, const V::Wire* in){ { V::from_wires(c, in) } -&gt; std::same_as&lt;V&gt;; } &amp;&amp;
+    requires(V::clear_t cv, const bool* bits)    { { V::encode(cv) } -&gt; convertible_to&lt;std::vector&lt;bool&gt;&gt;;
+                                                   { V::decode(bits) } -&gt; std::same_as&lt;V::clear_t&gt;; };</code></pre>
+<p>Two requirements distinguish it from a looser "has wires" check:</p>
+<ul>
+<li><b>It binds to a real gate context.</b> <code>BooleanContext&lt;context_type&gt;</code> and
+<code>Wire == context_type::Wire</code> are both required (<code class="ref">wire_value.h:33-36</code>) — a value
+cannot claim a wire type its context does not use.</li>
+<li><b>It is fixed-width only.</b> <code>width()</code> must be usable as a compile-time
+<code>std::integral_constant&lt;int, …&gt;</code> template argument (<code class="ref">wire_value.h:37-39</code>), so a
+runtime-width value (whose <code>width()</code> is <code>requires (N&gt;0)</code> and absent at <code>N==0</code>)
+does <b>not</b> model <code>WireValue</code>. Session I/O and circuit compilation need a statically known width /
+signature; runtime-width values are in-circuit only (<code class="ref">wire_value.h:14-17</code>).</li>
+</ul>
+<p>Every requirement is spelled through <code>std::decay_t&lt;V_&gt;</code> so the concept is stable under reference
+qualification. A convenience <code>is_wire_value_v&lt;V&gt;</code> variable template
+(<code class="ref">wire_value.h:54</code>) gives the boolean form. The frontend keeps a stricter
+<code>RecordValue</code> concept (<code class="ref">circuit_fn.h:51-54</code>) that <b>refines</b>
+<code>WireValue</code> by additionally requiring <code>context_type == RecordCtx</code> — see
+<a href="03-circuits.html">Report 3</a>.</p>
+
+<!-- ============================== PART D ============================== -->
+<h2 id="session">D.1 · The session layer &amp; the reveal contract</h2>
+<p><span class="tag">ir/session/session.h</span> <span class="tag">ir/session/session_io.h</span></p>
+<p>The gate concept has no I/O; the session concept is its peer and owns the I/O boundary. The session layer is a
+<b>small family of concepts</b>, not one monolith — a session names <b>no</b> circuit value family, because values
+are context-bound (<code>UInt_T&lt;DirectCtx,N&gt;</code> etc.), so adding a value family needs no session edit
+(<code class="ref">session.h:4-18</code>).</p>
+<pre><code>// ir/session/session.h
+template &lt;class S&gt; concept Session =                         // the minimal protocol object
+    requires(const S&amp; s) { { s.party() } -&gt; std::convertible_to&lt;int&gt;; };
+
+template &lt;class S&gt; concept DirectSession =                   // + a direct/user gate context
+    Session&lt;S&gt; &amp;&amp; requires(S&amp; s) {
+        typename S::DirectCtx;
+        requires BooleanContext&lt;typename S::DirectCtx&gt;;
+        { s.direct_ctx() } -&gt; std::same_as&lt;typename S::DirectCtx&amp;&gt;;
+    };
+
+template &lt;class S&gt; concept CheckpointingSession =            // + a checkpoint() barrier
+    Session&lt;S&gt; &amp;&amp; requires(S&amp; s) { s.checkpoint(); };</code></pre>
+<ul>
+<li><b><code>Session</code></b> (<code class="ref">session.h:26-28</code>) is the floor: it reports a
+<code>party()</code> convertible to <code>int</code>. Nothing else is mandatory.</li>
+<li><b><code>DirectSession</code></b> (<code class="ref">session.h:30-37</code>) adds a <code>DirectCtx</code> type
+(itself a <code>BooleanContext</code>) reachable via <code>direct_ctx()</code> — the gate context operator-mode
+circuits are built over. A multipass protocol may own many internal pass contexts; <code>DirectCtx</code> is only
+the direct one.</li>
+<li><b><code>CheckpointingSession</code></b> (<code class="ref">session.h:39-42</code>) is an <b>optional</b>
+refinement for sessions carrying cross-call materialized state (direct / multi-pass protocols where wire labels
+must survive across invocations); it adds a <code>checkpoint()</code> barrier. A stateless session (e.g.
+<code>ClearSession</code>) has no such barrier and does not model this concept.</li>
+</ul>
+<p>A spelling helper <code>direct_ctx_t&lt;S&gt; = S::DirectCtx</code> (<code class="ref">session.h:47-48</code>) lets
+tests/docs name a session's direct context without a session value alias.</p>
+<p>The <b>reveal contract</b> is a separate, generic concept <code>SessionIO&lt;S,V&gt;</code>
+(<code class="ref">session_io.h:18-29</code>), parameterized over <em>any</em> <code>WireValue V</code> whose
+<code>context_type</code> is <code>S::DirectCtx</code>:</p>
+<pre><code>// ir/session/session_io.h — recipient-explicit, uniform over any WireValue
+S::reveal_t&lt;V&gt; == std::optional&lt;typename V::clear_t&gt;   // required equality
+s.input&lt;V&gt;(party, x) -&gt; V                              // feed a clear value as `party`'s input
+s.reveal(v, party)   -&gt; std::optional&lt;clear_t&gt;         // present only on a party that learns it</code></pre>
+<p>Because <code>SessionIO</code> is generic over <code>WireValue</code>, a session names no value family —
+adding a value family needs no session edit (<code class="ref">session_io.h:4-9</code>). The revealed value is
+present only on a party that learns it (every party for <code>PUBLIC</code>, the named recipient otherwise) and
+<code>std::nullopt</code> elsewhere.</p>
+<div class="callout c-note"><span class="lbl">Why the session names no value family</span>
+<p>Responsibilities are split so a session is value-family-agnostic: <code>Session</code> requires only
+<code>party()</code>; the gate context is named once as <code>DirectSession::DirectCtx</code>; and I/O is the
+orthogonal, value-generic <code>SessionIO&lt;S,V&gt;</code> over any <code>WireValue</code>. A new value family is
+usable through any session with <b>no session edit</b>, and <code>CheckpointingSession</code> is an opt-in
+refinement rather than part of the base contract.</p></div>
+
+<h2 id="clearsession">D.2 · <code>ClearSession</code> — the plaintext reference</h2>
+<p><span class="tag">ir/session/clear_session.h</span></p>
+<p><code>ClearSession</code> (<code class="ref">clear_session.h:39-101</code>) is the trivial realization of the
+session contracts. It owns a pure <code>ClearCtx</code> (<code class="ref">clear_session.h:100</code>) and declares
+<code>DirectCtx == ClearCtx</code> (<code class="ref">clear_session.h:41</code>). Since there are no secrets in the
+clear, <code>input</code> becomes public wires and <code>reveal</code> reads wire values back into an
+always-populated optional.</p>
+<ul>
+<li><b><code>direct_ctx()</code></b> returns <code>DirectCtx&amp;</code>
+(<code class="ref">clear_session.h:52</code>) — the gate context for value construction that is not I/O (public
+constants, crypto kernels).</li>
+<li><b><code>party()</code></b> reports <code>PUBLIC</code> (<code class="ref">clear_session.h:48</code>) — plaintext
+has no private party, so <code>PUBLIC</code> is the universal-knowledge convention.</li>
+<li><b><code>reveal_t&lt;V&gt;</code></b> is <code>std::optional&lt;typename V::clear_t&gt;</code>
+(<code class="ref">clear_session.h:45</code>); ClearSession always knows the value, so its optional is always
+populated, for every recipient.</li>
+</ul>
+<p><b>Owner / recipient validation.</b> <code>input(owner, value)</code> and <code>reveal(value, recipient)</code>
+accept and then <b>ignore</b> the party for routing (correct for plaintext — there are no secrets) — but only after
+<b>validating it is a real party id</b>: both <code>error()</code> unless the party is <code>ALICE</code>,
+<code>BOB</code>, or <code>PUBLIC</code> (<code class="ref">clear_session.h:62-63</code> and
+<code class="ref">clear_session.h:83-84</code>; the enum is <code>{XOR=-1, PUBLIC=0, ALICE=1, BOB=2}</code> in
+<code>runtime/core/constants.h</code>). So ClearSession ignores <em>routing</em> but does not silently accept a
+garbage party id — a real protocol session (SH2PC / AG2PC) would additionally <em>route</em> by it, and an auditor
+should confirm those do not ignore it.</p>
+<div class="callout c-ok"><span class="lbl">Codec-width check is always-on</span>
+<p><code>input</code> requires <code>V::encode(value)</code> to produce exactly <code>V::width()</code> bits — a
+mismatch <code>error()</code>s (<code class="ref">clear_session.h:64-69</code>), <b>not</b> a debug-only condition,
+because a codec that emits the wrong count would silently out-of-bounds the wire fill that follows. A
+<code>static_assert</code> additionally pins <code>V::context_type == DirectCtx</code> at both
+<code>input</code> and <code>reveal</code> (<code class="ref">clear_session.h:60-61</code>,
+<code class="ref">clear_session.h:81-82</code>). The bottom of the file
+<code>static_assert</code>s <code>Session&lt;ClearSession&gt;</code> and <code>DirectSession&lt;ClearSession&gt;</code>
+(<code class="ref">clear_session.h:103-104</code>); <code>SessionIO&lt;ClearSession,V&gt;</code> for a concrete value
+type is asserted in the emp-tool tests, since naming a value family in the header would make <code>ir</code> depend
+on <code>circuits/</code>.</p></div>
+
+<!-- ============================== RISK ============================== -->
+<h2 id="risk">Auditor risk register</h2>
+<table class="grid">
+<tr><th>#</th><th>Item</th><th>Where</th><th>Note</th></tr>
+<tr><td>1</td><td>Cross-context checks debug-only by default</td><td><code class="ref">checks.h:15-21</code></td><td>Silent corruption in Release for id-based/stateful contexts; opt back in with <code>-DEMP_CONTEXT_CHECKS=1</code></td></tr>
+<tr><td>2</td><td>Schedule digest guard debug-only</td><td><code class="ref">schedule.h:68-71</code></td><td>Same-shaped stale plan can misexecute in Release; dimension/count guards stay always-on</td></tr>
+<tr><td>3</td><td><code>EMP_CIRCUIT_DIR</code> honored first; no content authentication on <code>.empbc</code></td><td><code class="ref">assets.cpp:37-44</code></td><td>Attacker-controlled env can redirect builtin loads to a different valid circuit; structural validation is the only mitigation</td></tr>
+<tr><td>4</td><td>Digest encoder duality must stay in lockstep</td><td><code class="ref">digest.h:8-9</code>, <code class="ref">digest.h:59-69</code></td><td>Divergence silently breaks determinism / schedule-staleness checks</td></tr>
+<tr><td>5</td><td><code>.empbc</code> gate-record reserved bytes read but not value-checked</td><td><code class="ref">empbc.h:152-153</code></td><td>Minor forward-compat ambiguity (header <code>flags</code> <em>is</em> checked)</td></tr>
+<tr><td>6</td><td><code>execute_program</code> trusts prior validation</td><td><code class="ref">execute.h:102-122</code></td><td>Re-checks only I/O counts; an unvalidated program reaching it reads out-of-range slots</td></tr>
+<tr><td>7</td><td><code>validate_program</code> throws in Release (informational)</td><td><code class="ref">validate.h:19-79</code></td><td>Structural validation survives <code>NDEBUG</code> and is catchable — the safety baseline, not a risk per se</td></tr>
+</table>
+
+</main>
+<footer>
+emp-tool implementation audit · IR (Boolean IR, contexts &amp; sessions) · runtime / ir / circuits three-layer architecture · working tree
+on <code>main</code> (uncommitted; HEAD <code>7f21adc</code>).
+Reports: <a href="01-runtime.html">Runtime</a> · <a href="02-ir.html">IR</a> · <a href="03-circuits.html">Circuits</a>.
+</footer>
+</body>
+</html>

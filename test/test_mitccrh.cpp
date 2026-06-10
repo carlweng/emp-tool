@@ -14,6 +14,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <type_traits>
 #include <cstring>
 #include <iomanip>
 #include <iostream>
@@ -63,17 +64,23 @@ static void example() {
 
 // ---------- correctness ----------
 //
-// Reference: keys[i] = S ^ makeBlock(gid0+i, 0); schedule all B with
-// AES_opt_key_schedule<B>; ParaEnc<K, H> consumes scheduled_key[0..K), then
-// MITCCRH XORs the ciphertext with the original input.
+// Reference: keys[i] = S ^ makeBlock((gid0+i) >> RS, 0) — the bucketed tweak
+// (RS = ReuseShift; RS = 0 is the strict one-key-per-gid construction);
+// schedule all B with AES_opt_key_schedule<B>; ParaEnc<K, H> consumes
+// scheduled_key[0..K), then MITCCRH XORs the ciphertext with the original
+// input. gid0 = 7 is deliberately unaligned so RS > 0 exercises the
+// bucket-straddling renewal path.
 
-template <int K, int H, int B = 8>
+static_assert(std::is_same_v<MITCCRH<8>, MITCCRH<8, 3>>,
+              "MITCCRH's default ReuseShift is 3 (8x key reuse, 3-bit MI deduction)");
+
+template <int K, int H, int B = 8, int RS = 3>
 static bool check_mitccrh_against_paraenc() {
 	static_assert(K <= B && B % K == 0, "MITCCRH<B> requires K | B");
 	const block S = makeBlock(0xdeadbeefULL, 0xcafebabeULL);
 	const uint64_t gid0 = 7;
 
-	MITCCRH<B> mit;
+	MITCCRH<B, RS> mit;
 	mit.setS(S);
 	mit.gid = gid0;
 	mit.key_used = B;  // force a fresh schedule on first hash()
@@ -86,7 +93,8 @@ static bool check_mitccrh_against_paraenc() {
 	mit.template hash<K, H>(emp_out);
 
 	block ref_keys[B];
-	for (int i = 0; i < B; ++i) ref_keys[i] = S ^ makeBlock(gid0 + (uint64_t)i, 0);
+	for (int i = 0; i < B; ++i)
+		ref_keys[i] = S ^ makeBlock((gid0 + (uint64_t)i) >> RS, 0);
 	AES_KEY skeys[B];
 	AES_opt_key_schedule<B>(ref_keys, skeys);
 
@@ -97,8 +105,41 @@ static bool check_mitccrh_against_paraenc() {
 
 	bool ok = memcmp(emp_out, ref_out, sizeof(in)) == 0;
 	ostringstream os;
-	os << "  [MITCCRH<" << B << ">::hash<" << K << "," << H << "> = ParaEnc^in]";
+	os << "  [MITCCRH<" << B << "," << RS << ">::hash<" << K << "," << H << "> = ParaEnc^in]";
 	cout << left << setw(46) << os.str() << (ok ? "OK" : "FAIL") << "\n";
+	return ok;
+}
+
+// Default-shift bucketing across renewals: 8 consecutive hash<2,2> calls
+// advance gid 0..15 = bucket 0 then bucket 1 (two renewals; the second batch
+// goes through the single-bucket schedule-once/replicate path). Every block
+// must equal the bucket-keyed single-AES reference:
+// out = AES_{S ^ (gid>>3)}(in) ^ in.
+static bool check_bucket_sequence() {
+	const block S = makeBlock(0x7777ULL, 0x1111ULL);
+	MITCCRH<8> mit;        // default ReuseShift = 3
+	mit.setS(S);
+
+	bool ok = true;
+	for (int call = 0; call < 8; ++call) {     // keys for gids 2*call, 2*call+1
+		alignas(16) block in[4];
+		PRG().random_block(in, 4);
+		block out[4];
+		mit.hash<2, 2>(out, in);
+		for (int k = 0; k < 2; ++k) {
+			uint64_t g = (uint64_t)(2 * call + k);
+			alignas(16) block key = S ^ makeBlock(g >> 3, 0);
+			AES_KEY ak;
+			AES_set_encrypt_key(key, &ak);
+			for (int j = 0; j < 2; ++j) {
+				alignas(16) block ref = in[k * 2 + j];
+				AES_ecb_encrypt_blks<1>(&ref, &ak);
+				ref = ref ^ in[k * 2 + j];
+				ok &= memcmp(&ref, &out[k * 2 + j], sizeof(block)) == 0;
+			}
+		}
+	}
+	cout << "  [default-shift buckets across renewals]      " << (ok ? "OK" : "FAIL") << "\n";
 	return ok;
 }
 
@@ -199,6 +240,10 @@ static bool run_correctness() {
 	ok &= check_mitccrh_against_paraenc<4, 1>();
 	ok &= check_mitccrh_against_paraenc<8, 1>();
 	ok &= check_mitccrh_against_paraenc<8, 4>();
+	ok &= check_mitccrh_against_paraenc<2, 2, 8, 0>();   // strict per-gid construction
+	ok &= check_mitccrh_against_paraenc<8, 2, 8, 0>();
+	ok &= check_mitccrh_against_paraenc<2, 2, 8, 5>();   // bucket spans renewals (cache path)
+	ok &= check_bucket_sequence();
 	ok &= check_hash_cir<2, 1>();
 	ok &= check_hash_cir<2, 2>();
 	ok &= check_hash_cir<8, 1>();

@@ -6,8 +6,8 @@
 // add/sub, mux/select, comparators, multiply, restoring division). They operate
 // on Ctx::Wire arrays directly (no per-bit context pointer). LSB-first throughout.
 
-#include "emp-tool/context/concept.h"
-#include "emp-tool/core/utils.h"
+#include "emp-tool/ir/context/concept.h"
+#include "emp-tool/runtime/core/utils.h"
 #include <vector>
 
 namespace emp {

@@ -7,10 +7,10 @@
 // backend). The shared cross-context guard check_same_context lives in
 // context/checks.h, since every value type uses it.
 
-#include "emp-tool/context/concept.h"
-#include "emp-tool/context/checks.h"             // check_same_context
+#include "emp-tool/ir/context/concept.h"
+#include "emp-tool/ir/context/checks.h"             // check_same_context
 #include "emp-tool/circuits/numeric_kernels.h"   // kernel::mux for select
-#include "emp-tool/core/utils.h"                  // error()
+#include "emp-tool/runtime/core/utils.h"                  // error()
 #include <vector>
 
 namespace emp {

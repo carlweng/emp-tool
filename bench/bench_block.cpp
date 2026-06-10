@@ -138,6 +138,20 @@ static void bench(double sec) {
 		print_vec_bytes(lbl.str(), calls, 2 * n);
 	}
 
+	cout << "\n=== sse_trans_n128 (tier-dispatched, sweep ncols) ===\n";
+	for (uint64_t ncols : {128ULL, 512ULL, 2048ULL, 8192ULL, 32768ULL,
+	                        131072ULL, 524288ULL}) {
+		size_t n = (128 * ncols) / 8;
+		size_t n_blocks = n / sizeof(block);
+		vector<block> in(n_blocks), out(n_blocks);
+		prg.random_block(in.data(), (int64_t)n_blocks);
+		double calls = run_for(sec, [&]() {
+			sse_trans_n128(out.data(), in.data(), ncols);
+		}, out.data());
+		ostringstream lbl; lbl << "sse_trans_n128(128x" << ncols << ")";
+		print_vec_bytes(lbl.str(), calls, 2 * n);
+	}
+
 	cout << "\n=== bools_to_bits / bits_to_bools (sweep N bits) ===\n";
 	for (int len : {32, 128, 1024, 8192, 65536}) {
 		vector<uint8_t> bools(len);

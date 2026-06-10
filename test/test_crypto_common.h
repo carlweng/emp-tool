@@ -5,7 +5,7 @@
 // replay it on ClearCtx), and CountCtx (gate counts). A "driver" is a generic
 // callable drv(ctx, const Wire* in, Wire* out) that builds typed values from the
 // input wires, runs the kernel, and writes output wires.
-#include "emp-tool/context/context.h"
+#include "emp-tool/ir/context/context.h"
 #include <cstdint>
 #include <span>
 #include <string>

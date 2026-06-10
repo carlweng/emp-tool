@@ -1,7 +1,7 @@
 #ifndef EMP_CIRCUIT_CRYPTO_AES128_H__
 #define EMP_CIRCUIT_CRYPTO_AES128_H__
 
-#include "emp-tool/context/concept.h"
+#include "emp-tool/ir/context/concept.h"
 #include "emp-tool/circuits/bitvec.h"
 #include "emp-tool/circuits/unsigned_int.h"   // for the CTR counter increment
 #include <algorithm>
