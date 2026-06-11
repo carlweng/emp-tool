@@ -26,6 +26,7 @@
 
 #include "emp-tool/ir/context/clear.h"        // ClearCtx
 #include "emp-tool/ir/session/session.h"      // Session / DirectSession
+#include "emp-tool/ir/session/session_io.h"   // encode_value_bits
 #include "emp-tool/ir/wire_value.h"           // WireValue
 #include "emp-tool/runtime/core/constants.h"  // PUBLIC
 #include "emp-tool/runtime/core/utils.h"      // error()
@@ -64,11 +65,7 @@ public:
         if (owner < PUBLIC)
             error("ClearSession::input: owner must be PUBLIC or a party id >= 1");
         const int n = V::width();
-        std::vector<bool> bits = V::encode(value);
-        // Always-on: a codec that emits the wrong bit count would silently
-        // out-of-bounds the wire fill below — that is a codec bug, not a
-        // debug-only condition. (SH2PC / AG2PC sessions enforce the same.)
-        if ((int)bits.size() != n) error("ClearSession::input: V::encode produced a bit count != V::width()");
+        std::vector<bool> bits = encode_value_bits<V>(value, "ClearSession::input");
         std::vector<typename DirectCtx::Wire> wires((std::size_t)n);
         for (int i = 0; i < n; ++i) wires[i] = ctx_.public_bit(bits[i]);
         return V::from_wires(ctx_, wires.data());

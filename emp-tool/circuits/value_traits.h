@@ -2,7 +2,10 @@
 #define EMP_CIRCUIT_VALUE_TRAITS_H__
 // Uniform metadata accessor for context-bound circuit values. Source of truth =
 // the value type's own static members; this trait just exposes them uniformly
-// (width, clear codec, rebind<Ctx>) for compile()/run()/concepts.
+// (width, clear codec, rebind<Ctx>) for circuits-layer call sites
+// (compile()/run() signature deduction). Session I/O code reads the value's
+// members directly (V::width()/encode/decode — see ir/session/session_io.h's
+// encode_value_bits); ir/ never includes this header.
 #include "emp-tool/ir/context/concept.h"   // BooleanContext
 #include <vector>
 namespace emp {

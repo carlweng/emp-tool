@@ -17,8 +17,11 @@
 
 #include "emp-tool/ir/session/session.h"   // Session / DirectSession / CheckpointingSession
 #include "emp-tool/ir/wire_value.h"        // WireValue
+#include "emp-tool/runtime/core/utils.h"   // error()
 #include <concepts>
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace emp {
 
@@ -34,6 +37,20 @@ concept SessionIO =
         { s.template input<V>(party, x) } -> std::same_as<V>;
         { s.reveal(v, party) } -> std::same_as<typename S::template reveal_t<V>>;
     };
+
+// encode_value_bits<V> — the input-side codec step every session's typed input
+// shares: run V::encode and enforce the width contract ALWAYS-ON (not
+// debug-only: a short/long encoding is a codec bug, and silently padding would
+// corrupt the protocol's input bits). This is the one enforcement point; a
+// session feeds the returned bits through its own wire path. `who` names the
+// calling boundary for the diagnostic.
+template <WireValue V>
+std::vector<bool> encode_value_bits(const typename V::clear_t& clear, const char* who) {
+    std::vector<bool> bits = V::encode(clear);
+    if ((int)bits.size() != V::width())
+        error((std::string(who) + ": V::encode produced a bit count != V::width()").c_str());
+    return bits;
+}
 
 }  // namespace emp
 #endif  // EMP_IR_SESSION_SESSION_IO_H__
