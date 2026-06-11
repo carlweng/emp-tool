@@ -1,15 +1,18 @@
 #ifndef EMP_IR_PASSES_H__
 #define EMP_IR_PASSES_H__
 
-// Protocol-neutral analysis passes over a recorded BooleanProgram. Each is a pure
-// function computed once (at compile time) and cached on the Circuit. They
-// describe graph facts every backend can use; a backend reads the ones it needs
-// (ag2pc uses liveness; GMW will use the schedule) and ignores the rest.
+// Protocol-neutral analysis passes over a recorded BooleanProgram. Each is a
+// pure function over the program; nothing here caches — a caller that replays
+// repeatedly computes the pass once and keeps the result itself. They describe
+// graph facts every backend can use; a backend reads the ones it needs
+// (ag2pc uses liveness; round-sensitive protocols can use the schedule) and
+// ignores the rest.
 //
-// Wire ids in the IR are uint32_t. These passes carry per-wire scratch (first def
-// / last use / level) as SIGNED vectors with a -1 sentinel — that is local
-// analysis state, never serialized, so -1 stays a legal "none" marker. An input
-// wire is any w < num_inputs (it has no producing gate).
+// Wire ids in the IR are uint32_t, but GATE indices are carried as int64_t
+// where a -1 "none" sentinel is needed (first def / last use) — gate counts up
+// to 2^32-1 are representable, so a plain int would silently overflow past
+// 2^31. This is local analysis state, never serialized. An input wire is any
+// w < num_inputs (it has no producing gate).
 
 #include "emp-tool/ir/program.h"
 #include <algorithm>
@@ -19,26 +22,26 @@
 namespace emp {
 namespace circuit {
 
-// AND-depth scheduling metadata (filled by schedule_pass). Populated now for
-// future GMW round batching / depth-minimization; unused by constant-round
-// backends.
+// AND-depth scheduling metadata (filled by schedule_pass). Useful to protocols
+// whose latency/round count depends on minimizing AND-depth; unused by
+// constant-round backends.
 struct LevelInfo {
-	std::vector<std::vector<int>> and_gate_indices;  // gate indices per AND-depth level
-	int depth = 0;                                   // max AND-depth
+	std::vector<std::vector<uint32_t>> and_gate_indices;  // gate indices per AND-depth level
+	int depth = 0;                                        // max AND-depth
 };
 
 struct CountStats {
 	int64_t num_and = 0, num_xor = 0, num_not = 0, num_const = 0;
-	int num_input_bits = 0, num_output_bits = 0;
-	int num_wire = 0, num_gate = 0;
+	int64_t num_input_bits = 0, num_output_bits = 0;
+	int64_t num_wire = 0, num_gate = 0;
 };
 
 inline CountStats count_pass(const BooleanProgram& p) {
 	CountStats s;
-	s.num_wire = (int)p.num_wires;
-	s.num_gate = (int)p.num_gate();
-	s.num_input_bits  = (int)p.total_input_bits();
-	s.num_output_bits = (int)p.total_output_bits();
+	s.num_wire = (int64_t)p.num_wires;
+	s.num_gate = (int64_t)p.num_gate();
+	s.num_input_bits  = (int64_t)p.total_input_bits();
+	s.num_output_bits = (int64_t)p.total_output_bits();
 	for (const auto& g : p.gates) {
 		switch (g.op) {
 			case Op::And:    ++s.num_and;   break;
@@ -52,8 +55,8 @@ inline CountStats count_pass(const BooleanProgram& p) {
 }
 
 struct LivenessStats {
-	std::vector<int> last_use;   // [num_wires] last gate index reading w, -1 if never read
-	std::vector<int> first_def;  // [num_wires] producing gate index, -1 if an input wire
+	std::vector<int64_t> last_use;   // [num_wires] last gate index reading w, -1 if never read
+	std::vector<int64_t> first_def;  // [num_wires] producing gate index, -1 if an input wire
 };
 
 inline LivenessStats liveness_pass(const BooleanProgram& p) {
@@ -63,10 +66,10 @@ inline LivenessStats liveness_pass(const BooleanProgram& p) {
 	const uint32_t G = p.num_gate();
 	for (uint32_t gi = 0; gi < G; ++gi) {
 		const Gate& g = p.gates[gi];
-		s.first_def[g.out] = (int)gi;
+		s.first_def[g.out] = (int64_t)gi;
 		if (g.is_const()) continue;                       // CONST reads nothing
-		s.last_use[g.in0] = (int)gi;
-		if (!g.is_not()) s.last_use[g.in1] = (int)gi;
+		s.last_use[g.in0] = (int64_t)gi;
+		if (!g.is_not()) s.last_use[g.in1] = (int64_t)gi;
 	}
 	return s;
 }
@@ -98,7 +101,7 @@ inline ScheduleStats schedule_pass(const BooleanProgram& p) {
 	s.levels.and_gate_indices.assign(depth + 1, {});
 	for (uint32_t gi = 0; gi < G; ++gi) {
 		const Gate& g = p.gates[gi];
-		if (g.is_and()) s.levels.and_gate_indices[s.wire_level[g.out]].push_back((int)gi);
+		if (g.is_and()) s.levels.and_gate_indices[s.wire_level[g.out]].push_back(gi);
 	}
 	return s;
 }
@@ -108,11 +111,11 @@ struct LayoutStats {
 	// gi (the inverse of LivenessStats::last_use), so a forward gate walk can
 	// recycle slots inline without scanning the array. Outputs and never-read
 	// wires are absent (they are roots / dead-on-arrival).
-	std::vector<std::vector<int>> frees;   // [num_gate]
+	std::vector<std::vector<uint32_t>> frees;   // [num_gate]
 	// Output-rooted dead-code-elimination sizes (what a backend rooted on the
 	// revealed/returned outputs would actually execute).
-	int reachable_wire = 0;
-	int reachable_and  = 0;
+	int64_t reachable_wire = 0;
+	int64_t reachable_and  = 0;
 };
 
 inline LayoutStats layout_pass(const BooleanProgram& p, const LivenessStats& live) {
@@ -125,7 +128,7 @@ inline LayoutStats layout_pass(const BooleanProgram& p, const LivenessStats& liv
 		if (w < p.num_wires) is_output[w] = 1;
 	s.frees.assign(p.num_gate(), {});
 	for (uint32_t w = 0; w < p.num_wires; ++w)
-		if (live.last_use[w] >= 0 && !is_output[w]) s.frees[live.last_use[w]].push_back((int)w);
+		if (live.last_use[w] >= 0 && !is_output[w]) s.frees[(size_t)live.last_use[w]].push_back(w);
 
 	// Output-rooted DCE: mark wires reachable backward from the output wires.
 	std::vector<char> reach(p.num_wires, 0);
@@ -134,9 +137,9 @@ inline LayoutStats layout_pass(const BooleanProgram& p, const LivenessStats& liv
 		if (w < p.num_wires && !reach[w]) { reach[w] = 1; stack.push_back(w); }
 	while (!stack.empty()) {
 		uint32_t w = stack.back(); stack.pop_back();
-		int pg = live.first_def[w];
+		int64_t pg = live.first_def[w];
 		if (pg < 0) continue;                  // input wire: no producer to walk
-		const Gate& g = p.gates[pg];
+		const Gate& g = p.gates[(size_t)pg];
 		auto visit = [&](uint32_t v) { if (!reach[v]) { reach[v] = 1; stack.push_back(v); } };
 		visit(g.in0);
 		if (!g.is_not() && !g.is_const()) visit(g.in1);

@@ -7,9 +7,9 @@
 
 #include <atomic>
 #include <iostream>
-#include <stdexcept>
 #include <string>
 
+#include "emp-tool/runtime/core/utils.h"   // error()
 #include "emp-tool/runtime/io/io_channel.h"
 #include "emp-tool/runtime/io/tcp_socket.h"
 
@@ -140,7 +140,7 @@ class TLSIO : public IOChannel { public:
 	TLSIO(const char *address, int port, const TLSConfig &cfg, bool quiet = false)
 	    : quiet(quiet) {
 		if (port < 0 || port > 65535)
-			throw std::runtime_error("Invalid port number!");
+			error("TLSIO: invalid port number");
 		tls_detail::install_sigpipe_ignore_once();
 		is_server = (address == nullptr);
 		is_tls_server = cfg.is_tls_server;

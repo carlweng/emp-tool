@@ -2,7 +2,38 @@
 
 Cross-cutting conventions for emp-tool public APIs. Read this before
 adding or changing an exported function that takes a byte/block/bool
-count, or before choosing a PRG buffer-fill API.
+count, before choosing a PRG buffer-fill API, or before writing a
+failure path.
+
+## Failure reporting: error(), never exceptions
+
+Every failure in emp-tool — hostile/corrupt input (`.empbc` loaders,
+`validate_program`), API misuse (shape/width mismatches), I/O setup and
+mid-protocol faults, malicious-abort checks — reports through `error()`
+(`runtime/core/utils.h`): print the message with the call site, then
+`std::_Exit(1)`. emp-tool does not throw, anywhere, and is
+`-fno-exceptions`-compatible.
+
+Why one fatal path:
+
+- Unwinding past half-settled protocol state (a partly garbled circuit,
+  a half-consumed OT batch) is never safe to resume from, and `exit()`'s
+  destructor/atexit cleanup races still-live ThreadPool workers
+  (see `utils.hpp` for the `_Exit` rationale).
+- Exceptions buy recoverability only if some caller can meaningfully
+  recover; in a two-party protocol binary there is no such caller — the
+  process is the session.
+- One discipline keeps every failure observable the same way: nonzero
+  exit + one stderr line with `file:line`.
+
+Consequences for code and tests:
+
+- Don't write cleanup that only runs on a failure path (close-on-error,
+  free-on-error): `error()` ends the process, so the path is dead. Plain
+  straight-line code with `error()` calls is the idiom.
+- A "rejects bad input" test asserts child-process death, not a caught
+  exception — fork, silence stderr, expect nonzero exit (see
+  `test/test_boolean_program.cpp`'s `dies()` helper).
 
 ## Length and count parameters
 

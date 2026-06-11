@@ -65,6 +65,18 @@ int main() {
     std::optional<uint64_t> rs = sess.reveal(a + b, PUBLIC);
     ok &= rs.has_value() && rs.value() == 12;
 
+    // The session contract is n-party: owner/recipient are plain party ids >= 1
+    // (constants.h), so the plaintext oracle serves multi-party protocols too —
+    // a 5-party round-trip with reveal to party 4 works with no session edit.
+    {
+        using U16 = UInt_T<ClearCtx, 16>;
+        auto acc = U16::constant(sess.direct_ctx(), 0);
+        for (int party = 1; party <= 5; ++party)
+            acc = acc + sess.input<U16>(party, (uint64_t)(10 * party));
+        std::optional<uint64_t> rn = sess.reveal(acc, 4);
+        ok &= rn.has_value() && rn.value() == 150;
+    }
+
     std::printf("test_session_concepts: %s\n", ok ? "GOOD!" : "BAD!");
     return ok ? 0 : 1;
 }

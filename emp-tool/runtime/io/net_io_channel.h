@@ -7,9 +7,9 @@
 
 #include <atomic>
 #include <iostream>
-#include <stdexcept>
 #include <string>
 
+#include "emp-tool/runtime/core/utils.h"   // error()
 #include "emp-tool/runtime/io/io_channel.h"
 #include "emp-tool/runtime/io/tcp_socket.h"
 
@@ -80,7 +80,7 @@ class NetIO : public IOChannel { public:
 
 	NetIO(const char *address, int port, bool quiet = false) : quiet(quiet) {
 		if (port < 0 || port > 65535)
-			throw std::runtime_error("Invalid port number!");
+			error("NetIO: invalid port number");
 
 		is_server = (address == nullptr);
 		addr_ = address ? address : "";
@@ -146,18 +146,8 @@ class NetIO : public IOChannel { public:
 		send_buf   = new char[NETWORK_STAGING_BUFFER_SIZE];
 		recv_buf   = new char[NETWORK_STAGING_BUFFER_SIZE];
 		stream = fdopen(sock, "wb");
-		if (stream == nullptr) {
-			// The constructor is about to throw — ~NetIO() will not run,
-			// so release everything we allocated above and close the fd
-			// before propagating. POSIX: on fdopen failure the fd is
-			// still ours to close.
-			int saved_errno = errno;
-			::close(sock); sock = -1;
-			delete[] stream_buf; stream_buf = nullptr;
-			delete[] send_buf;   send_buf   = nullptr;
-			delete[] recv_buf;   recv_buf   = nullptr;
-			throw std::runtime_error(std::string("NetIO: fdopen failed: ") + std::strerror(saved_errno));
-		}
+		if (stream == nullptr)
+			error((std::string("NetIO: fdopen failed: ") + std::strerror(errno)).c_str());
 		setvbuf(stream, stream_buf, _IOFBF, NETWORK_STREAM_BUFFER_SIZE);
 	}
 

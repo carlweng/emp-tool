@@ -2,9 +2,13 @@
 #define EMP_IR_VISIT_H__
 
 // The shared gate-walk primitive: walk gates once, in order, dispatching each to
-// the matching visitor method. This is the ONLY place the op switch lives — a new
-// Op is a compile error at every visitor, never a silent fallthrough. A consumer
-// with a different wire model (e.g. ag2pc, which replays the same program once per
+// the matching visitor method. Op dispatch is not unique to this file — it also
+// lives in validate.h, schedule.h, passes.h, and digest.h (digest_program); the
+// guarantee is that every such site is a defaultless switch and the build carries
+// -Werror=switch, so adding an Op is a build error at each dispatch site, never a
+// silent fallthrough. (validate.h additionally range-checks the raw op byte of
+// loaded files — the one sanctioned out-of-range path.) A consumer with a
+// different wire model (e.g. ag2pc, which replays the same program once per
 // garbling phase against a swapped backend and threads wire IDs rather than
 // values) calls for_each_gate directly; ir/execute.h is the value wrapper most
 // callers want.

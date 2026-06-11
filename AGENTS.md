@@ -5,18 +5,26 @@ file first, then load only the subdocs relevant to your task.
 
 ## Project at a glance
 
-emp-tool is the foundation of the EMP toolkit: a header-mostly C++
-library providing the circuit primitives (`Bit` / `BitVec` /
-`UnsignedInt` / `SignedInt` / `Float`), backend execution (clear /
-half-gate / privacy-free), IO channels (`NetIO`, `TLSIO`), and
-crypto utilities (AES, hash, PRG, group ops) that the higher-level
-emp-ot, emp-sh2pc, emp-ag2pc, emp-agmpc protocols build on.
+emp-tool is the foundation of the EMP toolkit: a header-mostly C++20
+library in three layers (`circuits` → `ir` → `runtime`, each with its
+own umbrella header) that the higher-level emp-ot, emp-sh2pc, emp-ag2pc,
+emp-agmpc protocols build on:
 
-Standard users include `emp-tool/emp-tool.h` for the substrate and opt
-into `emp::block_types` when they want the `block`-typed aliases.
-`emp-tool.h` intentionally defines no bare circuit aliases in `emp`, so
-downstream protocol libraries can include it safely and bind their own
-wire types.
+- `runtime/` — the substrate: `block`, crypto utilities (AES, hash, PRG,
+  group ops), IO channels (`NetIO`, `TLSIO`), and the per-gate garbling
+  primitives (half-gate / privacy-free).
+- `ir/` — the `BooleanContext` concept with the reusable contexts
+  (`ClearCtx` / `CountCtx` / `DigestCtx` / `RecordCtx`), the
+  `BooleanProgram` IR + `.empbc` format, and the session contracts
+  (`Session` / `DirectSession` / `SessionIO` over any `WireValue`).
+- `circuits/` — the context-bound value families (`Bit_T` / `BitVec_T` /
+  `UInt_T` / `Int_T` / `Float_T<Ctx>`), numeric kernels, in-circuit
+  crypto, and the `compile` / `run` frontend.
+
+Standard users include `emp-tool/emp-tool.h` (the top umbrella). Values
+are context-bound (`UInt_T<Ctx, 32>` etc.) — there is no global backend
+and no bare circuit aliases in `emp`; a protocol library binds its own
+context type and the same value code runs over it.
 
 ## When to read what
 
@@ -25,9 +33,9 @@ self-contained and assumes you've read this index.
 
 | Task | Subdoc(s) |
 |---|---|
-| Modify a circuit primitive header (`Bit_T`, `BitVec_T`, `UnsignedInt_T`, `SignedInt_T`, `Float_T`) | [docs/circuits.md](docs/circuits.md) + [docs/numeric_semantics.md](docs/numeric_semantics.md) |
+| Modify a circuit primitive header (`Bit_T`, `BitVec_T`, `UInt_T`, `Int_T`, `Float_T`) | [docs/circuits.md](docs/circuits.md) + [docs/numeric_semantics.md](docs/numeric_semantics.md) |
 | Add, replace, or debug generated `.empbc` circuit assets, especially floating-point assets | [docs/floating_point_circuits.md](docs/floating_point_circuits.md) |
-| Write or modify a `Backend` subclass (gate dispatch, garbling) | [docs/backend.md](docs/backend.md) |
+| Implement a protocol backend (a `BooleanContext` + session; gate dispatch, garbling) | [docs/backend.md](docs/backend.md) |
 | Run / compile / replay a pure circuit function through a backend (`frontend::run` / `compile`) | [docs/frontend.md](docs/frontend.md) |
 | Write protocol code that uses NetIO (sends, recvs, multi-thread, flush) | [docs/io_channel.md](docs/io_channel.md) |
 | Investigate a NetIO deadlock | [docs/io_channel.md](docs/io_channel.md) |

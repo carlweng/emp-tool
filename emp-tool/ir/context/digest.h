@@ -61,8 +61,17 @@ inline uint64_t digest_program(const circuit::BooleanProgram& p) {
     auto mix = [&](uint64_t x) { h = (h ^ x) * 1099511628211ull; };
     mix(0xE); mix((uint64_t)p.num_inputs);                 // matches external_input(num_inputs)
     for (const circuit::Gate& g : p.gates) {
-        uint64_t op = g.op == circuit::Op::And ? 0 : g.op == circuit::Op::Xor ? 1
-                    : g.op == circuit::Op::Not ? 2 : (g.op == circuit::Op::Const1 ? 4 : 3);
+        // Defaultless switch: the digest codes are part of the hash scheme (they
+        // must keep matching DigestCtx::emit_), so a new Op fails the build here
+        // instead of silently hashing as some existing code.
+        uint64_t op = 0;
+        switch (g.op) {
+            case circuit::Op::And:    op = 0; break;
+            case circuit::Op::Xor:    op = 1; break;
+            case circuit::Op::Not:    op = 2; break;
+            case circuit::Op::Const0: op = 3; break;
+            case circuit::Op::Const1: op = 4; break;
+        }
         mix(op); mix(g.in0); mix(g.in1); mix(g.out);
     }
     return h;

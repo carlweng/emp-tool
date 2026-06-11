@@ -2,7 +2,6 @@
 #define EMP_IO_CHANNEL_H__
 #include "emp-tool/runtime/core/block.h"
 #include "emp-tool/runtime/crypto/hash.h"
-#include "emp-tool/runtime/crypto/prg.h"
 #include "emp-tool/runtime/crypto/ec.h"
 #include <cassert>
 #include <cstdint>

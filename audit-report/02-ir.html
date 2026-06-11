@@ -128,13 +128,15 @@ recording, or a cryptographic backend — with the gate stream guaranteed identi
 <!-- ============================== PART A ============================== -->
 <h2 id="program">A.1 · The IR data model</h2>
 <p><span class="tag">ir/program.h</span></p>
-<p>One in-memory representation, one gate encoding, <b>protocol-neutral</b> — the IR knows nothing about parties,
-owners, argument boundaries, labels, or MACs (those live in the layers that produce and consume it). Opcodes
+<p>The canonical stored/replay representation has one gate encoding and is <b>protocol-neutral</b> — the IR knows
+nothing about parties, owners, argument boundaries, labels, or MACs (those live in the layers that produce and
+consume it). Contexts may also evaluate directly or record through <code>RecordCtx</code>; they do not have to materialize
+execution as a <code>BooleanProgram</code> unless they are loading, saving, compiling, or replaying this IR. Opcodes
 (<code class="ref">program.h:25</code>):</p>
 <pre><code>enum class Op : uint8_t { And=0, Xor=1, Not=2, Const0=3, Const1=4 };  // == on-disk .empbc codes</code></pre>
-<p>Linear gates (<code>Xor</code>/<code>Not</code>) are free; <code>And</code> is the only costed op; public
-constants are <b>first-class <code>Const0</code>/<code>Const1</code> gates</b> with no operands, so each backend
-realizes a known 0/1 wire however its protocol prescribes. A <code>Gate</code> is
+<p>Public constants are <b>first-class <code>Const0</code>/<code>Const1</code> gates</b> with no operands, so each backend
+realizes a known 0/1 wire however its protocol prescribes. The IR records all Boolean operations explicitly;
+backend cost models are deliberately outside the data model. A <code>Gate</code> is
 <code>{in0,in1,out,op}</code> with <code>in1</code> normalized to <code>0</code> for <code>Not</code>/<code>Const*</code>
 (<code class="ref">program.h:30-38</code>). A <code>BooleanProgram</code> is a dense, SSA-like form
 (<code class="ref">program.h:40-50</code>):</p>
@@ -147,8 +149,8 @@ topological order; wire id == position, no holes.</p>
 
 <h2 id="validate">A.2 · Validation invariants</h2>
 <p><span class="tag">ir/validate.h</span></p>
-<p><code>validate_program</code> (<code class="ref">validate.h:19-79</code>) is the single validation path — run at
-construct / load / before executing externally-supplied programs, <b>never in the hot loop</b>. It throws
+<p><code>validate_program</code> (<code class="ref">validate.h:19-79</code>) is the single structural validation path — run at
+IR construction / file load / artifact validation boundaries, not during trusted replay. It throws
 <code>std::runtime_error</code> on the first violation. Invariants:</p>
 <ol>
 <li><code>num_inputs ≤ num_wires</code> (<code class="ref">validate.h:20-22</code>).</li>
@@ -203,7 +205,7 @@ gate-record reserved byte is silently accepted. <code>load_empbc_file</code> rea
 
 <h2 id="passes">A.4 · Analysis passes</h2>
 <p><span class="tag">ir/passes.h</span></p>
-<p>Protocol-neutral pure-function analyses over a <code>BooleanProgram</code>, each computed once and optionally
+<p>Protocol-neutral pure-function analyses over a materialized <code>BooleanProgram</code>, each computed once and optionally
 cached on the frontend <code>Circuit</code>. Per-wire scratch (first-def / last-use / level) uses signed vectors
 with a <code>−1</code> "none" sentinel — local analysis state, never serialized
 (<code class="ref">passes.h:8-12</code>).</p>
@@ -213,9 +215,9 @@ wire/gate/input/output counts (the stored-program analogue of <code>CountCtx</co
 <li><b><code>liveness_pass</code></b> (<code class="ref">passes.h:59-72</code>) → per-wire <code>last_use</code> +
 <code>first_def</code>.</li>
 <li><b><code>schedule_pass</code></b> (<code class="ref">passes.h:79-104</code>) → <b>AND-depth</b> of each wire
-(<code>Const=0</code>; <code>Not</code>/<code>Xor</code> inherit max input level for free;
+(<code>Const=0</code>; <code>Not</code> inherits its input level; <code>Xor</code> inherits the max input level;
 <code>And = 1 + max(level(in0),level(in1))</code>, <code class="ref">passes.h:86-93</code>) and AND gates grouped by
-level — the input the scheduler consumes for round batching.</li>
+level — metadata the scheduled replay path can use for bulk <code>and_many</code> batching.</li>
 <li><b><code>layout_pass</code></b> (<code class="ref">passes.h:118-148</code>) → <code>frees[gi]</code> (slots
 recyclable after gate <code>gi</code>, with output wires excluded as roots) plus an <b>output-rooted dead-code-
 elimination sizing</b> (backward reachability counting <code>reachable_wire</code> / <code>reachable_and</code>,
@@ -225,12 +227,13 @@ program — execution still walks all gates.</li>
 
 <h2 id="schedule">A.5 · Scheduled bulk replay</h2>
 <p><span class="tag">ir/schedule.h</span></p>
-<p>Level-batched replay for a <code>BulkBooleanContext</code>: walk linear gates in topological order, but batch
-every ready AND layer (grouped by AND-depth) into one <code>and_many</code> call
-(<code class="ref">schedule.h:77-99</code>). <b>Correctness is identical to the scalar <code>execute_program</code></b>;
-only batching changes. A <code>ScheduledPlan</code> (<code class="ref">schedule.h:28-39</code>) caches gate indices
-per AND-depth plus the program's identity (<code>num_inputs/num_wires/num_gates/digest</code>) for staleness
-checking. Per level: collect the level's AND operands/outputs → one <code>and_many</code> → run the level's linear
+<p>Round-sensitive bulk replay for protocols whose latency depends on minimizing AND-depth: bucket all gates by
+their output wire's AND-depth, then batch each level's ready AND gates into one <code>and_many</code> call and run
+that same level's non-AND gates in emission order (<code class="ref">schedule.h:77-99</code>). <b>Correctness is
+identical to the scalar <code>execute_program</code></b>; only batching changes. A <code>ScheduledPlan</code>
+(<code class="ref">schedule.h:28-39</code>) caches gate indices per AND-depth plus the program's identity
+(<code>num_inputs/num_wires/num_gates/digest</code>) for staleness checking. Per level: collect the level's AND
+operands/outputs → one <code>and_many</code> → run the level's <code>Const</code>/<code>Xor</code>/<code>Not</code>
 gates in emission order.</p>
 <div class="callout c-warn"><span class="lbl">Schedule digest guard is debug-only</span>
 <p>Three staleness guards: the input count and the plan dimensions

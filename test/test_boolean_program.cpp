@@ -10,14 +10,33 @@
 #include "emp-tool/ir/empbc.h"
 #include <cassert>
 #include <cstdio>
-#include <stdexcept>
 #include <vector>
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 using namespace emp::circuit;
 
+// Rejection is fatal by design — error() _Exit(1)s the process (utils.hpp) —
+// so "this input is rejected" shows up as child-process death, not an
+// exception. Run `f` in a fork with stderr silenced (the diagnostic is
+// expected) and report whether the child exited nonzero.
+template <class F>
+static bool dies(F&& f) {
+	pid_t pid = fork();
+	if (pid == 0) {
+		int devnull = open("/dev/null", O_WRONLY);
+		if (devnull >= 0) dup2(devnull, 2);
+		f();
+		_exit(0);
+	}
+	int st = 0;
+	waitpid(pid, &st, 0);
+	return !(WIFEXITED(st) && WEXITSTATUS(st) == 0);
+}
+
 static bool throws(void (*fn)(const BooleanProgram&), const BooleanProgram& p) {
-	try { fn(p); } catch (const std::runtime_error&) { return true; }
-	return false;
+	return dies([&] { fn(p); });
 }
 
 // A 2-input program: out = (a AND b) XOR 1, plus a passthrough of `a`.
@@ -51,7 +70,7 @@ int main() {
 
 	// ---- validation: the well-formed program passes ----
 	BooleanProgram p = sample();
-	try { validate_program(p); } catch (...) { check(false, "valid program rejected"); }
+	check(!dies([&] { validate_program(p); }), "valid program rejected");
 
 	// ---- validation: each invariant is enforced ----
 	{ BooleanProgram b = sample(); b.gates[0].in1 = 99;  check(throws(validate_program, b), "in-range read not enforced"); }
@@ -107,7 +126,7 @@ int main() {
 	{
 		std::vector<uint8_t> bytes = save_empbc(p);
 		auto rejects = [&](std::vector<uint8_t> b) {
-			try { load_empbc(b); } catch (const std::runtime_error&) { return true; } return false;
+			return dies([&] { load_empbc(b); });
 		};
 		check(rejects({}),                                         "empty buffer not rejected");
 		{ auto b = bytes; b[0] = 'X';            check(rejects(b), "bad magic not rejected"); }

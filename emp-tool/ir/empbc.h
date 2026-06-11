@@ -30,9 +30,9 @@
 
 #include "emp-tool/ir/program.h"
 #include "emp-tool/ir/validate.h"
+#include "emp-tool/runtime/core/utils.h"   // error()
 #include <cstdint>
 #include <cstdio>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -61,7 +61,7 @@ struct Reader {
 	size_t n, pos = 0;
 	Reader(const uint8_t* p_, size_t n_) : p(p_), n(n_) {}
 	void need(size_t k) const {
-		if (pos + k > n) throw std::runtime_error("empbc: truncated file");
+		if (pos + k > n) error("empbc: truncated file");
 	}
 	uint8_t  u8()  { need(1); return p[pos++]; }
 	uint16_t u16() { need(2); uint16_t v = (uint16_t)p[pos] | ((uint16_t)p[pos + 1] << 8); pos += 2; return v; }
@@ -112,18 +112,18 @@ inline std::vector<uint8_t> save_empbc(const BooleanProgram& p) {
 }
 
 // Decode .empbc bytes into a runtime BooleanProgram (uint32_t indices) and
-// validate it. Throws std::runtime_error on any structural problem.
+// validate it. error()s (fatal) on any structural problem.
 inline BooleanProgram load_empbc(const uint8_t* bytes, size_t len) {
 	using namespace empbc_detail;
 	Reader r(bytes, len);
 
 	for (uint8_t m : MAGIC)
-		if (r.u8() != m) throw std::runtime_error("empbc: bad magic");
+		if (r.u8() != m) error("empbc: bad magic");
 	uint16_t version = r.u16();
-	if (version != VERSION) throw std::runtime_error("empbc: unsupported version");
+	if (version != VERSION) error("empbc: unsupported version");
 	int iw = r.u8();
-	if (iw != 2 && iw != 4) throw std::runtime_error("empbc: bad index_width");
-	if (r.u8() != 0) throw std::runtime_error("empbc: nonzero reserved flags");
+	if (iw != 2 && iw != 4) error("empbc: bad index_width");
+	if (r.u8() != 0) error("empbc: nonzero reserved flags");
 
 	BooleanProgram p;
 	p.num_wires            = r.u32();
@@ -138,7 +138,7 @@ inline BooleanProgram load_empbc(const uint8_t* bytes, size_t len) {
 	const uint64_t expect =
 	    (uint64_t)HEADER_LEN + (uint64_t)num_gates * grec + (uint64_t)num_outputs * (uint64_t)iw;
 	if (expect != (uint64_t)len)
-		throw std::runtime_error("empbc: declared sizes do not match file length");
+		error("empbc: declared sizes do not match file length");
 
 	p.gates.reserve(num_gates);
 	for (uint32_t i = 0; i < num_gates; ++i) {
@@ -147,7 +147,7 @@ inline BooleanProgram load_empbc(const uint8_t* bytes, size_t len) {
 		g.in1 = r.idx(iw);
 		g.out = r.idx(iw);
 		uint8_t op = r.u8();
-		if (op > (uint8_t)Op::Const1) throw std::runtime_error("empbc: unknown op code");
+		if (op > (uint8_t)Op::Const1) error("empbc: unknown op code");
 		g.op = (Op)op;
 		r.u8();                          // reserved
 		if (iw == 4) { r.u8(); r.u8(); }
@@ -164,19 +164,18 @@ inline BooleanProgram load_empbc(const std::vector<uint8_t>& bytes) {
 	return load_empbc(bytes.data(), bytes.size());
 }
 
+// No cleanup on the failure paths: error() ends the process (utils.hpp), so an
+// open FILE* cannot leak into continued execution.
 inline BooleanProgram load_empbc_file(const char* path) {
 	FILE* f = std::fopen(path, "rb");
-	if (!f) throw std::runtime_error(std::string("empbc: cannot open ") + path);
-	std::vector<uint8_t> buf;
-	try {
-		if (std::fseek(f, 0, SEEK_END) != 0) throw std::runtime_error("empbc: seek failed");
-		long sz = std::ftell(f);
-		if (sz < 0) throw std::runtime_error("empbc: tell failed");
-		std::rewind(f);
-		buf.resize((size_t)sz);
-		if (sz > 0 && std::fread(buf.data(), 1, (size_t)sz, f) != (size_t)sz)
-			throw std::runtime_error("empbc: short read");
-	} catch (...) { std::fclose(f); throw; }
+	if (!f) error((std::string("empbc: cannot open ") + path).c_str());
+	if (std::fseek(f, 0, SEEK_END) != 0) error("empbc: seek failed");
+	long sz = std::ftell(f);
+	if (sz < 0) error("empbc: tell failed");
+	std::rewind(f);
+	std::vector<uint8_t> buf((size_t)sz);
+	if (sz > 0 && std::fread(buf.data(), 1, (size_t)sz, f) != (size_t)sz)
+		error("empbc: short read");
 	std::fclose(f);
 	return load_empbc(buf);
 }
@@ -184,10 +183,10 @@ inline BooleanProgram load_empbc_file(const char* path) {
 inline void save_empbc_file(const char* path, const BooleanProgram& p) {
 	std::vector<uint8_t> b = save_empbc(p);
 	FILE* f = std::fopen(path, "wb");
-	if (!f) throw std::runtime_error(std::string("empbc: cannot open for write ") + path);
+	if (!f) error((std::string("empbc: cannot open for write ") + path).c_str());
 	bool ok = b.empty() || std::fwrite(b.data(), 1, b.size(), f) == b.size();
 	std::fclose(f);
-	if (!ok) throw std::runtime_error("empbc: short write");
+	if (!ok) error("empbc: short write");
 }
 
 }  // namespace circuit

@@ -3,13 +3,13 @@
 
 // Validation for the Boolean-circuit IR. ONE path, run at construction / load /
 // before executing an externally supplied program — never inside the execution
-// hot loop. Throws std::runtime_error on the first violation. Enforces the IR's
+// hot loop. error()s (fatal, see utils.hpp) on the first violation. Enforces the IR's
 // invariants so every downstream consumer (frontend replay, float builtins,
 // ag2pc) may trust the structure without re-checking.
 
 #include "emp-tool/ir/program.h"
+#include "emp-tool/runtime/core/utils.h"   // error()
 #include <cstdint>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -19,12 +19,12 @@ namespace circuit {
 inline void validate_program(const BooleanProgram& p) {
 	const uint64_t NW = p.num_wires;
 	if (p.num_inputs > NW)
-		throw std::runtime_error("validate_program: num_inputs exceeds num_wires");
+		error("validate_program: num_inputs exceeds num_wires");
 
 	const uint64_t NG = p.gates.size();
 	const uint64_t non_inputs = NW - p.num_inputs;
 	if (NG != non_inputs)
-		throw std::runtime_error("validate_program: num_wires must equal num_inputs + num_gates (dense program)");
+		error("validate_program: num_wires must equal num_inputs + num_gates (dense program)");
 
 	// A non-input wire is "defined" once its producer has been seen; input
 	// wires are defined up front. Track only non-input wires, not all
@@ -37,9 +37,9 @@ inline void validate_program(const BooleanProgram& p) {
 	};
 	size_t gi = 0;
 	auto chk_read = [&](uint32_t w, const char* what) {
-		if (w >= NW) throw std::runtime_error(std::string("validate_program: ") + what + " index out of range" + at(gi, w));
+		if (w >= NW) error((std::string("validate_program: ") + what + " index out of range" + at(gi, w)).c_str());
 		if (w >= p.num_inputs && !defined_non_input[w - p.num_inputs])
-			throw std::runtime_error(std::string("validate_program: ") + what + " read before defined" + at(gi, w));
+			error((std::string("validate_program: ") + what + " read before defined" + at(gi, w)).c_str());
 	};
 	for (; gi < p.gates.size(); ++gi) {
 		const Gate& g = p.gates[gi];
@@ -52,29 +52,32 @@ inline void validate_program(const BooleanProgram& p) {
 				chk_read(g.in0, "gate in0");
 				// Canonical form: the unused operand is exactly 0.
 				if (g.in1 != 0)
-					throw std::runtime_error("validate_program: Not gate has non-canonical in1 (must be 0)" + at(gi, g.in1));
+					error(("validate_program: Not gate has non-canonical in1 (must be 0)" + at(gi, g.in1)).c_str());
 				break;
 			case Op::Const0: case Op::Const1:
 				if (g.in0 != 0 || g.in1 != 0)
-					throw std::runtime_error("validate_program: const gate has non-canonical operands (must be 0)" + at(gi, g.out));
+					error(("validate_program: const gate has non-canonical operands (must be 0)" + at(gi, g.out)).c_str());
 				break;
+			// The one sanctioned `default:` among the op switches (see visit.h):
+			// g.op here may be a raw byte from a loaded file, so out-of-range
+			// values are a runtime condition, not a missed enum case.
 			default:
-				throw std::runtime_error("validate_program: unknown gate op");
+				error("validate_program: unknown gate op");
 		}
 		if (g.out >= NW)
-			throw std::runtime_error("validate_program: gate out index out of range");
+			error("validate_program: gate out index out of range");
 		if (g.out < p.num_inputs)
-			throw std::runtime_error("validate_program: gate writes an input wire");
+			error("validate_program: gate writes an input wire");
 		const uint32_t out_idx = g.out - p.num_inputs;
 		if (defined_non_input[out_idx])
-			throw std::runtime_error("validate_program: wire defined more than once");
+			error("validate_program: wire defined more than once");
 		defined_non_input[out_idx] = 1;
 	}
 
 	for (uint32_t w : p.outputs) {
-		if (w >= NW) throw std::runtime_error("validate_program: output index out of range");
+		if (w >= NW) error("validate_program: output index out of range");
 		if (w >= p.num_inputs && !defined_non_input[w - p.num_inputs])
-			throw std::runtime_error("validate_program: output wire never defined");
+			error("validate_program: output wire never defined");
 	}
 }
 

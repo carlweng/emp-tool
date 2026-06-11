@@ -1,3 +1,11 @@
+#ifndef EMP_UTILS_HPP__
+#define EMP_UTILS_HPP__
+
+// Implementation half of utils.h, included by it after the namespace closes
+// (same pattern as block.hpp / aes.hpp / f2k.hpp).
+
+namespace emp {
+
 inline time_point<high_resolution_clock> clock_start() {
 	return high_resolution_clock::now();
 }
@@ -112,3 +120,6 @@ inline block bool_to_block(const bool *data) {
 	bools_to_bits(&r, data, 128);
 	return r;
 }
+
+}  // namespace emp
+#endif  // EMP_UTILS_HPP__

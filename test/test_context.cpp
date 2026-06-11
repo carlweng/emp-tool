@@ -61,7 +61,7 @@ int main() {
     // --- canonical CircuitArtifact (program + signature) ---
     {
         ckt::CircuitArtifact art{prog, ckt::CircuitSignature{{16, 16}, 16}};
-        ckt::validate_artifact(art);   // throws on structural/signature mismatch
+        ckt::validate_artifact(art);   // error()s on structural/signature mismatch
         check("artifact: signature", art.signature.total_input_bits() == 32 &&
                                       art.signature.return_width == 16);
     }

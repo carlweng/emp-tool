@@ -7,6 +7,13 @@
 // the session. reveal is recipient-explicit: reveal_t<V> is std::optional<clear_t>,
 // the value present only on a party that learns it (every party for PUBLIC, the
 // named recipient otherwise) and std::nullopt on a party that does not.
+//
+// owner / recipient take the party vocabulary defined ONCE in
+// runtime/core/constants.h: PUBLIC, or any party id >= 1 — the contract is
+// n-party (ALICE/BOB merely name ids 1 and 2). A session accepts the subset its
+// protocol can serve and error()s on the rest (e.g. the XOR-share reveal
+// sentinel is honored only by sessions that document it). A revealed value is
+// provisional until the session's documented settlement point — see session.h.
 
 #include "emp-tool/ir/session/session.h"   // Session / DirectSession / CheckpointingSession
 #include "emp-tool/ir/wire_value.h"        // WireValue

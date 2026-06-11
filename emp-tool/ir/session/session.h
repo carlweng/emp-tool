@@ -16,6 +16,16 @@
 // Feeding / opening a value (input / reveal) is SessionIO<S,V>
 // (ir/session/session_io.h), generic over any WireValue V — it names no concrete
 // value family.
+//
+// Settlement (normative): a value returned by reveal is PROVISIONAL until the
+// session's deferred protocol checks covering it have passed; each DirectSession
+// must document its settlement point. The two shipped shapes: settle-at-reveal
+// (checks flush before the cleartext is produced — AG2PCSession) and
+// settle-at-finalize (reveal returns immediately, finalize() runs the closing
+// checks — ZKBoolSession). Plaintext/semi-honest sessions have nothing to settle.
+// A failed check is a malicious abort and reports through error() — fatal, like
+// every emp-tool failure (docs/api_conventions.md); there is no in-band error
+// channel on reveal, by design.
 
 #include "emp-tool/ir/context/concept.h"   // BooleanContext
 #include <concepts>

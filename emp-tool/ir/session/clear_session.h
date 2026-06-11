@@ -54,13 +54,15 @@ public:
     // Feed a clear value as `owner`'s input, returning a fixed-width circuit value V
     // over this session's direct context. In the clear there are no secrets, so the
     // bits become public wires (the owner only has to be a valid party id, which is
-    // then ignored — protocol sessions route by it).
+    // then ignored — protocol sessions route by it). Any party id >= 1 is accepted
+    // (see runtime/core/constants.h for the vocabulary): the plaintext oracle serves
+    // n-party protocols as well as 2PC.
     template <WireValue V>
     V input(int owner, const typename V::clear_t& value) {
         static_assert(std::same_as<typename V::context_type, DirectCtx>,
             "ClearSession::input<V>: V must be a value over this session's DirectCtx");
-        if (owner != ALICE && owner != BOB && owner != PUBLIC)
-            error("ClearSession::input: owner must be ALICE, BOB, or PUBLIC");
+        if (owner < PUBLIC)
+            error("ClearSession::input: owner must be PUBLIC or a party id >= 1");
         const int n = V::width();
         std::vector<bool> bits = V::encode(value);
         // Always-on: a codec that emits the wrong bit count would silently
@@ -74,14 +76,16 @@ public:
 
     // Reveal a circuit value to `recipient`, returning std::optional<clear_t>. In
     // the clear everyone learns it (the recipient only has to be a valid party id,
-    // which is then ignored), so the optional is always populated. reveal<T>(...)
-    // casts the clear value to T for readability.
+    // which is then ignored), so the optional is always populated. Any party id
+    // >= 1 or PUBLIC is accepted; the XOR-share sentinel is rejected — plaintext
+    // has no shares (sessions support XOR only where they document it).
+    // reveal<T>(...) casts the clear value to T for readability.
     template <WireValue V>
     reveal_t<V> reveal(const V& value, int recipient) {
         static_assert(std::same_as<typename V::context_type, DirectCtx>,
             "ClearSession::reveal<V>: V must be a value over this session's DirectCtx");
-        if (recipient != ALICE && recipient != BOB && recipient != PUBLIC)
-            error("ClearSession::reveal: recipient must be ALICE, BOB, or PUBLIC");
+        if (recipient < PUBLIC)
+            error("ClearSession::reveal: recipient must be PUBLIC or a party id >= 1 (XOR-share reveal is not a plaintext notion)");
         const int n = V::width();
         std::vector<typename DirectCtx::Wire> wires((std::size_t)n);
         value.pack_wires(wires.data());

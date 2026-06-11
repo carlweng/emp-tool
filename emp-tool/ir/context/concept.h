@@ -14,11 +14,14 @@
 
 namespace emp {
 
-// The contract. Wire is a cheap, copyable, regular handle (no move-only: fan-out
-// needs copies). Gates are value-return.
+// The contract. Wire is a cheap, copyable, default-constructible handle (no
+// move-only: fan-out needs copies). semiregular, not regular: nothing in the
+// framework compares wires — equality on a garbled label is semantically
+// meaningless anyway — so raw block (__m128i, which has no operator==) works
+// as a Wire directly. Gates are value-return.
 template <class Ctx>
 concept BooleanContext =
-    std::regular<typename Ctx::Wire> &&
+    std::semiregular<typename Ctx::Wire> &&
     requires(Ctx& c, typename Ctx::Wire a, typename Ctx::Wire b, bool v) {
         { c.public_bit(v) } -> std::same_as<typename Ctx::Wire>;
         { c.and_gate(a, b) } -> std::same_as<typename Ctx::Wire>;

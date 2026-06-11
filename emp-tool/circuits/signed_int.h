@@ -162,7 +162,7 @@ public:
         return r;
     }
 
-    // CircuitValue contract (fixed width only — N == 0 is intentionally not a CircuitValue).
+    // WireValue contract (fixed width only — N == 0 is intentionally not a WireValue).
     static constexpr int width() requires (N > 0) { return N; }
     int width() const requires (N == 0) { return (int)w.size(); }
     void pack_wires(Wire* out) const requires (N > 0) { for (int i = 0; i < N; ++i) out[i] = w[i]; }

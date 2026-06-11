@@ -94,8 +94,10 @@ target_link_libraries(emp-tool PUBLIC
     OpenSSL::Crypto
     Threads::Threads)
 
+# -Werror=switch backs the op-dispatch contract (ir/visit.h): every switch over
+# circuit::Op is defaultless, so a new Op fails the build at each dispatch site.
 target_compile_options(emp-tool PRIVATE
-    -Wall -Wno-unused-result
+    -Wall -Wno-unused-result -Werror=switch
     $<$<CONFIG:Release>:-O3 -funroll-loops>
     $<$<CONFIG:Debug>:-O0 -g>)
 

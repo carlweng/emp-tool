@@ -57,6 +57,7 @@ inline T bool_to_int(const bool * data);
 
 block bool_to_block(const bool * data);
 
-#include "emp-tool/runtime/core/utils.hpp"
 }
+
+#include "emp-tool/runtime/core/utils.hpp"
 #endif// UTILS_H__

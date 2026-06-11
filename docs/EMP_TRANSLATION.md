@@ -68,7 +68,7 @@ distinct C++ type. `Ctx` is the `BooleanContext` the body is written over.
 | `int8_t … int64_t`, `int`         | `Int_T<Ctx,N>`                         | two's complement |
 | `float` (IEEE 754 binary32)       | `Float_T<Ctx,32>`                      | also `Float_T<Ctx,16>` / `<Ctx,64>` |
 | `double` (IEEE 754 binary64)      | `Float_T<Ctx,64>`                      | correctly-rounded; same op set |
-| fixed-size bit array / packed flags | `UInt_T<Ctx,N>` (use `& \| ^ ~`)     | bitwise ops; no slice/concat sugar |
+| fixed-size bit array / packed flags | `UInt_T<Ctx,N>` (use `& \| ^ ~`)     | bitwise ops, shifts/rotates, `slice`/`concat` |
 | Python `int` (arbitrary precision)| `Int_T<Ctx,N>` after **you** pick N    | translator must commit to a width |
 | Python `bool`                     | `Bit_T<Ctx>`                           | |
 | Python `float`                    | `Float_T<Ctx,32>`                      | |
@@ -114,9 +114,10 @@ types). Decide widths up front and feed inputs at the matching width.
 
 `Int_T<Ctx,N>` and `UInt_T<Ctx,N>` are different types. They share bit layout
 and the low-N bits of `+`/`-`/`*` are identical; what differs is comparison
-(`<` etc.) and division/remainder sign handling. Choose the type that matches
-the source's signedness; to reinterpret a bit pattern, repack the wires into
-the other family (`from_wires`/`pack_wires`) — no gates.
+(`<` etc.), `>>` (arithmetic vs logical), and division/remainder sign
+handling. Choose the type that matches the source's signedness; to
+reinterpret a bit pattern, use `as_signed()` / `as_unsigned()` — same wires,
+no gates.
 
 ---
 
@@ -294,9 +295,11 @@ for (size_t i = 0; i < a.size(); ++i)
 ### 4.9. Bit-level packing / unpacking
 
 Index `0` is the LSB everywhere in emp-tool. Operate bitwise (`& | ^ ~`) and
-index single bits with `v[i]` (returns a `Bit_T<Ctx>`); assemble or split
-values by packing/unpacking their wires (`pack_wires` / `from_wires`), which
-emits no gates.
+index single bits with `v[i]` (returns a `Bit_T<Ctx>`). Width changes and
+splits/joins have first-class spellings — `slice<Lo,Hi>()` / `extract<B,W>()`
+/ `concat(hi)` / `zext<M>()` (`sext<M>()` on `Int_T`) / `trunc<M>()` — all
+pure wiring, no gates; raw `pack_wires` / `from_wires` remains for anything
+those don't cover.
 
 ### 4.10. Sorting (oblivious)
 
@@ -362,11 +365,16 @@ UB-avoidance dance will produce extra gates for no reason.
 * **Signed `/` / `%`**: truncate toward zero; the remainder takes the
   dividend's sign (C99+). The most-negative operand to signed division is
   a UB precondition (as for `int{N}_t`).
-* **No shift / resize / abs on integers**: the integer value types expose
-  `+ - * / % & | ^ ~`, comparisons, `select`, and per-bit `v[i]`, but no
-  `<<` / `>>`, `.resize`, or `.abs`. A shift by a public amount is a
-  re-wiring of `pack_wires` / `from_wires` (no gates); a dynamic shift is
-  a `select` tree over public shift amounts.
+* **Shift cost depends on the amount's visibility**: `<<` / `>>` by a
+  public `int` amount is pure wiring — zero gates (`>>` on `Int_T` is
+  arithmetic, sign-filling; on `UInt_T` logical). `<<` / `>>` by a
+  *secret* amount is a barrel shifter: ceil(log2 N) mux levels, O(N log N)
+  ANDs — don't use one when the source shift amount is actually public.
+  `UInt_T` also has `rotl` / `rotr` (public amount, free). Width changes
+  are explicit: compile-time `slice` / `extract` / `concat` / `zext`
+  (`sext` on `Int_T`) / `trunc`, and runtime-width `resize`.
+* **No `.abs` on `Int_T`**: compose it — `x.select(x < zero, -x)` —
+  and mind that the most-negative value has no positive counterpart.
 * **`==` / `!=` cost**: equal-test is cheap on `Bit_T` (one XOR), grows
   to a tree of XORs+ANDs on multi-bit types. `<` etc. are subtraction
   followed by a sign check, which is the dominant cost. Avoid
@@ -601,15 +609,25 @@ UInt_T<Ctx,N>                              // unsigned N-bit (clear: uint64_t, N
   & | ^ ~                                  // bitwise
   < <= > >= == != -> Bit_T                 // unsigned
   select(sel, t) -> UInt_T                 // sel ? t : *this
+  << >> by public int (free), rotl/rotr    // logical, zero-fill
+  << >> by UInt_T (secret amount)          // barrel shifter, costs ANDs
+  slice<Lo,Hi>() extract<B,W>() concat(hi) // compile-time width changes (free)
+  zext<M>() trunc<M>()
+  popcount<R>() hamming_weight() leading_zeros() mod_exp(p, q)
+  as_signed()                              // reinterpret wires (free)
   operator[i] -> Bit_T (i in [0,N))
   constant(ctx, uint64_t)
 
 Int_T<Ctx,N>                               // signed N-bit (clear: int64_t, N<=64)
   + - * / %                                // wraps mod 2^N (matches int{N}_t HW)
-  - (unary)                                // two's-complement negate
+  - (unary)                                // two's-complement negate (no .abs)
   & | ^ ~                                  // bitwise
   < <= > >= == != -> Bit_T                 // signed
   select(sel, t) -> Int_T                  // sel ? t : *this
+  << >> by public int (free)               // >> is arithmetic (sign-fill)
+  << >> by UInt_T<Ctx,N> (secret amount)   // barrel shifter, costs ANDs
+  sext<M>() trunc<M>()                     // compile-time width changes
+  as_unsigned()                            // reinterpret wires (free)
   operator[i] -> Bit_T (i in [0,N))
   constant(ctx, int64_t)
 

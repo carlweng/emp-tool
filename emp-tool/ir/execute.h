@@ -12,9 +12,9 @@
 #include "emp-tool/ir/program.h"
 #include "emp-tool/ir/visit.h"
 #include "emp-tool/ir/context/concept.h"
+#include "emp-tool/runtime/core/utils.h"   // error()
 #include <cstddef>
 #include <span>
-#include <stdexcept>
 #include <vector>
 
 namespace emp {
@@ -48,9 +48,9 @@ inline void execute_program(const BooleanProgram& p,
                             CircuitScratch<Wire>& scratch,
                             Dispatcher&& dispatch) {
 	if (num_in != p.num_inputs)
-		throw std::runtime_error("execute_program: input count != program num_inputs");
+		error("execute_program: input count != program num_inputs");
 	if (num_out != p.outputs.size())
-		throw std::runtime_error("execute_program: output count != program outputs");
+		error("execute_program: output count != program outputs");
 
 	scratch.ensure(p.num_wires);
 	Wire* w = scratch.wires.data();

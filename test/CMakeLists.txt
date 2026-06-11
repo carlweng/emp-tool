@@ -5,6 +5,9 @@
 function(add_test_case name)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} PRIVATE emp-tool::emp-tool)
+    # The headers' defaultless Op switches compile in these TUs, so the
+    # -Werror=switch tripwire (see ir/visit.h) must apply here too.
+    target_compile_options(${name} PRIVATE -Werror=switch)
     set_target_properties(${name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     add_test(NAME ${name}
@@ -15,6 +18,7 @@ endfunction()
 function(add_test_case_with_run name)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} PRIVATE emp-tool::emp-tool)
+    target_compile_options(${name} PRIVATE -Werror=switch)
     set_target_properties(${name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     add_test(NAME ${name}
@@ -29,6 +33,7 @@ function(add_test_case_cxx20 name)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} PRIVATE emp-tool::emp-tool)
     target_compile_features(${name} PRIVATE cxx_std_20)
+    target_compile_options(${name} PRIVATE -Werror=switch)
     set_target_properties(${name} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
     add_test(NAME ${name}
@@ -55,6 +60,7 @@ add_test_case(test_ro)
 add_test_case_with_run(test_netio)
 add_test_case_with_run(test_tlsio)
 add_test_case(test_boolean_program)
+add_test_case_cxx20(test_passes)     # ir/passes.h: count/liveness/schedule/layout
 add_test_case_cxx20(test_bit)        # per-type value headers over ClearCtx
 add_test_case_cxx20(test_bitvec)
 add_test_case_cxx20(test_uint)

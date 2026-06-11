@@ -14,11 +14,11 @@ namespace emp {
 namespace circuit {
 
 // Load-or-fetch the cached builtin circuit by asset name (e.g. "aes128",
-// "sha256_256", "sha3_256_256"). Throws (pointing at EMP_CIRCUIT_DIR) if absent.
+// "sha256_256", "sha3_256_256"). error()s (pointing at EMP_CIRCUIT_DIR) if absent.
 const BooleanProgram& builtin_circuit(const char* name);
 
 // Load-or-fetch the cached float op circuit "fp<width>_<op>" (e.g. width 32,
-// op "add" -> fp32_add). Throws (pointing at EMP_CIRCUIT_DIR) if absent.
+// op "add" -> fp32_add). error()s (pointing at EMP_CIRCUIT_DIR) if absent.
 const BooleanProgram& float_circuit(int width, const char* op);
 
 }  // namespace circuit

@@ -21,9 +21,11 @@ The **session** owns the clear↔circuit I/O boundary and the protocol state (IO
 party, OT/preprocessing, batching), wrapping a context — like emp-tool's
 `ClearSession` (`session/clear_session.h`):
 
-- hold the context and expose `ctx()` for value/context-level work;
+- hold the context and expose `direct_ctx()` for value/context-level work
+  (the `DirectSession` concept, `ir/session/session.h`);
 - expose `input<T>(owner, clear)` (and `input_batch` where applicable) /
-  `reveal(value, recipient)`, routed through `value_traits<T>` (width + codec).
+  `reveal(value, recipient)`, implemented over the value's `WireValue`
+  codec (`T::width()` / `T::encode` / `T::decode`, `ir/wire_value.h`).
   `reveal` returns `std::optional<clear_t>`: the value on a party that learns it
   (every party for `PUBLIC`, the named recipient otherwise) and `std::nullopt` on a
   party that does not. A plaintext `ClearSession` always populates it.
