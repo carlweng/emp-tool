@@ -109,6 +109,28 @@ int main() {
         chk("BitVec_T nibble-swap circuit", got == 0x5Bu);   // 0xB5 -> 0x5B
     }
 
+    // 8) wide-integer circuit args: UInt_T<Ctx,128> has no 64-bit clear codec, so
+    // it is a WireBundle but not a WireValue — and the frontend needs only the
+    // bundle. Compile a 128-bit add and check the wire-level result against a
+    // limb-wise model (no decode at this width; that's the point).
+    {
+        static_assert(emp::WireBundle<UInt_T<ClearCtx, 128>> && !emp::WireValue<UInt_T<ClearCtx, 128>>);
+        auto wadd = cf::compile<rec::UInt<128>, rec::UInt<128>>([](auto a, auto b) { return a + b; });
+        auto mk = [&](uint64_t lo, uint64_t hi) {
+            ClearCtx::Wire w[128];
+            for (int i = 0; i < 64; ++i)  w[i]      = (ClearCtx::Wire)((lo >> i) & 1);
+            for (int i = 0; i < 64; ++i)  w[64 + i] = (ClearCtx::Wire)((hi >> i) & 1);
+            return UInt_T<ClearCtx, 128>::from_wires(cx, w);
+        };
+        // Carry must propagate across the limb boundary.
+        auto r = cf::run(cx, wadd, mk(~0ull, 1ull), mk(1ull, 2ull));   // (2^64-1 + 2^65) + (1 + 2^65)
+        ClearCtx::Wire ow[128]; r.pack_wires(ow);
+        uint64_t lo = 0, hi = 0;
+        for (int i = 0; i < 64; ++i) { lo |= (uint64_t)(ow[i] & 1) << i; hi |= (uint64_t)(ow[64 + i] & 1) << i; }
+        chk("128-bit add: low limb", lo == 0ull);          // (2^64-1) + 1 = 2^64 -> carry out
+        chk("128-bit add: high limb", hi == 4ull);         // 1 + 2 + carry = 4
+    }
+
     printf("test_circuit_fn: %s\n", bad ? "FAILED" : "compile-once / run-anywhere — PASS");
     return bad ? 1 : 0;
 }

@@ -5,7 +5,7 @@
 // validation / visiting / passes / scheduling / execution, the .empbc assets /
 // builtins / artifacts, the reusable non-protocol contexts (the BooleanContext /
 // BulkBooleanContext concepts + ClearCtx / CountCtx / DigestCtx / RecordCtx), the
-// generic WireValue concept, and the generic session contracts (Session /
+// generic WireBundle/WireValue concepts, and the generic session contracts (Session /
 // DirectSession / SessionIO / CheckpointingSession + the plaintext ClearSession).
 // It builds on runtime and is built on by circuits.
 

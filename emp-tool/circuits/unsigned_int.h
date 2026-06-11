@@ -213,16 +213,18 @@ public:
         return acc;
     }
 
-    // WireValue contract (fixed width only — N == 0 is intentionally not a WireValue).
+    // WireBundle contract (fixed width only — N == 0 models neither concept).
     static constexpr int width() requires (N > 0) { return N; }
     int width() const requires (N == 0) { return (int)w.size(); }
     void pack_wires(Wire* out) const requires (N > 0) { for (int i = 0; i < N; ++i) out[i] = w[i]; }
-    static std::vector<bool> encode(uint64_t v) requires (N > 0) {
-        static_assert(N <= 64, "UInt_T clear codec limited to N<=64 (TODO: limb type)");
+    // Clear codec (the WireValue half): the clear value rides a uint64_t, so it
+    // exists only for N <= 64 — a wider UInt_T is a WireBundle (fine as a
+    // circuit argument) but not a WireValue (use BitVec_T for typed session I/O
+    // past 64 bits, or grow a limb-array clear_t here if one is ever wanted).
+    static std::vector<bool> encode(uint64_t v) requires (N > 0 && N <= 64) {
         std::vector<bool> b(N); for (int i = 0; i < N; ++i) b[i] = (v >> i) & 1; return b;
     }
-    static uint64_t decode(const bool* bits) requires (N > 0) {
-        static_assert(N <= 64, "UInt_T clear codec limited to N<=64 (TODO: limb type)");
+    static uint64_t decode(const bool* bits) requires (N > 0 && N <= 64) {
         uint64_t v = 0; for (int i = 0; i < N; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i; return v;
     }
 

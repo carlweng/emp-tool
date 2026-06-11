@@ -26,6 +26,37 @@ static_assert(WireValue<UInt_T<ClearCtx, 32>>);
 static_assert(!WireValue<UInt_T<ClearCtx, runtime_width>>);   // runtime-width form
 static_assert(!WireValue<Int_T<ClearCtx, runtime_width>>);
 
+// ---- WireBundle vs WireValue: execution needs wires, session I/O needs the
+// codec. The integer clear codec rides a 64-bit scalar, so a wider UInt/Int is
+// a WireBundle (a fine circuit argument) but cleanly NOT a WireValue — instead
+// of the former passing concept + instantiation-time static_assert bomb.
+static_assert(WireBundle<UInt_T<ClearCtx, 32>>);              // every WireValue is a WireBundle
+static_assert(WireBundle<UInt_T<ClearCtx, 128>>);
+static_assert(!WireValue<UInt_T<ClearCtx, 128>>);             // no 128-bit clear codec
+static_assert(WireBundle<Int_T<ClearCtx, 128>>);
+static_assert(!WireValue<Int_T<ClearCtx, 128>>);
+static_assert(WireValue<UInt_T<ClearCtx, 64>>);               // the codec boundary
+static_assert(WireValue<BitVec_T<ClearCtx, 128>>);            // the wide typed-I/O family
+static_assert(!WireBundle<UInt_T<ClearCtx, runtime_width>>);  // runtime width models neither
+
+// A codec-less synthetic family: structural members only — a WireBundle (usable
+// by the frontend / execution) that is NOT a WireValue and NOT session-feedable.
+template <class Ctx>
+struct Raw3 {
+    using Wire         = typename Ctx::Wire;
+    using context_type = Ctx;
+    template <class C2> using rebind = Raw3<C2>;
+    Ctx* ctx_ = nullptr;
+    Wire w[3]{};
+    Ctx* context() const { return ctx_; }
+    static constexpr int width() { return 3; }
+    void pack_wires(Wire* out) const { for (int i = 0; i < 3; ++i) out[i] = w[i]; }
+    static Raw3 from_wires(Ctx& c, const Wire* in) { Raw3 r; r.ctx_ = &c; for (int i = 0; i < 3; ++i) r.w[i] = in[i]; return r; }
+};
+static_assert(WireBundle<Raw3<ClearCtx>>);
+static_assert(!WireValue<Raw3<ClearCtx>>);
+static_assert(!SessionIO<ClearSession, Raw3<ClearCtx>>);      // no codec, no session I/O
+
 // ---- A synthetic value family: a 2-bit value over any BooleanContext. It is a
 // WireValue purely by its own static members, names no existing family, and is
 // usable through SessionIO without touching ClearSession. ----

@@ -28,7 +28,7 @@
 #include "emp-tool/ir/context/record.h"      // RecordCtx
 #include "emp-tool/ir/execute.h"          // execute_program, ProgramWorkspace
 #include "emp-tool/ir/artifact.h" // CircuitArtifact, CircuitSignature, validate_artifact
-#include "emp-tool/ir/wire_value.h"             // WireValue (the generic value concept)
+#include "emp-tool/ir/wire_value.h"             // WireBundle (the structural value concept this frontend speaks)
 #include "emp-tool/circuits/value_traits.h"     // value_traits (metadata accessor)
 #include "emp-tool/circuits/typed.h"            // typed values (Bit_T/UInt_T/Int_T/Float_T)
 #include "emp-tool/runtime/core/utils.h"                // error()
@@ -43,14 +43,16 @@
 namespace emp {
 namespace frontend {
 
-// The generic value concept this frontend speaks is emp::WireValue
-// (ir/wire_value.h). A circuit value whose context is the recording context is a
+// The value concept this frontend speaks is emp::WireBundle (ir/wire_value.h)
+// — execution only packs/unpacks wires, so a clear codec is NOT required of a
+// circuit argument or return (sessions, the codec consumers, constrain on
+// WireValue). A circuit value whose context is the recording context is a
 // RecordValue — the only valid argument type to compile() (its body is recorded
 // through a RecordCtx). Use the rec:: aliases (frontend/rec.h): rec::UInt<32> ==
 // UInt_T<RecordCtx,32>.
 template <class V_>
 concept RecordValue =
-    WireValue<V_> &&
+    WireBundle<V_> &&
     std::same_as<typename std::decay_t<V_>::context_type, RecordCtx>;
 
 // ---------------------------------------------------------------------------
@@ -81,10 +83,10 @@ struct circuit_fn_traits {
                                              explicit_callable && !ambiguous, Args...>::type;
     using value_return = std::decay_t<raw_return>;
 
-    static constexpr bool args_are_circuit = (true && ... && WireValue<Args>);
+    static constexpr bool args_are_circuit = (true && ... && WireBundle<Args>);
     static constexpr bool returns_ref      = std::is_reference_v<raw_return>;
     static constexpr bool returns_void     = std::is_void_v<raw_return>;
-    static constexpr bool returns_circuit  = !returns_void && WireValue<value_return>;
+    static constexpr bool returns_circuit  = !returns_void && WireBundle<value_return>;
     static constexpr bool ok = args_are_circuit && callable && !ambiguous &&
                                !returns_ref && !returns_void && returns_circuit;
 };
@@ -178,7 +180,7 @@ using compiled_ret_t =
                            RecordValue<typename Tr::value_return>), Tr, ArgVs...>::type;
 
 // Build one recording-context arg from a freshly reserved input window.
-template <WireValue RecV>
+template <WireBundle RecV>
 RecV make_rec_arg(RecordCtx& rc) {
     RecordCtx::Wire base = rc.external_input((size_t)RecV::width());
     std::array<RecordCtx::Wire, (std::size_t)RecV::width()> win{};
@@ -235,7 +237,7 @@ inline void append_wires(std::vector<Wire>& out, const V& v) {
 }
 }  // namespace detail
 
-template <BooleanContext Ctx, WireValue RetV, WireValue... ArgVs>
+template <BooleanContext Ctx, WireBundle RetV, WireBundle... ArgVs>
 typename RetV::template rebind<Ctx>
 run(Ctx& ctx, const Circuit<RetV, ArgVs...>& c,
     const typename ArgVs::template rebind<Ctx>&... args) {

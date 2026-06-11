@@ -4,7 +4,8 @@
 // emp-tool — the complete public umbrella over the three layers:
 //   runtime  — the substrate: core / crypto / io / garbling leaf primitives.
 //   ir       — context-free Boolean IR, the reusable contexts, and the generic
-//              WireValue + session (Session / DirectSession / SessionIO) contracts.
+//              WireBundle/WireValue + session (Session / DirectSession / SessionIO)
+//              contracts.
 //   circuits — concrete value families, numeric kernels, sort, in-circuit crypto,
 //              and the compile/run frontend.
 //
