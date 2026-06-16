@@ -60,7 +60,9 @@ int main() {
   const int32_t SA = -1234567, SB = 7654321;
   DI sa = DI::constant(cx, 32, SA), sb = DI::constant(cx, 32, SB);
   chk("signed add", rds(sa + sb) == (int32_t)(SA + SB));
-  chk("signed mul", rds(sa * sb) == (int32_t)(SA * SB));
+  // Reference wraps mod 2^32 (matches the runtime Int's 2's-complement mul);
+  // compute it in unsigned to keep the reference itself free of signed overflow.
+  chk("signed mul", rds(sa * sb) == (int32_t)((uint32_t)SA * (uint32_t)SB));
   chk("signed div", rds(sb / sa) == (SB / SA));
   chk("signed mod", rds(sb % sa) == (SB % SA));
   chk("signed lt", ((sa < sb).w & 1) == 1);
