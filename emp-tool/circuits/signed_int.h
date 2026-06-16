@@ -169,9 +169,10 @@ public:
     // Clear codec (the WireValue half): rides an int64_t, so it exists only for
     // N <= 64 — a wider Int_T is a WireBundle but not a WireValue (see
     // unsigned_int.h for the same note).
-    static std::vector<bool> encode(int64_t v) requires (N > 0 && N <= 64) {
+    static std::array<bool, (std::size_t)(N > 0 ? N : 1)> encode(int64_t v) requires (N > 0 && N <= 64) {
         uint64_t u = (uint64_t)v;
-        std::vector<bool> b(N); for (int i = 0; i < N; ++i) b[i] = (u >> i) & 1; return b;
+        std::array<bool, (std::size_t)(N > 0 ? N : 1)> b{};
+        for (int i = 0; i < N; ++i) b[(std::size_t)i] = (u >> i) & 1; return b;
     }
     static int64_t decode(const bool* bits) requires (N > 0 && N <= 64) {
         uint64_t v = 0; for (int i = 0; i < N; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i;

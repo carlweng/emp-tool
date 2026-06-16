@@ -310,8 +310,9 @@ include path. Keeping them apart is essential when reading the code.</p>
 build does <b>not</b> produce them. CMake's <code>configure_file</code> generates only the <em>search-path</em>
 header <code>ir/circuit_asset_dirs.h</code> (build dir + install dir); at runtime
 <code>ir/assets.cpp</code> prepends the <code>$EMP_CIRCUIT_DIR</code> env override ahead of both. The fp32/fp64
-assets were generated from modified Berkeley SoftFloat 3e — see <code>docs/floating_point_circuits.md</code> for
-provenance.</p></div>
+assets were generated from modified Berkeley SoftFloat 3e. The tree intentionally records provenance and the
+runtime ABI, but <b>does not</b> claim a complete reproducible generation harness; see
+<code>docs/floating_point_circuits.md</code>.</p></div>
 
 <!-- ===================================================================== -->
 <h2 id="docs">7 · Docs &amp; tests</h2>
@@ -321,7 +322,7 @@ this audit:</p>
 <tr><td><code>EMP_TRANSLATION.md</code></td><td>translating C++/Python to EMP circuits</td><td><code>backend.md</code></td><td>the execution layer (GC backends)</td></tr>
 <tr><td><code>circuits.md</code></td><td>the circuit value layer</td><td><code>frontend.md</code></td><td>the compile-once / run-anywhere model</td></tr>
 <tr><td><code>numeric_semantics.md</code></td><td>typed-value numeric contracts</td><td><code>io_channel.md</code></td><td>NetIO flush/deadlock contract</td></tr>
-<tr><td><code>floating_point_circuits.md</code></td><td>.empbc generation/regeneration</td><td><code>test_mode.md</code></td><td>wire-byte determinism</td></tr>
+<tr><td><code>floating_point_circuits.md</code></td><td>.empbc ABI/provenance</td><td><code>test_mode.md</code></td><td>wire-byte determinism</td></tr>
 <tr><td><code>static_init.md</code></td><td>static-init-order safety</td><td><code>api_conventions.md</code></td><td>public API conventions</td></tr>
 <tr><td><code>test_conventions.md</code></td><td>test file layout</td><td><code>benchmark_conventions.md</code></td><td>benchmark layout</td></tr>
 </table>
@@ -355,18 +356,19 @@ should internalize.</p>
 <table class="grid">
 <tr><th>Posture item</th><th>What to know</th></tr>
 <tr><td><b>Compile-time-only ISA dispatch</b></td><td>The SIMD tier (VAES/VPCLMULQDQ/AVX-512) is chosen from feature macros at build time — there is <b>no runtime CPUID fallback</b>. A <code>-march=native</code> binary is host-CPU-locked and will SIGILL on an older CPU. Mitigation: <code>EMP_TOOL_NATIVE_ARCH=OFF</code>.</td></tr>
-<tr><td><b>Validation that survives NDEBUG — and that doesn't</b></td><td><code>.empbc</code> structural validation (<code>validate_program</code>) <b>throws</b> and runs in Release. But several guards are <b>debug-only</b> and vanish under <code>NDEBUG</code>: the cross-context guard (<code>check_same_context</code>, opt back in with <code>-DEMP_CONTEXT_CHECKS=1</code>), the schedule-plan digest staleness check, and the IOChannel point-length cap (an <code>assert</code>). Know precisely which is which.</td></tr>
+<tr><td><b>Validation that survives NDEBUG — and that doesn't</b></td><td><code>.empbc</code> structural validation (<code>validate_program</code>) is always-on in Release and reports through the stack-wide fatal <code>error()</code> path. Developer-misuse guards remain <b>debug-only</b> by default: the cross-context guard (<code>check_same_context</code>, opt back in with <code>-DEMP_CONTEXT_CHECKS=1</code>) and the schedule-plan digest staleness check. Peer-controlled EC point lengths are now hard-checked in <code>recv_pt</code>; local misuse checks such as FS double-enable and alignment remain assertions.</td></tr>
 <tr><td><b>Test-mode randomness kill switch</b></td><td><code>EMP_TEST_MODE=1</code> (or <code>set_test_mode(true)</code>) swaps PRG seeding and EC scalar generation for a deterministic counter stream (seed <code>0xC0FFEE12345</code>). Intended for wire-byte equivalence testing; an accidentally-set env var makes production randomness fully deterministic.</td></tr>
 <tr><td><b>Asset loading: structurally safe, not authenticated</b></td><td>The <code>.empbc</code> parser is hostile-input safe (fixed little-endian reads, overflow-checked size math, <code>validate_program</code>) — but there is <b>no signature/MAC</b>. A well-formed-but-malicious circuit at an attacker-controlled <code>$EMP_CIRCUIT_DIR</code> (first in the search order) would load and replay.</td></tr>
-<tr><td><b>Fail-fast by <code>exit(1)</code></b></td><td><code>runtime/core/utils.hpp error()</code> terminates the whole process rather than throwing — so a hostile peer can reliably crash it (no read timeouts → it can also hang it). The IR validator, <code>.empbc</code> loader, and NetIO/TLSIO constructors are the exceptions that <code>throw</code> instead.</td></tr>
+<tr><td><b>Fail-fast by <code>_Exit(1)</code></b></td><td><code>runtime/core/utils.hpp error()</code> terminates the whole process rather than throwing — so a hostile peer can reliably crash it (no read timeouts → it can also hang it). The IR validator, <code>.empbc</code> loader, and NetIO/TLSIO setup paths follow the same fatal model; rejection tests assert child-process death, not a catchable exception.</td></tr>
 <tr><td><b>Little-endian only</b></td><td>Wire formats and byte/bit packings assume little-endian; a <code>static_assert</code> refuses big-endian builds rather than silently mismatching a peer.</td></tr>
 </table>
 <div class="callout c-ok"><span class="lbl">Strong correctness baseline</span>
 <p>Symmetric kernels are validated against FIPS-197 KAT / OpenSSL; <code>gfmul</code> against a bit-level reference
 and field axioms; hash-to-curve against RFC 9380 vectors; in-circuit AES/SHA/Keccak against FIPS/NIST KAT; and
 <code>test_builtin_circuits.cpp</code> proves the native kernels and the recorded IR builtins agree bit-for-bit.
-The residual audit surface is the off-tree <code>.empbc</code> float assets, the <code>NDEBUG</code> behaviour of the
-debug-only guards, and the documented UB preconditions (div-by-zero saturation, <code>INT_MIN/−1</code>,
+The residual audit surface is the committed <code>.empbc</code> float assets and their off-tree generation provenance,
+the <code>NDEBUG</code> behaviour of the debug-only developer guards, and the documented UB preconditions
+(div-by-zero saturation, <code>INT_MIN/−1</code>,
 default-constructed values).</p></div>
 
 <!-- ===================================================================== -->

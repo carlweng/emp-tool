@@ -74,7 +74,7 @@ struct Pair2 {
     static constexpr int width() { return 2; }
     void pack_wires(Wire* out) const { out[0] = w0; out[1] = w1; }
     static Pair2 from_wires(Ctx& c, const Wire* in) { Pair2 p; p.ctx_ = &c; p.w0 = in[0]; p.w1 = in[1]; return p; }
-    static std::vector<bool> encode(clear_t v) { return { (bool)(v & 1), (bool)((v >> 1) & 1) }; }
+    static std::array<bool, 2> encode(clear_t v) { return { (bool)(v & 1), (bool)((v >> 1) & 1) }; }
     static clear_t decode(const bool* b) { return (clear_t)((b[0] ? 1 : 0) | (b[1] ? 2 : 0)); }
 };
 

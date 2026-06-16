@@ -1,7 +1,8 @@
 # Floating-Point Circuit Assets
 
 This document records how the shipped IEEE floating-point circuit assets are
-represented, generated, and verified. The runtime assets live in:
+represented, where their provenance comes from, and what must be true before a
+replacement asset is accepted. The runtime assets live in:
 
 ```text
 emp-tool/ir/files/fp<width>_<op>.empbc
@@ -49,15 +50,19 @@ Notes:
 - IEEE exception flags, signaling-NaN behavior, exact NaN payload propagation,
   and non-default rounding modes are not modeled.
 
-## Regeneration Contract
+## Asset Contract
 
-The intent of this document is that a future maintainer has enough clues to
-regenerate a float circuit or add another externally generated circuit without
-reverse-engineering the runtime.
+The checked-in `.empbc` files are the canonical source artifacts consumed by
+emp-tool at runtime. This tree intentionally does not ship a complete
+reproducible generation harness or exact reproduction instructions for the
+current assets. Instead, the contract below documents the ABI and validation bar
+that any generated asset must satisfy.
 
-The contract for any generated circuit is:
+The contract for any checked-in generated circuit is:
 
 - Store the checked-in runtime artifact as `.empbc`.
+- Document the generator/source provenance when the artifact is replaced,
+  especially when third-party source material is involved.
 - Model the circuit as one `emp::circuit::BooleanProgram`.
 - Use dense wire IDs: inputs are `[0, num_inputs)`, and every non-input wire in
   `[num_inputs, num_wires)` is defined exactly once.
@@ -86,61 +91,46 @@ stable input/output ABI, emit a dense `BooleanProgram`, save it with
 `save_empbc_file()`, and load it through the shared circuit asset resolver
 instead of adding another ad hoc search path.
 
-## Generation Pipeline
+## Historical Generation Notes
 
-The current generation path is:
-
-1. Write a small C wrapper for one operation. The wrapper exposes a single
-   `mpc_main` with fixed-width public C integer variables named `INPUT_*` and
-   `OUTPUT_*`.
-2. Compile that wrapper with CBMC-GC-2. Loops must be statically bounded, and
-   source shape matters: a smaller C expression usually means a smaller circuit.
-3. Convert the generated gate list into `.empbc`, compacting to emp-tool's dense
-   `BooleanProgram` invariant and preserving LSB-first bit order.
-4. Load the `.empbc` through `load_empbc_file()`, which validates bounds,
-   topology, single-definition, canonical unused operands, and dense wire IDs.
-5. Verify the `.empbc` output against host floating-point behavior or the native
-   C reference for the same operation.
+The current assets came from one-off development pipelines, not from a single
+checked-in generator. The common shape was: source-level operation wrappers,
+CBMC-GC-2 gate generation, conversion into emp-tool's dense `BooleanProgram`
+format, validation through `load_empbc_file()`, and semantic verification
+against host floating-point behavior or a native C reference.
 
 The core library does not parse external text circuit formats at runtime.
-Conversion scripts are development/provenance tools only; `.empbc` is the stored
-format consumed by emp-tool and downstream protocols.
+Conversion scripts and generator source trees are development/provenance tools
+only; `.empbc` is the stored format consumed by emp-tool and downstream
+protocols.
 
-The current tree is not yet a fully automated reproduction harness. In
-particular, the CBMC-GC output-to-`BooleanProgram` handoff still wants a
-first-class development tool. Bulky one-off C experiments and edited generator
-source trees are intentionally not part of the runtime asset directory.
+If a future generation driver is added, keep it outside the runtime library and
+make it emit `BooleanProgram` / `.empbc` directly. It should compact any
+generator-local wire numbering to emp-tool's dense invariant, reject unsupported
+gate kinds, preserve the ABI above, and run the same `load_empbc_file()`
+validation path that production uses.
 
-When adding the missing driver, keep it outside the runtime library and make it
-emit `BooleanProgram` / `.empbc` directly. A small generic converter/helper may
-live beside the assets if useful, but it should not drag in per-op C source
-bundles. It should compact any generator-local wire numbering to emp-tool's
-dense invariant, reject unsupported gate kinds, and run the same
-`load_empbc_file()` validation path that production uses.
+## Replacement Bar
 
-## Adding Or Replacing One Circuit
+A replacement asset should be treated like a source change to a cryptographic
+primitive: the final `.empbc` must be checked in, its provenance must be
+recorded, its ABI must match this document, and verification must justify the
+change. At minimum, record:
 
-A practical workflow is:
-
-1. Pick the closest width/op strategy from the notes below.
-2. Write a wrapper with the `mpc_main` ABI: `INPUT_A_x`, `INPUT_B_x`,
-   `INPUT_C_x` as needed, and one `OUTPUT_*` value.
-3. Build the C source natively first and compare it against the host or
-   SoftFloat oracle. Fix semantic mismatches before generating gates.
-4. Generate the Boolean gate list with CBMC-GC-2. Avoid data-dependent loops,
-   union type-punning, platform headers that CBMC-GC cannot parse, and
-   shared-input shortcuts that change NaN behavior.
-5. Convert the generated gates into a dense `.empbc` program following the
-   contract above.
-6. Verify the `.empbc` with a width-appropriate verifier and any edge-case
-   verifier for the operation.
-7. Compare AND counts against the table below. Any increase should have a clear
-   correctness or maintainability reason.
-8. Copy the final asset to `emp-tool/ir/files/` and run `test_float`.
+1. The source/generator family used for the replacement.
+2. The exact input/output ABI and bit order.
+3. The semantic oracle used for verification.
+4. Edge-case coverage for NaN, Inf, zero signs, subnormals, and shared-input
+   cases where relevant.
+5. AND-count comparison against the current table, with an explanation for any
+   increase.
+6. The emp-tool and downstream protocol tests run.
 
 ## Generation Tricks
 
-These are the tricks and gotchas that mattered for correctness or circuit size.
+These historical tricks and gotchas mattered for correctness or circuit size.
+They are notes for evaluating or replacing assets, not exact reproduction
+instructions for the current checked-in files.
 
 - Shape C for CBMC-GC, not for a normal optimizer. Smaller, flatter C usually
   means fewer gates. Data-dependent `while` loops can hang unwinding; use fixed

@@ -1,14 +1,52 @@
 #include "emp-tool/emp-tool.h"
+#include <fcntl.h>
 #include <iostream>
 #include <openssl/ec.h>
 #include <openssl/bn.h>
 #include <openssl/obj_mac.h>
+#include <cstring>
+#include <sys/wait.h>
+#include <utility>
+#include <unistd.h>
+#include <vector>
 
 using namespace std;
 using namespace emp;
 
+// Rejection paths are fatal by design: error() _Exit(1)s the process.
+template <class F>
+static bool dies(F&& f) {
+	pid_t pid = fork();
+	if (pid == 0) {
+		int devnull = open("/dev/null", O_WRONLY);
+		if (devnull >= 0) dup2(devnull, 2);
+		f();
+		_exit(0);
+	}
+	int st = 0;
+	waitpid(pid, &st, 0);
+	return !(WIFEXITED(st) && WEXITSTATUS(st) == 0);
+}
+
+class MemoryIO : public IOChannel {
+public:
+	explicit MemoryIO(std::vector<unsigned char> in) : in_(std::move(in)) {}
+	void send_data_internal(const void *data, int64_t nbyte) override {
+		const auto *p = static_cast<const unsigned char *>(data);
+		out_.insert(out_.end(), p, p + nbyte);
+	}
+	void recv_data_internal(void *data, int64_t nbyte) override {
+		if (off_ + (size_t)nbyte > in_.size())
+			error("MemoryIO: read past input");
+		std::memcpy(data, in_.data() + off_, (size_t)nbyte);
+		off_ += (size_t)nbyte;
+	}
+	std::vector<unsigned char> in_, out_;
+	size_t off_ = 0;
+};
 
 int main() {
+	bool ok = true;
 	ECGroup G;
 	Scalar ia = G.rand_scalar();
 	Scalar ib = G.rand_scalar();
@@ -23,6 +61,7 @@ int main() {
 	Point d = a->add(b);
 	int res = (d == c);
 	cout << res<<endl;
+	ok = ok && res;
 
 
 	c = a->mul(ib);//c=a^ib = g^ab
@@ -30,6 +69,7 @@ int main() {
 	
 	res = (d == c);
 	cout << res<<endl;
+	ok = ok && res;
 
 	int size = a->size();
 	unsigned char * tmp = new unsigned char[size];
@@ -38,6 +78,20 @@ int main() {
 
 	res = (*a==b);
 	cout << res<<endl;
+	ok = ok && res;
+
+	// Peer-controlled point lengths must be rejected in Release too. This
+	// exercises IOChannel::recv_pt without opening sockets.
+	{
+		uint32_t bad_len = MAX_POINT_BYTES + 1;
+		std::vector<unsigned char> wire(sizeof(bad_len));
+		std::memcpy(wire.data(), &bad_len, sizeof(bad_len));
+		MemoryIO io(std::move(wire));
+		Point p;
+		bool rejected = dies([&] { io.recv_pt(&G, &p); });
+		cout << "recv_pt oversized length rejected: " << rejected << endl;
+		ok = ok && rejected;
+	}
 
 	// hash_to_point against RFC 9380 §J.1.1 P256_XMD:SHA-256_SSWU_RO_
 	// vectors (DST = "QUUX-V01-CS02-with-P256_XMD:SHA-256_SSWU_RO_").
@@ -61,10 +115,12 @@ int main() {
 		// Strip leading zeros from got to match fixed-width vector.
 		while (got.size() > 64 && got[0] == '0') got.erase(0, 1);
 		while (got.size() < 64) got.insert(0, "0");
-		cout << "h2c \"" << v.msg << "\" x match: " << (got == v.x_hex) << endl;
+		bool match = (got == v.x_hex);
+		cout << "h2c \"" << v.msg << "\" x match: " << match << endl;
+		ok = ok && match;
 		OPENSSL_free(xh);
 		BN_free(xb); BN_free(yb);
 	}
 
-	return 0;
+	return ok ? 0 : 1;
 }

@@ -35,6 +35,34 @@ Consequences for code and tests:
   exception — fork, silence stderr, expect nonzero exit (see
   `test/test_boolean_program.cpp`'s `dies()` helper).
 
+## Bit buffer contract
+
+EMP uses two bit-buffer shapes.
+
+For typed values with compile-time width, codecs return:
+
+```cpp
+std::array<bool, V::width()>
+```
+
+This is the session-I/O contract for `WireValue`: width is part of the
+type, storage is real `bool`, and `.data()` may be passed to APIs that
+take `const bool*`.
+
+For runtime-sized bit sequences, use byte-bools:
+
+```cpp
+std::vector<uint8_t>
+std::span<const uint8_t>
+```
+
+Each byte represents one bit and must be normalized to `0` or `1`.
+
+Do not use `std::vector<bool>` in emp-tool library/protocol code. It is
+bit-packed, has proxy references, has no real `bool*`, and forces
+hidden copies. Do not reinterpret byte-bool storage as `bool*`; convert
+explicitly if an API requires real `bool` storage.
+
 ## Length and count parameters
 
 Buffer-length and count parameters on emp-tool's public API use

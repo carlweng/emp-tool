@@ -1,6 +1,7 @@
 #ifndef EMP_IO_CHANNEL_H__
 #define EMP_IO_CHANNEL_H__
 #include "emp-tool/runtime/core/block.h"
+#include "emp-tool/runtime/core/utils.h"
 #include "emp-tool/runtime/crypto/hash.h"
 #include "emp-tool/runtime/crypto/ec.h"
 #include <cassert>
@@ -180,7 +181,8 @@ public:
 		for (int64_t i = 0; i < num_pts; ++i) {
 			uint32_t len_wire = 0;
 			recv_data(&len_wire, sizeof(len_wire));
-			assert(len_wire <= MAX_POINT_BYTES);
+			if (len_wire > MAX_POINT_BYTES)
+				error("IOChannel::recv_pt: point length exceeds MAX_POINT_BYTES");
 			const size_t len = len_wire;
 			g->resize_scratch(len);
 			unsigned char *tmp = g->scratch();

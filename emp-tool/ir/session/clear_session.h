@@ -26,14 +26,12 @@
 
 #include "emp-tool/ir/context/clear.h"        // ClearCtx
 #include "emp-tool/ir/session/session.h"      // Session / DirectSession
-#include "emp-tool/ir/session/session_io.h"   // encode_value_bits
 #include "emp-tool/ir/wire_value.h"           // WireValue
 #include "emp-tool/runtime/core/constants.h"  // PUBLIC
 #include "emp-tool/runtime/core/utils.h"      // error()
+#include <array>
 #include <cstddef>
-#include <memory>
 #include <optional>
-#include <vector>
 
 namespace emp {
 
@@ -64,10 +62,10 @@ public:
             "ClearSession::input<V>: V must be a value over this session's DirectCtx");
         if (owner < PUBLIC)
             error("ClearSession::input: owner must be PUBLIC or a party id >= 1");
-        const int n = V::width();
-        std::vector<bool> bits = encode_value_bits<V>(value, "ClearSession::input");
-        std::vector<typename DirectCtx::Wire> wires((std::size_t)n);
-        for (int i = 0; i < n; ++i) wires[i] = ctx_.public_bit(bits[i]);
+        constexpr int n = V::width();
+        const std::array<bool, (std::size_t)n> bits = V::encode(value);   // stack; width is the type
+        std::array<typename DirectCtx::Wire, (std::size_t)n> wires{};
+        for (int i = 0; i < n; ++i) wires[(std::size_t)i] = ctx_.public_bit(bits[(std::size_t)i]);
         return V::from_wires(ctx_, wires.data());
     }
 
@@ -83,12 +81,12 @@ public:
             "ClearSession::reveal<V>: V must be a value over this session's DirectCtx");
         if (recipient < PUBLIC)
             error("ClearSession::reveal: recipient must be PUBLIC or a party id >= 1 (XOR-share reveal is not a plaintext notion)");
-        const int n = V::width();
-        std::vector<typename DirectCtx::Wire> wires((std::size_t)n);
+        constexpr int n = V::width();
+        std::array<typename DirectCtx::Wire, (std::size_t)n> wires{};
         value.pack_wires(wires.data());
-        std::unique_ptr<bool[]> buf(new bool[(std::size_t)n]);
-        for (int i = 0; i < n; ++i) buf[i] = (wires[i] & 1) != 0;
-        return std::optional<typename V::clear_t>(V::decode(buf.get()));
+        std::array<bool, (std::size_t)n> buf{};
+        for (int i = 0; i < n; ++i) buf[(std::size_t)i] = (wires[(std::size_t)i] & 1) != 0;
+        return std::optional<typename V::clear_t>(V::decode(buf.data()));
     }
     template <class T, WireValue V>
     std::optional<T> reveal(const V& value, int recipient) {

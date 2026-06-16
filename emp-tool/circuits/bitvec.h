@@ -81,7 +81,7 @@ public:
 
     static constexpr int width() { return N; }
     void pack_wires(Wire* out) const { for (int i = 0; i < N; ++i) out[i] = w[i]; }
-    static std::vector<bool> encode(const clear_t& v) { return std::vector<bool>(v.begin(), v.end()); }
+    static std::array<bool, (std::size_t)N> encode(const clear_t& v) { return v; }
     static clear_t decode(const bool* b) { clear_t v{}; for (int i = 0; i < N; ++i) v[i] = b[i]; return v; }
 
 private:

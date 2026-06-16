@@ -221,8 +221,9 @@ public:
     // exists only for N <= 64 — a wider UInt_T is a WireBundle (fine as a
     // circuit argument) but not a WireValue (use BitVec_T for typed session I/O
     // past 64 bits, or grow a limb-array clear_t here if one is ever wanted).
-    static std::vector<bool> encode(uint64_t v) requires (N > 0 && N <= 64) {
-        std::vector<bool> b(N); for (int i = 0; i < N; ++i) b[i] = (v >> i) & 1; return b;
+    static std::array<bool, (std::size_t)(N > 0 ? N : 1)> encode(uint64_t v) requires (N > 0 && N <= 64) {
+        std::array<bool, (std::size_t)(N > 0 ? N : 1)> b{};
+        for (int i = 0; i < N; ++i) b[(std::size_t)i] = (v >> i) & 1; return b;
     }
     static uint64_t decode(const bool* bits) requires (N > 0 && N <= 64) {
         uint64_t v = 0; for (int i = 0; i < N; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i; return v;

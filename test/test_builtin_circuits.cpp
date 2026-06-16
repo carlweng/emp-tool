@@ -24,9 +24,9 @@ static int bad = 0;
 // Run `live` (a kernel over ClearCtx) and the recorded builtin replayed through
 // ClearCtx on the same random input; require equal (scalar and scheduled replay).
 static void check_builtin(const char* name, int nin, int nout,
-                          const std::function<void(const std::vector<bool>&, std::vector<uint8_t>&)>& live) {
+                          const std::function<void(const std::vector<uint8_t>&, std::vector<uint8_t>&)>& live) {
     static uint64_t s = 0x9E3779B97F4A7C15ull;
-    std::vector<bool> in(nin);
+    std::vector<uint8_t> in(nin);
     for (int i = 0; i < nin; ++i) { s = s * 6364136223846793005ull + 1442695040888963407ull; in[i] = (s >> 33) & 1; }
 
     std::vector<uint8_t> live_out(nout, 0);
@@ -61,7 +61,7 @@ static void check_builtin(const char* name, int nin, int nout,
 
 int main() {
     // aes128: 256 inputs = pt[0..127] ‖ key[128..255] -> 128-bit ciphertext.
-    check_builtin("aes128", 256, 128, [](const std::vector<bool>& in, std::vector<uint8_t>& out) {
+    check_builtin("aes128", 256, 128, [](const std::vector<uint8_t>& in, std::vector<uint8_t>& out) {
         ClearCtx cx;
         BitVec_T<ClearCtx, 128> pt(cx), key(cx);
         for (int i = 0; i < 128; ++i) pt.w[i]  = cx.public_bit(in[i]);
@@ -70,7 +70,7 @@ int main() {
         for (int i = 0; i < 128; ++i) out[i] = ct.w[i] & 1;
     });
 
-    check_builtin("sha256_256", 256, 256, [](const std::vector<bool>& in, std::vector<uint8_t>& out) {
+    check_builtin("sha256_256", 256, 256, [](const std::vector<uint8_t>& in, std::vector<uint8_t>& out) {
         ClearCtx cx;
         BitVec_T<ClearCtx, 256> m(cx);
         for (int i = 0; i < 256; ++i) m.w[i] = cx.public_bit(in[i]);
@@ -78,7 +78,7 @@ int main() {
         for (int i = 0; i < 256; ++i) out[i] = o.w[i] & 1;
     });
 
-    check_builtin("sha3_256_256", 256, 256, [](const std::vector<bool>& in, std::vector<uint8_t>& out) {
+    check_builtin("sha3_256_256", 256, 256, [](const std::vector<uint8_t>& in, std::vector<uint8_t>& out) {
         ClearCtx cx;
         BitVec_T<ClearCtx, 256> m(cx);
         for (int i = 0; i < 256; ++i) m.w[i] = cx.public_bit(in[i]);

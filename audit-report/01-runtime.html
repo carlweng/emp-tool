@@ -112,7 +112,7 @@ hardware vector registers, with <b>no protocol policy</b> above it.</p>
 <tr><td>Source tree</td><td><code>/Users/wangxiao/Documents/emp-tool</code> · working tree on <code>main</code> (the runtime/ir/circuits three-layer architecture, uncommitted; HEAD <code>7f21adc</code>)</td></tr>
 <tr><td>Files in scope</td><td><code>runtime/core/{block,block_vector,simd_tier,constants,test_mode,utils}</code> · <code>runtime/crypto/{aes,prp,f2k,ccrh,mitccrh,prg,hash,ro,ec,session_id}</code> · <code>runtime/io/{io_channel,net_io_channel,tcp_socket,tls_io_channel,trace_io}</code> · <code>runtime/execution/{half_gate,privacy_free}</code></td></tr>
 <tr><td>Endianness</td><td><b>Little-endian only</b> — <code class="ref">runtime/runtime.h:14</code> <code>static_assert</code>s <code>__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__</code>; wire formats memcpy integers in host order and refuse to build on big-endian.</td></tr>
-<tr><td>Failure model</td><td><b>Fail-fast <code>exit(1)</code></b> throughout (except the NetIO/TLSIO constructors, which <code>throw</code>; the IR / asset loaders that throw live in <a href="02-ir.html">Report 2</a>). No error recovery; a malformed wire message terminates the process.</td></tr>
+<tr><td>Failure model</td><td><b>Fail-fast <code>_Exit(1)</code></b> throughout via <code>error()</code> or equivalent fatal helpers. No exceptions, no error recovery; a malformed wire message terminates the process.</td></tr>
 <tr><td>Method</td><td>Full read of every runtime header + its tests (<code>test/test_*.cpp</code>) and benchmarks; <code>file:line</code> references verified against the live tree.</td></tr>
 <tr><td>Crypto scope note</td><td>This is the <b>raw-block / AES-NI / VAES kernel</b> — AES as a hardware instruction over <code>block</code> registers. The <b>in-circuit</b> AES-128 (Boyar–Peralta 32-AND S-box over <code>Bit</code> values) is a different thing entirely and lives in <a href="03-circuits.html">Report 3</a>; do not conflate the two.</td></tr>
 </table>
@@ -282,7 +282,7 @@ in release).</p></div>
 
 <h3>utils — bit/byte packing (the footgun-rich part)</h3>
 <ul>
-<li><code>error(s)</code> is <code>[[noreturn]]</code>, prints to stderr and <code>exit(1)</code>, capturing the
+<li><code>error(s)</code> is <code>[[noreturn]]</code>, prints to stderr and <code>std::_Exit(1)</code>, capturing the
 call site via <code>__builtin_LINE/FILE</code> default arguments (<code class="ref">utils.hpp:9-12</code>,
 declared <code class="ref">utils.h:22-24</code>). The whole library's failure model is fail-fast.</li>
 <li><code>bytes_to_bits32</code> / <code>bits32_to_bytes</code> (SSE/AVX2 paths,
@@ -653,7 +653,7 @@ count=2/L=48, SSWU with A=−3/Z=−10, <code class="ref">ec.cpp:15-194</code>),
 <code>BN_mod_inverse</code>. Safe <b>only if the hashed input is public</b>. For the typical use (hash a public
 transcript to a CRS generator) inputs are public. <b>Confirm no secret-dependent input ever reaches
 <code>hash_to_point</code> / <code>RO::squeeze_point</code>.</b> On <code>error()</code> paths in-flight
-<code>BIGNUM</code>s leak, but <code>exit(1)</code> makes that harmless.</p></div>
+<code>BIGNUM</code>s leak, but process-fatal <code>std::_Exit(1)</code> makes that harmless.</p></div>
 
 <h4>SessionID (<code class="ref">session_id.h:28-46</code>)</h4>
 <p>A 128-bit session id + a child-derivation counter, giving each sub-protocol a distinct id <b>without any
@@ -681,14 +681,13 @@ Fiat–Shamir live in the base. Counters (<code>send_counter</code>, <code>recv_
 (<code class="ref">io_channel.h:37-51</code>).</p>
 
 <h4>Point I/O wire format (<code class="ref">io_channel.h:167-191</code>)</h4>
-<pre><code>send_pt: u32 length (host-endian) || uncompressed-point-bytes   // len <= MAX_POINT_BYTES (assert :170)
-recv_pt: u32 length || bytes ; from_bin validates on-curve, rejects ∞   // assert :184</code></pre>
-<div class="callout c-warn"><span class="lbl">Length cap is an assert — DoS amplification in release</span>
-<p>The <code>MAX_POINT_BYTES = 2048</code> cap is an <code>assert</code> on recv
-(<code class="ref">io_channel.h:184</code>), compiled out under <code>NDEBUG</code>. A malicious
-<code>len_wire</code> up to <code>u32</code>-max would drive <code>resize_scratch(len)</code> (grow-only) and a
-<code>recv_data</code> of attacker-chosen size — a memory/DoS amplification against a hostile peer in release
-builds. Peer-facing validation should be a hard <code>error()</code>, not <code>assert</code>.</p></div>
+<pre><code>send_pt: u32 length (host-endian) || uncompressed-point-bytes   // local len <= MAX_POINT_BYTES (assert)
+recv_pt: u32 length || bytes ; hard len cap, then from_bin validates on-curve, rejects ∞</code></pre>
+<div class="callout c-ok"><span class="lbl">Peer length cap is always-on</span>
+<p>The <code>MAX_POINT_BYTES = 2048</code> cap is a hard <code>error()</code> check on recv before
+<code>resize_scratch(len)</code> or payload read. Local misuse checks, such as sending an oversized local point,
+remain debug assertions; the peer-controlled memory/DoS amplification path is not compiled out under
+<code>NDEBUG</code>.</p></div>
 
 <h4>Packed-bool I/O — the uninitialized-stack defense (<code class="ref">io_channel.h:206-218</code>)</h4>
 <pre><code>if (batch % 8 != 0) buf[bytes - 1] = 0;   // zero the partial tail byte FIRST  (:212)
@@ -712,9 +711,9 @@ repeatedly for sub-challenges). FS is off by default; <code>enable_fs</code> dou
 <code>FILE*</code> with a 1 MiB stream buffer fronted by a 32 KiB coalescing buffer. Recv side: raw
 <code>::read()</code> into a separate 32 KiB buffer, bypassing stdio. <code>TCP_NODELAY</code> is set (Nagle
 off). The recv path <b>flushes pending sends first</b> (<code class="ref">net_io_channel.h:192</code>) —
-critical, else a send-then-recv would deadlock with bytes still staged. The constructor <b>throws</b> on a bad
-port or <code>fdopen</code> failure (<code class="ref">net_io_channel.h:82-83,139-150</code>), the one place the
-runtime does not <code>exit(1)</code> for an IO error.</p>
+critical, else a send-then-recv would deadlock with bytes still staged. The constructor <b>fatal-errors</b> on a bad
+port or <code>fdopen</code> failure (<code class="ref">net_io_channel.h:82-83,139-150</code>), consistent with the
+stack-wide <code>error()</code> model.</p>
 <div class="callout c-audit"><span class="lbl">Thread-safety, make_sibling, no timeouts</span>
 <p>NetIO is <b>not thread-safe</b> (unlocked coalescing) and non-copyable/non-movable. A debug-only
 <code>touch_guard</code> aborts on concurrent <code>send</code>/<code>recv</code>/<code>flush</code>
@@ -723,7 +722,7 @@ corruption on misuse. <code>make_sibling</code> reconnects on the same role/port
 (<code class="ref">net_io_channel.h:97-99</code>) and has a documented ~1/5 same-port re-listen race (fixed
 downstream by a <code>sync()</code> before re-listen) — the burden is on the caller. <b>No read timeouts</b>: a
 peer that connects then goes silent hangs the process indefinitely (DoS vector). All transport errors →
-<code>exit(1)</code> (<code class="ref">net_io_channel.h:202,228</code>).</p></div>
+<code>std::_Exit(1)</code> (<code class="ref">net_io_channel.h:202,228</code>).</p></div>
 <div class="callout c-warn"><span class="lbl">No peer authentication in plaintext NetIO</span>
 <p><code>tcp::server_listen</code> binds <code>INADDR_ANY</code> (all interfaces, IPv4-only) and accepts whoever
 connects — <b>no peer authentication at the TCP layer</b> (<code class="ref">tcp_socket.h:22-47</code>).
@@ -843,8 +842,8 @@ OpenSSL/reference cross-checks — there is no formal proof of x86↔aarch64 equ
 <tr><th>#</th><th>Item</th><th>Where</th><th>Severity / note</th></tr>
 <tr><td>1</td><td>Compile-time-only ISA dispatch; SIGILL (no runtime fallback) on a mismatched CPU</td><td><code class="ref">simd_tier.h:20-66</code></td><td>Deployment hazard — match <code>-march</code> (mitigate with <code>EMP_TOOL_NATIVE_ARCH=OFF</code>)</td></tr>
 <tr><td>2</td><td>Test mode = one-env-var randomness kill switch (seed <code>0xC0FFEE12345</code>)</td><td><code class="ref">test_mode.h:24-39</code></td><td>Catastrophic if ever set in production</td></tr>
-<tr><td>3</td><td>Fail-fast <code>error()</code> → <code>exit(1)</code>; no read timeouts</td><td><code class="ref">utils.hpp:9-12</code>, library-wide</td><td>Hostile peer can reliably crash/hang the process</td></tr>
-<tr><td>4</td><td><code>assert</code>-based validation in release (IOChannel point-length cap, FS double-enable, alignment)</td><td><code class="ref">io_channel.h:170,184,96</code>, AES/PRP/PRG</td><td>Point-length cap is the hostile-peer one → memory/DoS amplification</td></tr>
+<tr><td>3</td><td>Fail-fast <code>error()</code> → <code>std::_Exit(1)</code>; no read timeouts</td><td><code class="ref">utils.hpp:9-12</code>, library-wide</td><td>Hostile peer can reliably crash/hang the process</td></tr>
+<tr><td>4</td><td><code>assert</code>-based developer-misuse checks in release (FS double-enable, alignment, local send-point length)</td><td><code class="ref">io_channel.h:96,170</code>, AES/PRP/PRG</td><td>Intentional debug-only class; peer-controlled point recv length is now always-on</td></tr>
 <tr><td>5</td><td>Uninitialized-memory-to-wire surface (<code>BlockVec</code>/default-init)</td><td><code class="ref">block_vector.h:15-44</code></td><td>Non-determinism / potential leak; sweep send/hash paths</td></tr>
 <tr><td>6</td><td>No channel-layer peer auth (NetIO); no hostname check (TLSIO)</td><td><code class="ref">tcp_socket.h:22-47</code>, <code class="ref">tls_io_channel.h:241-279</code></td><td>Load-bearing trust-model assumptions to document</td></tr>
 <tr><td>7</td><td>σ is security-load-bearing; raw <code>ParaEncXorInput_impl</code> (no σ) exposed in <code>detail::</code></td><td>CCRH/MITCCRH, <code class="ref">aes.hpp:220-224</code></td><td>Misuse breaks correlation-robustness</td></tr>

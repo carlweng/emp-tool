@@ -11,6 +11,10 @@ docs/floating_point_circuits.md
 ```
 
 CMake installs the `.empbc` assets and this README beside the emp-tool headers.
+The checked-in `.empbc` files are the runtime source artifacts for these
+generated circuits. The repository records their ABI and provenance, but it does
+not currently include a complete reproducible generation harness for the
+floating-point assets.
 
 ## Floating-Point Assets
 

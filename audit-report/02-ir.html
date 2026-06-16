@@ -150,8 +150,9 @@ topological order; wire id == position, no holes.</p>
 <h2 id="validate">A.2 · Validation invariants</h2>
 <p><span class="tag">ir/validate.h</span></p>
 <p><code>validate_program</code> (<code class="ref">validate.h:19-79</code>) is the single structural validation path — run at
-IR construction / file load / artifact validation boundaries, not during trusted replay. It throws
-<code>std::runtime_error</code> on the first violation. Invariants:</p>
+IR construction / file load / artifact validation boundaries, not during trusted replay. It calls the
+stack-wide fatal <code>error()</code> path on the first violation; rejection is always-on in Release but not
+catchable in-process. Invariants:</p>
 <ol>
 <li><code>num_inputs ≤ num_wires</code> (<code class="ref">validate.h:20-22</code>).</li>
 <li><b>Density</b>: <code>num_gates == num_wires − num_inputs</code> — every non-input wire produced exactly once,
@@ -171,12 +172,13 @@ allocation during validation (<code class="ref">validate.h:30-33</code>). The de
 <code class="ref">validate.h:24-27</code> runs <em>before</em> that allocation. Each invariant is independently
 exercised in <code class="ref">test_boolean_program.cpp:54-67</code>, and the huge-sparse-header guard at
 <code class="ref">test_boolean_program.cpp:121-130</code>.</p></div>
-<div class="callout c-warn"><span class="lbl"><code>validate_program</code> throws even in Release</span>
-<p>Unlike most fail-fast paths in the tree (which call <code>error()</code> → <code>exit(1)</code>), the IR
-validator <b>throws</b> and is unconditional — it is not guarded by <code>NDEBUG</code>. A consumer that passes an
-externally-supplied program through <code>validate_program</code> (the <code>.empbc</code> loader does) gets a
-catchable exception in both Debug and Release, never silent corruption. This is the structural-safety baseline the
-rest of the layer relies on.</p></div>
+<div class="callout c-warn"><span class="lbl"><code>validate_program</code> is fatal even in Release</span>
+<p>The IR validator is unconditional — it is not guarded by <code>NDEBUG</code> — but it follows the same
+fail-fast model as the rest of emp-tool: <code>error()</code> prints the call site and terminates with
+<code>std::_Exit(1)</code>. A consumer that passes an externally supplied program through
+<code>validate_program</code> (the <code>.empbc</code> loader does) gets process-level rejection in both Debug and
+Release, never silent corruption. Tests for malformed programs must assert child-process death, not catch an
+exception.</p></div>
 
 <h2 id="empbc">A.3 · The <code>.empbc</code> serialization format</h2>
 <p><span class="tag">ir/empbc.h</span></p>
@@ -254,7 +256,7 @@ Execution has two layers:</p>
 <li><b>Low level</b> <code>circuit::execute_program&lt;Wire,Dispatcher&gt;</code>
 (<code class="ref">execute.h:44-70</code>) — seed input slots, walk once via <code>for_each_gate</code> through a
 <code>Bridge</code> that maps wire ids to value slots, copy outputs out; generic over a wire <em>slot</em> type and
-an in-place <code>Dispatcher</code>. Validates input/output <em>counts</em> (throws on mismatch,
+an in-place <code>Dispatcher</code>. Validates input/output <em>counts</em> (fatal <code>error()</code> on mismatch,
 <code class="ref">execute.h:50-53</code>), sizes scratch to <code>num_wires</code>.</li>
 <li><b>High level</b> value-return bridge <code>execute_program(ctx, program, inputs[, ws])</code>
 (<code class="ref">execute.h:102-122</code>) — the way stored <code>.empbc</code> builtins and compiled frontend
@@ -509,7 +511,7 @@ on <code>circuits/</code>.</p></div>
 <tr><td>4</td><td>Digest encoder duality must stay in lockstep</td><td><code class="ref">digest.h:8-9</code>, <code class="ref">digest.h:59-69</code></td><td>Divergence silently breaks determinism / schedule-staleness checks</td></tr>
 <tr><td>5</td><td><code>.empbc</code> gate-record reserved bytes read but not value-checked</td><td><code class="ref">empbc.h:152-153</code></td><td>Minor forward-compat ambiguity (header <code>flags</code> <em>is</em> checked)</td></tr>
 <tr><td>6</td><td><code>execute_program</code> trusts prior validation</td><td><code class="ref">execute.h:102-122</code></td><td>Re-checks only I/O counts; an unvalidated program reaching it reads out-of-range slots</td></tr>
-<tr><td>7</td><td><code>validate_program</code> throws in Release (informational)</td><td><code class="ref">validate.h:19-79</code></td><td>Structural validation survives <code>NDEBUG</code> and is catchable — the safety baseline, not a risk per se</td></tr>
+<tr><td>7</td><td><code>validate_program</code> is fatal in Release (informational)</td><td><code class="ref">validate.h:19-79</code></td><td>Structural validation survives <code>NDEBUG</code> and aborts through <code>error()</code> — the safety baseline, not a risk per se</td></tr>
 </table>
 
 </main>

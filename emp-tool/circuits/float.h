@@ -121,17 +121,17 @@ public:
 
     static constexpr int width() { return W; }
     void pack_wires(Wire* out) const { for (int i = 0; i < W; ++i) out[i] = w[i]; }
-    static std::vector<bool> encode(host_t v) {
-        uint64_t bits = FloatTraits<W>::to_bits(v);
-        std::vector<bool> b(W); for (int i = 0; i < W; ++i) b[i] = (bits >> i) & 1; return b;
+    static std::array<bool, (std::size_t)W> encode(host_t v) {
+        return encode_bits(FloatTraits<W>::to_bits(v));
     }
     static host_t decode(const bool* bits) {
         uint64_t v = 0; for (int i = 0; i < W; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i;
         return FloatTraits<W>::from_bits(v);
     }
     // Raw-bit helpers (when you want the IEEE pattern directly).
-    static std::vector<bool> encode_bits(uint64_t bits) {
-        std::vector<bool> b(W); for (int i = 0; i < W; ++i) b[i] = (bits >> i) & 1; return b;
+    static std::array<bool, (std::size_t)W> encode_bits(uint64_t bits) {
+        std::array<bool, (std::size_t)W> b{};
+        for (int i = 0; i < W; ++i) b[(std::size_t)i] = (bits >> i) & 1; return b;
     }
     static uint64_t decode_bits(const bool* bits) {
         uint64_t v = 0; for (int i = 0; i < W; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i; return v;

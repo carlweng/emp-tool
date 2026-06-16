@@ -121,9 +121,8 @@ int main() {
         chk("float select F", tofl(read_bits<32>(fa.select(Bit_T<ClearCtx>::constant(cx, false), fb))) == 1.5f);
 
         // host clear codec (FloatTraits) + constant()
-        std::vector<bool> e = Float_T<ClearCtx, 32>::encode(3.75f);
-        bool eb[32]; for (int i = 0; i < 32; ++i) eb[i] = e[i];
-        chk("float codec roundtrip", Float_T<ClearCtx, 32>::decode(eb) == 3.75f);
+        const std::array<bool, 32> e = Float_T<ClearCtx, 32>::encode(3.75f);
+        chk("float codec roundtrip", Float_T<ClearCtx, 32>::decode(e.data()) == 3.75f);
         auto ca = Float_T<ClearCtx, 32>::constant(cx, 1.5f);
         auto cb = Float_T<ClearCtx, 32>::constant(cx, 2.25f);
         auto cc = ca + cb;

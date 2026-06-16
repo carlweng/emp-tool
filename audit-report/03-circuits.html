@@ -363,11 +363,12 @@ it, <code>copysign</code> copies it, <code>select</code> is per-wire mux
 <tr><td><code>sqrt recip rsqrt</code></td><td>Iterative</td><td><b>Approximate</b> — within ~1e-2 relative tolerance only</td></tr>
 <tr><td>special values</td><td>Handled by the circuits</td><td>overflow→±inf, inf−inf→NaN, 1/inf→0, NaN unordered, +0==−0</td></tr>
 </table>
-<div class="callout c-audit"><span class="lbl">Trust extends to the off-tree assets</span>
+<div class="callout c-audit"><span class="lbl">Trust extends to committed generated assets</span>
 <p>Float correctness <b>depends on the on-disk <code>.empbc</code> assets</b> in <code>emp-tool/ir/files/</code>
 being the faithful circuits the tests assume — unlike the crypto builtins, the float circuits have no
 native-kernel counterpart and are validated only against the host FPU
-(<code class="ref">test_float.cpp</code>). <code>circuit::float_circuit</code> throws if an asset is missing. The
+(<code class="ref">test_float.cpp</code>). <code>circuit::float_circuit</code> fails fast through <code>error()</code> if an
+asset is missing. The
 <code>replay_</code> return aliases a <code>thread_local ProgramWorkspace</code> valid only until the next replay
 (<code class="ref">float.h:51-59</code>); every public wrapper copies immediately
 (<code class="ref">float.h:60-80</code>) — confirm no path holds it across a second replay.</p></div>
@@ -529,7 +530,7 @@ condition.</p></div>
 <tr><td>3</td><td>Integer div/mod by zero <b>saturates</b> (<code>x/0=all-ones</code>, <code>x%0=x</code>)</td><td>Documented &amp; tested, but a trap for callers expecting C UB</td></tr>
 <tr><td>4</td><td>Signed <code>INT_MIN/−1</code> and <code>mod_exp</code> with <code>q=0</code></td><td>UB preconditions</td></tr>
 <tr><td>5</td><td><b>LSB-first</b> index convention</td><td>Load-bearing in BitVec, both crypto byte layouts, codecs, <code>concat</code>; a flipped index transposes results silently</td></tr>
-<tr><td>6</td><td>Float arithmetic replayed from off-tree <code>.empbc</code> assets</td><td>Trust extends to assets + <code>execute_program</code>; <code>sqrt/recip/rsqrt</code> approximate; <code>fma</code> = two roundings</td></tr>
+<tr><td>6</td><td>Float arithmetic replayed from committed generated <code>.empbc</code> assets</td><td>Trust extends to assets + <code>execute_program</code>; <code>sqrt/recip/rsqrt</code> approximate; <code>fma</code> = two roundings</td></tr>
 <tr><td>7</td><td>Crypto message lengths compile-time public</td><td>Gate counts (sbox 32, block 6400, sha256 24744, sha3 38400) asserted in tests — good change-detectors</td></tr>
 <tr><td>8</td><td>Sort is oblivious but <b>unstable</b>; NaN float keys unordered</td><td>—</td></tr>
 <tr><td>9</td><td><b>Scalar</b> UInt/Int host codecs cap at 64 bits (<code>static_assert N≤64</code>)</td><td>Not a general limit — <code>BitVec_T&lt;N&gt;</code> (<code>std::array&lt;bool,N&gt;</code>) round-trips at any width; use BitVec or fixed-width conversion for &gt;64-bit I/O</td></tr>
@@ -540,7 +541,7 @@ condition.</p></div>
 <p>Every value type has an <code>example()</code> plus randomized host cross-checks; every crypto primitive is
 checked against FIPS/NIST vectors and OpenSSL; <code class="ref">test_builtin_circuits.cpp</code> proves the
 native kernels and the recorded IR builtins agree bit-for-bit. The main residual audit surface is (a) the
-off-tree <code>.empbc</code> float assets, (b) the <code>NDEBUG</code> behavior of the context/width guards, and
+committed <code>.empbc</code> float assets plus their off-tree generation provenance, (b) the <code>NDEBUG</code> behavior of the context/width guards, and
 (c) the documented UB preconditions (div-by-zero saturation, <code>INT_MIN/−1</code>, default-constructed values).</p></div>
 
 </main>

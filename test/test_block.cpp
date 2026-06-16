@@ -254,21 +254,17 @@ static bool check_bits_bytes_roundtrip() {
 static bool check_bools_bits_roundtrip() {
 	PRG prg;
 	for (int len : {1, 7, 8, 9, 31, 32, 33, 127, 128, 1023, 1024, 4097}) {
-		vector<bool> bools_in(len);
+		vector<uint8_t> bools_in(len);   // byte-bools (0/1) — never vector<bool>
 		for (int i = 0; i < len; ++i) bools_in[i] = (i * 2654435761u) & 1;
 
 		vector<uint8_t> packed((len + 7) / 8, 0xAA);  // sentinel byte
-		// Convert to bool* (vector<bool> is bit-packed).
-		vector<uint8_t> tmp(len);
-		for (int i = 0; i < len; ++i) tmp[i] = bools_in[i] ? 1 : 0;
-		bools_to_bits(packed.data(), reinterpret_cast<const bool *>(tmp.data()), len);
+		bools_to_bits(packed.data(), reinterpret_cast<const bool *>(bools_in.data()), len);
 
-		vector<bool> bools_out_buf(len);
 		vector<uint8_t> out_bytes(len);
 		bits_to_bools(reinterpret_cast<bool *>(out_bytes.data()), packed.data(), len);
 		for (int i = 0; i < len; ++i) {
 			bool got = out_bytes[i] != 0;
-			if (got != bools_in[i]) return false;
+			if (got != (bools_in[i] != 0)) return false;
 		}
 
 		// Tail-byte preservation: bits beyond `len` in the last byte must remain 0xAA.
@@ -278,7 +274,6 @@ static bool check_bools_bits_roundtrip() {
 			uint8_t got_tail_above = packed.back() & (uint8_t)~mask_below;
 			if (got_tail_above != expected_tail_bits_above) return false;
 		}
-		(void)bools_out_buf;
 	}
 	return true;
 }

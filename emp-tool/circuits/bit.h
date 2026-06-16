@@ -50,7 +50,7 @@ public:
     static constexpr int width() { return 1; }
     void pack_wires(Wire* out) const { out[0] = w; }
     static Bit_T from_wires(Ctx& c, const Wire* in) { return Bit_T(c, in[0]); }
-    static std::vector<bool> encode(bool v) { return std::vector<bool>{v}; }
+    static std::array<bool, 1> encode(bool v) { return {v}; }
     static bool decode(const bool* b)       { return b[0]; }
 
 private:

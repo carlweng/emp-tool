@@ -31,9 +31,9 @@
 // BitVec_T<Ctx,128> for typed session I/O at that width).
 
 #include "emp-tool/ir/context/concept.h"   // BooleanContext
+#include <array>
 #include <concepts>
 #include <type_traits>
-#include <vector>
 
 namespace emp {
 
@@ -60,12 +60,15 @@ concept WireBundle =
         { std::decay_t<V_>::from_wires(c, in) } -> std::same_as<std::decay_t<V_>>;
     };
 
+// Codec storage follows docs/api_conventions.md's bit-buffer contract:
+// fixed-width typed values encode to std::array<bool, width()>.
 template <class V_>
 concept WireValue =
     WireBundle<V_> &&
     requires { typename std::decay_t<V_>::clear_t; } &&
     requires(typename std::decay_t<V_>::clear_t cv, const bool* bits) {
-        { std::decay_t<V_>::encode(cv) } -> std::convertible_to<std::vector<bool>>;
+        { std::decay_t<V_>::encode(cv) }
+            -> std::same_as<std::array<bool, (std::size_t)std::decay_t<V_>::width()>>;
         { std::decay_t<V_>::decode(bits) } -> std::same_as<typename std::decay_t<V_>::clear_t>;
     };
 
