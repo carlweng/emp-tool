@@ -44,3 +44,6 @@ install_manifest.txt
 *.exe
 *.out
 *.app
+
+# Editor / tool temp snapshots (e.g. write-to-temp-then-rename leftovers)
+*.tmp
