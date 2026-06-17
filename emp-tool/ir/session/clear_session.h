@@ -26,12 +26,14 @@
 
 #include "emp-tool/ir/context/clear.h"        // ClearCtx
 #include "emp-tool/ir/session/session.h"      // Session / DirectSession
-#include "emp-tool/ir/wire_value.h"           // WireValue
+#include "emp-tool/ir/wire_value.h"           // WireValue / RuntimeWidthValue
 #include "emp-tool/runtime/core/constants.h"  // PUBLIC
 #include "emp-tool/runtime/core/utils.h"      // error()
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace emp {
 
@@ -93,6 +95,37 @@ public:
         reveal_t<V> r = reveal(value, recipient);
         if (!r) return std::nullopt;
         return std::optional<T>(static_cast<T>(*r));
+    }
+
+    // Runtime-width overloads (RuntimeWidthValue): same plaintext semantics as the
+    // fixed ones, but width is a runtime argument (input) / read off the value
+    // (reveal). The byte-bool codec buffer is converted element-wise to bool here —
+    // the engine boundary never sees a uint8_t* reinterpreted as bool*.
+    template <RuntimeWidthValue V>
+    V input(int owner, const typename V::clear_t& value, int width) {
+        static_assert(std::same_as<typename V::context_type, DirectCtx>,
+            "ClearSession::input<V>: V must be a value over this session's DirectCtx");
+        if (owner < PUBLIC)
+            error("ClearSession::input: owner must be PUBLIC or a party id >= 1");
+        if (width < 1) error("ClearSession::input: runtime width must be >= 1");
+        const std::vector<uint8_t> bits = V::encode(value, width);
+        std::vector<typename DirectCtx::Wire> wires((std::size_t)width);
+        for (int i = 0; i < width; ++i)
+            wires[(std::size_t)i] = ctx_.public_bit(bits[(std::size_t)i] != 0);
+        return V::from_wires(ctx_, wires.data(), width);
+    }
+    template <RuntimeWidthValue V>
+    reveal_t<V> reveal(const V& value, int recipient) {
+        static_assert(std::same_as<typename V::context_type, DirectCtx>,
+            "ClearSession::reveal<V>: V must be a value over this session's DirectCtx");
+        if (recipient < PUBLIC)
+            error("ClearSession::reveal: recipient must be PUBLIC or a party id >= 1 (XOR-share reveal is not a plaintext notion)");
+        const int n = value.width();
+        std::vector<typename DirectCtx::Wire> wires((std::size_t)n);
+        value.pack_wires(wires.data());
+        std::vector<uint8_t> buf((std::size_t)n);
+        for (int i = 0; i < n; ++i) buf[(std::size_t)i] = (uint8_t)((wires[(std::size_t)i] & 1) != 0);
+        return std::optional<typename V::clear_t>(V::decode(buf.data(), n));
     }
 
 private:

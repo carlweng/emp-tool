@@ -229,6 +229,21 @@ public:
         uint64_t v = 0; for (int i = 0; i < N; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i; return v;
     }
 
+    // Runtime-width contract (RuntimeWidthValue; session-I/O only, never compiled).
+    // The codec rides byte-bools (uint8_t 0/1) in a runtime-sized vector; sessions
+    // must copy into real bool storage at the engine boundary, never reinterpret
+    // uint8_t* as bool*. Caller supplies width; bits beyond 64 zero-extend (matches
+    // the old input_int(width, uint64_t, owner) behavior).
+    void pack_wires(Wire* out) const requires (N == 0) { for (int i = 0; i < n_(); ++i) out[i] = w[i]; }
+    static std::vector<uint8_t> encode(uint64_t v, int width) requires (N == 0) {
+        std::vector<uint8_t> b((std::size_t)width);
+        for (int i = 0; i < width; ++i) b[(std::size_t)i] = (uint8_t)(i < 64 ? ((v >> i) & 1) : 0);
+        return b;
+    }
+    static uint64_t decode(const uint8_t* bits, int width) requires (N == 0) {
+        uint64_t v = 0; for (int i = 0; i < width && i < 64; ++i) v |= (uint64_t)(bits[i] ? 1 : 0) << i; return v;
+    }
+
 private:
     Ctx* ctx_ = nullptr;
     int n_() const { return (int)w.size(); }

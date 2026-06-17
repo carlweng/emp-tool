@@ -37,5 +37,24 @@ concept SessionIO =
         { s.reveal(v, party) } -> std::same_as<typename S::template reveal_t<V>>;
     };
 
+// RuntimeSessionIO<S,V> — the runtime-width sibling of SessionIO: a DirectSession S
+// can feed (input, with an explicit runtime width) and open (reveal) a
+// RuntimeWidthValue V. reveal needs no width — it reads V::width() off the value.
+// A session models this only if it supports runtime-width I/O (e.g. ClearSession,
+// ZKBoolSession); fixed-only sessions (sh2pc / ag2pc) do not, which makes the
+// capability a discoverable trait rather than a dead method.
+template <class S, class V>
+concept RuntimeSessionIO =
+    DirectSession<S> &&
+    RuntimeWidthValue<V> &&
+    std::same_as<typename V::context_type, typename S::DirectCtx> &&
+    requires(S& s, typename V::clear_t x, const V& v, int party, int width) {
+        typename S::template reveal_t<V>;
+        requires std::same_as<typename S::template reveal_t<V>,
+                              std::optional<typename V::clear_t>>;
+        { s.template input<V>(party, x, width) } -> std::same_as<V>;
+        { s.reveal(v, party) } -> std::same_as<typename S::template reveal_t<V>>;
+    };
+
 }  // namespace emp
 #endif  // EMP_IR_SESSION_SESSION_IO_H__

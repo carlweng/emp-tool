@@ -33,7 +33,9 @@
 #include "emp-tool/ir/context/concept.h"   // BooleanContext
 #include <array>
 #include <concepts>
+#include <cstdint>
 #include <type_traits>
+#include <vector>
 
 namespace emp {
 
@@ -73,6 +75,39 @@ concept WireValue =
     };
 
 template <class V> inline constexpr bool is_wire_value_v = WireValue<std::decay_t<V>>;
+
+// RuntimeWidthValue — the runtime-width sibling of WireValue. Width lives in the
+// object (a runtime int, not the type), the clear codec rides BYTE-BOOLS (uint8_t,
+// value 0/1) in a runtime-sized std::vector, and the value is SESSION-I/O eligible
+// but NOT compile/run eligible: it has no static width(), so it models neither
+// WireBundle nor WireValue and never enters cf::compile / IR replay. The two
+// instances today are UInt_T<Ctx, runtime_width> and Int_T<Ctx, runtime_width>
+// (runtime_width == the N == 0 mode). Sessions must copy the byte-bools into real
+// `bool` storage at the engine boundary — never reinterpret uint8_t* as bool*.
+template <class V_>
+concept RuntimeWidthValue =
+    requires {
+        typename std::decay_t<V_>::Wire;
+        typename std::decay_t<V_>::context_type;
+        typename std::decay_t<V_>::clear_t;
+    } &&
+    BooleanContext<typename std::decay_t<V_>::context_type> &&
+    std::same_as<typename std::decay_t<V_>::Wire,
+                 typename std::decay_t<V_>::context_type::Wire> &&
+    requires { requires std::decay_t<V_>::is_dynamic == true; } &&
+    requires(const std::decay_t<V_> v, typename std::decay_t<V_>::Wire* out,
+             typename std::decay_t<V_>::context_type& c,
+             const typename std::decay_t<V_>::Wire* in,
+             typename std::decay_t<V_>::clear_t cv, const uint8_t* bits, int width) {
+        { v.width() } -> std::same_as<int>;
+        { v.context() } -> std::convertible_to<typename std::decay_t<V_>::context_type*>;
+        v.pack_wires(out);
+        { std::decay_t<V_>::from_wires(c, in, width) } -> std::same_as<std::decay_t<V_>>;
+        { std::decay_t<V_>::encode(cv, width) } -> std::same_as<std::vector<uint8_t>>;
+        { std::decay_t<V_>::decode(bits, width) } -> std::same_as<typename std::decay_t<V_>::clear_t>;
+    };
+
+template <class V> inline constexpr bool is_runtime_width_value_v = RuntimeWidthValue<std::decay_t<V>>;
 
 }  // namespace emp
 #endif  // EMP_IR_WIRE_VALUE_H__
