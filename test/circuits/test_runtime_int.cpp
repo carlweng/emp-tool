@@ -1,28 +1,49 @@
 // Runtime-width integers: UInt_T<Ctx,0> / Int_T<Ctx,0> (== UInt_T<Ctx,runtime_width>)
-// over ClearCtx. Same family as the fixed-width forms; here the width lives in the
+// over Ctx. Same family as the fixed-width forms; here the width lives in the
 // wire vector and is chosen at construction.
 #include "emp-tool/circuits/unsigned_int.h"
+#include "emp-tool/ir/session/clear_session.h"
 #include "emp-tool/ir/context/clear.h"
 #include "emp-tool/circuits/signed_int.h"
+#include "emp-tool/runtime/core/constants.h"
 #include <cstdint>
 #include <cstdio>
 using namespace emp;
+using Ctx = ClearSession::ctx_t;
 
 static int bad = 0;
 static void chk(const char* w, bool ok) { if (!ok) { printf("  [FAIL] %s\n", w); ++bad; } }
-static uint64_t rdu(const UInt_T<ClearCtx, 0>& u) {
+static uint64_t rdu(const UInt_T<Ctx, 0>& u) {
   uint64_t v = 0; for (int i = 0; i < u.width(); ++i) v |= (uint64_t)(u.w[i] & 1) << i; return v;
 }
-static int64_t rds(const Int_T<ClearCtx, 0>& x) {
+static int64_t rds(const Int_T<Ctx, 0>& x) {
   uint64_t v = 0; int N = x.width();
   for (int i = 0; i < N; ++i) v |= (uint64_t)(x.w[i] & 1) << i;
   if (N < 64 && ((v >> (N - 1)) & 1)) v |= ~((uint64_t(1) << N) - 1);
   return (int64_t)v;
 }
 
+// ---- example: the runtime-width session flow (the user path) -------------
+// Width is chosen at input; values are fed and revealed through a ClearSession
+// (unsigned reveals as uint64_t, signed as int64_t). The checks in main() then
+// peek wires directly to verify the low-level algebra — including the >64-bit
+// extension that can't round-trip through a 64-bit reveal.
+static void example() {
+  ClearSession sess;
+  using DU = UInt_T<Ctx, runtime_width>;
+  using DI = Int_T<Ctx, runtime_width>;
+  DU a = sess.input<DU>(ALICE, 1000u, /*width=*/20);
+  DU b = sess.input<DU>(BOB,     24u, 20);
+  chk("example u add", sess.reveal(a + b, PUBLIC).value() == 1024u);
+  DI s = sess.input<DI>(ALICE, -5, 16);
+  chk("example i neg", sess.reveal(-s, PUBLIC).value() == 5);
+}
+
 int main() {
-  ClearCtx cx;
-  using DU = UInt_T<ClearCtx, runtime_width>;   // == UInt_T<ClearCtx, 0>
+  example();
+
+  Ctx cx;
+  using DU = UInt_T<Ctx, runtime_width>;   // == UInt_T<Ctx, 0>
   const uint32_t A = 1234567u, B = 7654321u;
   DU a = DU::constant(cx, 32, A), b = DU::constant(cx, 32, B);
 
@@ -53,10 +74,10 @@ int main() {
   chk("popcount", rdu(a.hamming_weight()) == (uint64_t)__builtin_popcount(A));
   // fixed <-> runtime conversion
   chk("to_fixed", [&]{ auto f = a.to_fixed<32>(); uint64_t v = 0; for (int i = 0; i < 32; ++i) v |= (uint64_t)(f.w[i] & 1) << i; return v == A; }());
-  chk("to_dynamic", rdu(UInt_T<ClearCtx, 32>::constant(cx, A).to_dynamic()) == A);
+  chk("to_dynamic", rdu(UInt_T<Ctx, 32>::constant(cx, A).to_dynamic()) == A);
 
   // signed runtime
-  using DI = Int_T<ClearCtx, runtime_width>;
+  using DI = Int_T<Ctx, runtime_width>;
   const int32_t SA = -1234567, SB = 7654321;
   DI sa = DI::constant(cx, 32, SA), sb = DI::constant(cx, 32, SB);
   chk("signed add", rds(sa + sb) == (int32_t)(SA + SB));

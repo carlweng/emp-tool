@@ -10,7 +10,7 @@
 //
 // User shape (identical across clear / sh2pc / ag2pc except the constructor):
 //   ClearSession sess;
-//   using Ctx = ClearSession::DirectCtx;     // the gate context values are built over
+//   using Ctx = ClearSession::ctx_t;     // the gate context values are built over
 //   using UInt32 = UInt_T<Ctx, 32>;
 //   auto a = sess.input<UInt32>(ALICE, x);   // feed inputs through the session
 //   auto b = sess.input<UInt32>(BOB,   y);
@@ -18,11 +18,11 @@
 //   uint32_t r = sess.reveal(c, PUBLIC).value();  // results leave through the session
 //
 // A session does NOT name circuit value families — values are context-bound
-// (UInt_T<DirectCtx,N> etc.), so adding a value family needs no session edit. reveal
+// (UInt_T<ctx_t,N> etc.), so adding a value family needs no session edit. reveal
 // returns std::optional<clear_t> (the session contract): the value is present on a
 // party that learns it and std::nullopt otherwise. ClearSession is plaintext — it
 // always knows the value — so its optional is always populated. Public constants
-// stay value/context-level: UInt32::constant(sess.direct_ctx(), 7).
+// stay value/context-level: UInt32::constant(sess.ctx(), 7).
 
 #include "emp-tool/ir/context/clear.h"        // ClearCtx
 #include "emp-tool/ir/session/session.h"      // Session / DirectSession
@@ -39,7 +39,7 @@ namespace emp {
 
 class ClearSession {
 public:
-    using DirectCtx = ClearCtx;
+    using ctx_t = ClearCtx;
     // reveal returns std::optional<clear_t> (the session contract). ClearSession is
     // plaintext and always knows the value, so its optional is always populated —
     // for every recipient, since there is no other party to withhold it from.
@@ -49,8 +49,8 @@ public:
     int party() const { return PUBLIC; }
 
     // The direct gate context, for value construction that is not I/O — e.g. public
-    // constants UInt_T<DirectCtx,32>::constant(sess.direct_ctx(), 7) or crypto kernels.
-    DirectCtx& direct_ctx() { return ctx_; }
+    // constants UInt_T<ctx_t,32>::constant(sess.ctx(), 7) or crypto kernels.
+    ctx_t& ctx() { return ctx_; }
 
     // Feed a clear value as `owner`'s input, returning a fixed-width circuit value V
     // over this session's direct context. In the clear there are no secrets, so the
@@ -60,13 +60,13 @@ public:
     // n-party protocols as well as 2PC.
     template <WireValue V>
     V input(int owner, const typename V::clear_t& value) {
-        static_assert(std::same_as<typename V::context_type, DirectCtx>,
-            "ClearSession::input<V>: V must be a value over this session's DirectCtx");
+        static_assert(std::same_as<typename V::context_type, ctx_t>,
+            "ClearSession::input<V>: V must be a value over this session's ctx_t");
         if (owner < PUBLIC)
             error("ClearSession::input: owner must be PUBLIC or a party id >= 1");
         constexpr int n = V::width();
         const std::array<bool, (std::size_t)n> bits = V::encode(value);   // stack; width is the type
-        std::array<typename DirectCtx::Wire, (std::size_t)n> wires{};
+        std::array<typename ctx_t::Wire, (std::size_t)n> wires{};
         for (int i = 0; i < n; ++i) wires[(std::size_t)i] = ctx_.public_bit(bits[(std::size_t)i]);
         return V::from_wires(ctx_, wires.data());
     }
@@ -79,12 +79,12 @@ public:
     // reveal<T>(...) casts the clear value to T for readability.
     template <WireValue V>
     reveal_t<V> reveal(const V& value, int recipient) {
-        static_assert(std::same_as<typename V::context_type, DirectCtx>,
-            "ClearSession::reveal<V>: V must be a value over this session's DirectCtx");
+        static_assert(std::same_as<typename V::context_type, ctx_t>,
+            "ClearSession::reveal<V>: V must be a value over this session's ctx_t");
         if (recipient < PUBLIC)
             error("ClearSession::reveal: recipient must be PUBLIC or a party id >= 1 (XOR-share reveal is not a plaintext notion)");
         constexpr int n = V::width();
-        std::array<typename DirectCtx::Wire, (std::size_t)n> wires{};
+        std::array<typename ctx_t::Wire, (std::size_t)n> wires{};
         value.pack_wires(wires.data());
         std::array<bool, (std::size_t)n> buf{};
         for (int i = 0; i < n; ++i) buf[(std::size_t)i] = (wires[(std::size_t)i] & 1) != 0;
@@ -103,25 +103,25 @@ public:
     // the engine boundary never sees a uint8_t* reinterpreted as bool*.
     template <RuntimeWidthValue V>
     V input(int owner, const typename V::clear_t& value, int width) {
-        static_assert(std::same_as<typename V::context_type, DirectCtx>,
-            "ClearSession::input<V>: V must be a value over this session's DirectCtx");
+        static_assert(std::same_as<typename V::context_type, ctx_t>,
+            "ClearSession::input<V>: V must be a value over this session's ctx_t");
         if (owner < PUBLIC)
             error("ClearSession::input: owner must be PUBLIC or a party id >= 1");
         if (width < 1) error("ClearSession::input: runtime width must be >= 1");
         const std::vector<uint8_t> bits = V::encode(value, width);
-        std::vector<typename DirectCtx::Wire> wires((std::size_t)width);
+        std::vector<typename ctx_t::Wire> wires((std::size_t)width);
         for (int i = 0; i < width; ++i)
             wires[(std::size_t)i] = ctx_.public_bit(bits[(std::size_t)i] != 0);
         return V::from_wires(ctx_, wires.data(), width);
     }
     template <RuntimeWidthValue V>
     reveal_t<V> reveal(const V& value, int recipient) {
-        static_assert(std::same_as<typename V::context_type, DirectCtx>,
-            "ClearSession::reveal<V>: V must be a value over this session's DirectCtx");
+        static_assert(std::same_as<typename V::context_type, ctx_t>,
+            "ClearSession::reveal<V>: V must be a value over this session's ctx_t");
         if (recipient < PUBLIC)
             error("ClearSession::reveal: recipient must be PUBLIC or a party id >= 1 (XOR-share reveal is not a plaintext notion)");
         const int n = value.width();
-        std::vector<typename DirectCtx::Wire> wires((std::size_t)n);
+        std::vector<typename ctx_t::Wire> wires((std::size_t)n);
         value.pack_wires(wires.data());
         std::vector<uint8_t> buf((std::size_t)n);
         for (int i = 0; i < n; ++i) buf[(std::size_t)i] = (uint8_t)((wires[(std::size_t)i] & 1) != 0);
@@ -129,7 +129,7 @@ public:
     }
 
 private:
-    DirectCtx ctx_;
+    ctx_t ctx_;
 };
 
 static_assert(Session<ClearSession>);

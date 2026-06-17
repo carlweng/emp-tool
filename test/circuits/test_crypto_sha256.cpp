@@ -25,9 +25,10 @@
 using namespace emp;
 using namespace emp::circuit::crypto;
 using namespace test_crypto;
+using Ctx = ClearSession::ctx_t;
 
-using UInt32 = UInt_T<ClearCtx, 32>;
-using BV256  = BitVec_T<ClearCtx, 256>;
+using UInt32 = UInt_T<Ctx, 32>;
+using BV256  = BitVec_T<Ctx, 256>;
 
 static int g_fail = 0;
 static void check(const char* name, bool ok) {
@@ -64,16 +65,16 @@ static std::array<bool, N> message_clear(const uint8_t* bytes) {
 
 // Feed an N-bit message as a party input through the session.
 template <int N>
-static BitVec_T<ClearCtx, N> message_bits(ClearSession& sess, const uint8_t* bytes) {
-  return sess.input<BitVec_T<ClearCtx, N>>(ALICE, message_clear<N>(bytes));
+static BitVec_T<Ctx, N> message_bits(ClearSession& sess, const uint8_t* bytes) {
+  return sess.input<BitVec_T<Ctx, N>>(ALICE, message_clear<N>(bytes));
 }
 
 // In-circuit SHA-256 of a compile-time N-bit message, returned as 32 bytes.
 template <int N>
 static std::array<uint8_t, 32> circuit_sha256(const uint8_t* bytes) {
   ClearSession sess;
-  BitVec_T<ClearCtx, N> msg = message_bits<N>(sess, bytes);
-  BV256 dig = sha256(sess.direct_ctx(), msg);
+  BitVec_T<Ctx, N> msg = message_bits<N>(sess, bytes);
+  BV256 dig = sha256(sess.ctx(), msg);
   return bytes_from_digest(sess.reveal(dig, PUBLIC).value());
 }
 
@@ -91,9 +92,9 @@ static std::array<uint8_t, 32> openssl_sha256(const uint8_t* in, size_t n) {
 static void example() {
   ClearSession sess;
   const uint8_t abc[3] = {'a', 'b', 'c'};
-  auto msg = sess.input<BitVec_T<ClearCtx, 24>>(ALICE, message_clear<24>(abc));
+  auto msg = sess.input<BitVec_T<Ctx, 24>>(ALICE, message_clear<24>(abc));
 
-  BV256 digest = sha256(sess.direct_ctx(), msg);
+  BV256 digest = sha256(sess.ctx(), msg);
   std::string got = hex32(bytes_from_digest(sess.reveal(digest, PUBLIC).value()));
 
   const std::string want =
@@ -152,7 +153,7 @@ static void section_openssl_xcheck() {
 // call, and confirm the resulting state words are the SHA-256("abc") digest.
 static void section_compress() {
   ClearSession sess;
-  ClearCtx& ctx = sess.direct_ctx();   // raw ctx for public-constant word construction
+  Ctx& ctx = sess.ctx();   // raw ctx for public-constant word construction
 
   // "abc" = 0x616263; pad: append 0x80, zeros, then the 64-bit bit-length 0x18.
   const uint32_t blk[16] = {0x61626380, 0, 0, 0, 0, 0, 0, 0,

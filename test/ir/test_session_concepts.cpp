@@ -15,7 +15,7 @@ using namespace emp;
 // ---- ClearSession models the session concepts ----
 static_assert(Session<ClearSession>);
 static_assert(DirectSession<ClearSession>);
-static_assert(std::is_same_v<ClearSession::DirectCtx, ClearCtx>);
+static_assert(std::is_same_v<ClearSession::ctx_t, ClearCtx>);
 static_assert(SessionIO<ClearSession, UInt_T<ClearCtx, 32>>);
 static_assert(SessionIO<ClearSession, Int_T<ClearCtx, 32>>);
 static_assert(SessionIO<ClearSession, BitVec_T<ClearCtx, 128>>);
@@ -101,7 +101,7 @@ int main() {
     // a 5-party round-trip with reveal to party 4 works with no session edit.
     {
         using U16 = UInt_T<ClearCtx, 16>;
-        auto acc = U16::constant(sess.direct_ctx(), 0);
+        auto acc = U16::constant(sess.ctx(), 0);
         for (int party = 1; party <= 5; ++party)
             acc = acc + sess.input<U16>(party, (uint64_t)(10 * party));
         std::optional<uint64_t> rn = sess.reveal(acc, 4);

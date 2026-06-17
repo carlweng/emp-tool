@@ -4,6 +4,7 @@
 // PASS_REGULAR_EXPRESSION). C++20.
 
 #include "emp-tool/emp-tool.h"
+#include "emp-tool/ir/session/clear_session.h"
 #include "emp-tool/ir/context/context.h"
 #include "emp-tool/circuits/typed.h"
 #include "emp-tool/circuits/frontend/circuit_fn.h"
@@ -12,12 +13,13 @@
 #include <type_traits>
 
 using namespace emp;
+using Ctx = ClearSession::ctx_t;
 namespace cf = emp::frontend;
 
 int main() {
-    ClearCtx cx;
-    auto x = UInt_T<ClearCtx, 32>::constant(cx, 1);
-    auto y = UInt_T<ClearCtx, 32>::constant(cx, 2);
+    Ctx cx;
+    auto x = UInt_T<Ctx, 32>::constant(cx, 1);
+    auto y = UInt_T<Ctx, 32>::constant(cx, 2);
 
 #if !defined(NEG_CASE)
     // Positive: compile + compiled run + live run, implicit form.
@@ -58,7 +60,7 @@ int main() {
         [](auto a, auto b, auto... rest) { (void)b; (void)sizeof...(rest); return a; });
 
 #elif NEG_CASE == 9   // compile arg is a circuit value but NOT over RecordCtx
-    (void)cf::compile<UInt_T<ClearCtx, 32>>([](auto a) { return a; });
+    (void)cf::compile<UInt_T<Ctx, 32>>([](auto a) { return a; });
 #endif
     return 0;
 }

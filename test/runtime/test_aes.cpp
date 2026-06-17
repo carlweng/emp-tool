@@ -29,17 +29,13 @@ using clk = chrono::high_resolution_clock;
 
 // ---------- helpers ----------
 
+// bytes -> block: an UNALIGNED load. Kept (vs *(block*)b) because one caller
+// feeds key bytes from random_data_unaligned() — deliberately misaligned to
+// exercise the unaligned path — so the source cannot be assumed 16-aligned.
+// The reverse (block -> bytes) needs no helper: a block is 16 contiguous bytes,
+// so reinterpret_cast<const uint8_t*>(&blk) is a valid byte view.
 static block bytes_to_block(const uint8_t b[16]) {
 	return _mm_loadu_si128(reinterpret_cast<const __m128i *>(b));
-}
-static void block_to_bytes(block x, uint8_t b[16]) {
-	_mm_storeu_si128(reinterpret_cast<__m128i *>(b), x);
-}
-static string hex16(const uint8_t b[16]) {
-	ostringstream os;
-	os << hex << setfill('0');
-	for (int i = 0; i < 16; ++i) os << setw(2) << (int)b[i];
-	return os.str();
 }
 
 static void openssl_aes128_ecb(const uint8_t key[16], const uint8_t *in,
@@ -68,15 +64,15 @@ static void example() {
 	cout << "  AES_ecb_encrypt(msg)         = " << ct << "\n";
 
 	// (2) Templated tile: encrypt 4 blocks under one key with the unrolled kernel.
-	alignas(16) block tile[4] = {msg, msg, msg, msg};
+	block tile[4] = {msg, msg, msg, msg};
 	AES_ecb_encrypt_blks<4>(tile, &ek);
 	cout << "  AES_ecb_encrypt_blks<4>[0]   = " << tile[0] << "\n";
 
 	// (3) Multi-key schedule: 2 keys → 2 round-key sets, interleaved.
-	alignas(16) block user_keys[2] = {key, key ^ makeBlock(0, 1)};
-	alignas(16) AES_KEY eks[2];
+	block user_keys[2] = {key, key ^ makeBlock(0, 1)};
+	AES_KEY eks[2];
 	AES_opt_key_schedule<2>(user_keys, eks);
-	alignas(16) block buf[2] = {msg, msg};
+	block buf[2] = {msg, msg};
 	ParaEnc<2, 1>(buf, eks);
 	cout << "  ParaEnc<2,1> (buf[0])        = " << buf[0] << "\n";
 	cout << "  ParaEnc<2,1> (buf[1])        = " << buf[1] << "\n";
@@ -93,17 +89,16 @@ static bool check_nist_vector() {
 	uint8_t ct_ref[16] = {0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30,
 	                      0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5, 0x5a};
 
-	alignas(16) AES_KEY ek;
+	AES_KEY ek;
 	block kb = bytes_to_block(key_bytes);
 	AES_set_encrypt_key(kb, &ek);
 	block blk = bytes_to_block(pt_bytes);
 	AES_ecb_encrypt_blks(&blk, 1, &ek);
-	uint8_t got[16];
-	block_to_bytes(blk, got);
+	const uint8_t *got = reinterpret_cast<const uint8_t *>(&blk);  // block is 16 contiguous bytes
 
 	bool ok = memcmp(got, ct_ref, 16) == 0;
 	cout << "  [NIST FIPS-197 C.1 vector]              " << (ok ? "OK" : "FAIL")
-	     << "  got=" << hex16(got) << "\n";
+	     << "  got=" << to_hex(got, 16) << "\n";
 	return ok;
 }
 
@@ -117,7 +112,7 @@ static bool check_against_openssl(int trials = 64, int blks_per = 33) {
 		prg.random_block(in.data(), blks_per);
 		vector<block> emp_out = in;
 
-		alignas(16) AES_KEY ek;
+		AES_KEY ek;
 		block kblk = bytes_to_block(kb);
 		AES_set_encrypt_key(kblk, &ek);
 		AES_ecb_encrypt_blks(emp_out.data(), blks_per, &ek);
@@ -139,15 +134,15 @@ static bool check_against_openssl(int trials = 64, int blks_per = 33) {
 template <int K, int N>
 static bool check_paraenc_template() {
 	PRG prg;
-	alignas(16) block keys[K];
-	alignas(16) block in[K * N];
+	block keys[K];
+	block in[K * N];
 	prg.random_block(keys, K);
 	prg.random_block(in, K * N);
 
-	alignas(16) block emp_out[K * N];
+	block emp_out[K * N];
 	memcpy(emp_out, in, sizeof(in));
 
-	alignas(16) AES_KEY skeys[K];
+	AES_KEY skeys[K];
 	AES_opt_key_schedule<K>(keys, skeys);
 	ParaEnc<K, N>(emp_out, skeys);
 
@@ -155,9 +150,8 @@ static bool check_paraenc_template() {
 	// and ParaEnc together against an external implementation.
 	vector<uint8_t> ref_bytes(16 * K * N);
 	for (int k = 0; k < K; ++k) {
-		uint8_t kb[16];
-		block_to_bytes(keys[k], kb);
-		openssl_aes128_ecb(kb, reinterpret_cast<const uint8_t *>(in + k * N),
+		openssl_aes128_ecb(reinterpret_cast<const uint8_t *>(&keys[k]),
+		                   reinterpret_cast<const uint8_t *>(in + k * N),
 		                   ref_bytes.data() + 16 * k * N, N);
 	}
 
@@ -174,22 +168,22 @@ static bool check_paraenc_template() {
 template <int K, int N>
 static bool check_paraenc_template_out_of_place() {
 	PRG prg;
-	alignas(16) block keys[K];
-	alignas(16) block in[K * N];
+	block keys[K];
+	block in[K * N];
 	prg.random_block(keys, K);
 	prg.random_block(in, K * N);
 
-	alignas(16) AES_KEY skeys[K];
+	AES_KEY skeys[K];
 	AES_opt_key_schedule<K>(keys, skeys);
 
-	alignas(16) block ref[K * N];
+	block ref[K * N];
 	memcpy(ref, in, sizeof(in));
 	ParaEnc<K, N>(ref, skeys);                // existing one-pointer baseline
 
-	alignas(16) block oop[K * N];
+	block oop[K * N];
 	ParaEnc<K, N>(oop, in, skeys);            // new two-pointer overload
 
-	bool ok = memcmp(ref, oop, sizeof(ref)) == 0;
+	bool ok = cmpBlock(ref, oop, K * N);
 	ostringstream os;
 	os << "  [ParaEnc<" << K << "," << N << ">(dst,src) vs in-place]";
 	cout << left << setw(42) << os.str() << (ok ? "OK" : "FAIL") << "\n";
@@ -214,7 +208,7 @@ static bool check_paraenc_runtime_out_of_place(int K, int N, int trials = 4) {
 		vector<block> oop(K * N);
 		ParaEnc(oop.data(), in.data(), skeys.data(), K, N);
 
-		if (memcmp(ref.data(), oop.data(), 16 * K * N) != 0) {
+		if (!cmpBlock(ref.data(), oop.data(), K * N)) {
 			cout << "  [ParaEnc(K=" << K << ",N=" << N << ")(dst,src) vs in-place]  FAIL  t=" << t << "\n";
 			return false;
 		}
@@ -241,9 +235,8 @@ static bool check_paraenc_runtime(int K, int N, int trials = 4) {
 
 		vector<uint8_t> ref_bytes(16 * K * N);
 		for (int k = 0; k < K; ++k) {
-			uint8_t kb[16];
-			block_to_bytes(keys[k], kb);
-			openssl_aes128_ecb(kb, reinterpret_cast<const uint8_t *>(&in[k * N]),
+			openssl_aes128_ecb(reinterpret_cast<const uint8_t *>(&keys[k]),
+			                   reinterpret_cast<const uint8_t *>(&in[k * N]),
 			                   ref_bytes.data() + 16 * k * N, N);
 		}
 		if (memcmp(emp_out.data(), ref_bytes.data(), ref_bytes.size()) != 0) {

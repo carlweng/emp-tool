@@ -23,7 +23,6 @@
 
 using namespace emp;
 using namespace std;
-using clk = chrono::high_resolution_clock;
 
 // ---------- example: typical usage ----------
 

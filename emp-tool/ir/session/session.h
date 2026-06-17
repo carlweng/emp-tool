@@ -8,9 +8,9 @@
 //
 //   * Session         — the minimal protocol object: it reports a party().
 //   * DirectSession   — a Session that exposes a direct / user gate context
-//                       (DirectCtx, a BooleanContext) for operator-mode circuits;
-//                       direct_ctx() returns it. A multipass protocol may own many
-//                       internal pass contexts — DirectCtx is only the direct one.
+//                       (ctx_t, a BooleanContext) for operator-mode circuits;
+//                       ctx() returns it. A multipass protocol may own many
+//                       internal pass contexts — ctx_t is only the direct one.
 //   * CheckpointingSession — a Session that supports a checkpoint() barrier.
 //
 // Feeding / opening a value (input / reveal) is SessionIO<S,V>
@@ -41,9 +41,9 @@ template <class S>
 concept DirectSession =
     Session<S> &&
     requires(S& s) {
-        typename S::DirectCtx;
-        requires BooleanContext<typename S::DirectCtx>;
-        { s.direct_ctx() } -> std::same_as<typename S::DirectCtx&>;
+        typename S::ctx_t;
+        requires BooleanContext<typename S::ctx_t>;
+        { s.ctx() } -> std::same_as<typename S::ctx_t&>;
     };
 
 template <class S>
@@ -52,10 +52,10 @@ concept CheckpointingSession =
     requires(S& s) { s.checkpoint(); };
 
 // Spelling helper so tests/docs can name a session's direct context without a
-// session value alias: UInt_T<direct_ctx_t<SH2PCSession>, 32>. In code that teaches
-// the model, prefer the explicit `using Ctx = SH2PCSession::DirectCtx;` form.
+// session value alias: UInt_T<ctx_t<SH2PCSession>, 32>. In code that teaches
+// the model, prefer the explicit `using Ctx = SH2PCSession::ctx_t;` form.
 template <class S>
-using direct_ctx_t = typename std::remove_cvref_t<S>::DirectCtx;
+using ctx_t = typename std::remove_cvref_t<S>::ctx_t;
 
 }  // namespace emp
 #endif  // EMP_IR_SESSION_SESSION_H__

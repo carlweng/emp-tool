@@ -28,8 +28,6 @@ static void mframe(vector<unsigned char>& m, uint32_t type,
 }
 enum { T_STR = 1, T_BYTES = 2, T_BLOCK = 3, T_U64 = 4, T_POINT = 5 };
 
-static bool eq(block a, block b) { return memcmp(&a, &b, sizeof(block)) == 0; }
-
 int main() {
 	ECGroup G;
 	const char* dom = "emp-tool:test:ro";
@@ -54,7 +52,8 @@ int main() {
 
 		block got = RO(dom, sid).absorb(id).absorb(x).absorb(P)
 		                .absorb(raw, strlen(raw)).squeeze_block();
-		assert(eq(got, Hash::hash_for_block(m.data(), (int64_t)m.size())));
+		block exp = Hash::hash_for_block(m.data(), (int64_t)m.size());
+		assert(cmpBlock(&got, &exp, 1));
 	}
 
 	// 2. squeeze_digest equals hash_once over the same M.
@@ -89,7 +88,8 @@ int main() {
 		mframe(m, T_BLOCK, &sid, sizeof(block));
 		mframe(m, T_STR,   label, strlen(label));
 		block got = RO(dom, sid).absorb(string_view(label)).squeeze_block();
-		assert(eq(got, Hash::hash_for_block(m.data(), (int64_t)m.size())));
+		block exp = Hash::hash_for_block(m.data(), (int64_t)m.size());
+		assert(cmpBlock(&got, &exp, 1));
 	}
 
 	// 5. Injective in the call sequence: absorb(block) (type 3) differs from
@@ -97,17 +97,18 @@ int main() {
 	{
 		block a = RO(dom, sid).absorb(x).squeeze_block();
 		block b = RO(dom, sid).absorb(&x, sizeof(block)).squeeze_block();
-		assert(!eq(a, b));
+		assert(!cmpBlock(&a, &b, 1));
 	}
 
 	// 6. Different sid → different output; length framing can't be forged.
 	{
 		block sid2 = makeBlock(0, 1);
-		assert(!eq(RO(dom, sid).squeeze_block(), RO(dom, sid2).squeeze_block()));
+		block r1 = RO(dom, sid).squeeze_block(), r2 = RO(dom, sid2).squeeze_block();
+		assert(!cmpBlock(&r1, &r2, 1));
 		// "ab"+"c" vs "a"+"bc": length framing keeps them distinct.
 		block s1 = RO(dom, sid).absorb(string_view("ab")).absorb(string_view("c")).squeeze_block();
 		block s2 = RO(dom, sid).absorb(string_view("a")).absorb(string_view("bc")).squeeze_block();
-		assert(!eq(s1, s2));
+		assert(!cmpBlock(&s1, &s2, 1));
 	}
 
 	cout << "All RO tests passed." << endl;

@@ -27,15 +27,6 @@ using namespace emp;
 using namespace std;
 using clk = chrono::high_resolution_clock;
 
-// ---------- helpers ----------
-
-static string hex_n(const void *p, int n) {
-	const uint8_t *b = (const uint8_t *)p;
-	ostringstream os;
-	os << hex << setfill('0');
-	for (int i = 0; i < n; ++i) os << setw(2) << (int)b[i];
-	return os.str();
-}
 
 // ---------- example ----------
 
@@ -47,13 +38,13 @@ static void example() {
 	h.put("abc", 3);
 	uint8_t out[Hash::DIGEST_SIZE];
 	h.digest(out);
-	cout << "  SHA-256(\"abc\") =\n    " << hex_n(out, Hash::DIGEST_SIZE) << "\n";
+	cout << "  SHA-256(\"abc\") =\n    " << to_hex(out, Hash::DIGEST_SIZE) << "\n";
 
 	// (2) put_block: feed a block-typed buffer.
 	block b = makeBlock(0xDEADBEEFULL, 0xCAFEBABEULL);
 	h.put_block(&b);
 	h.digest(out);
-	cout << "  SHA-256(b)     =\n    " << hex_n(out, Hash::DIGEST_SIZE) << "\n";
+	cout << "  SHA-256(b)     =\n    " << to_hex(out, Hash::DIGEST_SIZE) << "\n";
 
 	// (3) Snapshot mode (reset_after = false): finalize a copy without
 	// disturbing the running transcript. Used for streaming Fiat-Shamir.
@@ -62,13 +53,13 @@ static void example() {
 	h.digest(snap1, /*reset_after=*/false);
 	h.put(" world", 6);
 	h.digest(snap2);  // resets
-	cout << "  snap1=" << hex_n(snap1, 8) << "...  snap2=" << hex_n(snap2, 8) << "...\n";
+	cout << "  snap1=" << to_hex(snap1, 8) << "...  snap2=" << to_hex(snap2, 8) << "...\n";
 
 	// (4) One-shot helpers.
 	uint8_t one[Hash::DIGEST_SIZE];
 	Hash::hash_once(one, "abc", 3);
 	block hb = Hash::hash_for_block("abc", 3);
-	cout << "  hash_once(\"abc\")[0..8]   = " << hex_n(one, 8) << "\n";
+	cout << "  hash_once(\"abc\")[0..8]   = " << to_hex(one, 8) << "\n";
 	cout << "  hash_for_block(\"abc\")    = " << hb << "\n";
 }
 
@@ -89,7 +80,7 @@ static bool check_known_vectors() {
 	for (auto &v : vs) {
 		uint8_t out[Hash::DIGEST_SIZE];
 		Hash::hash_once(out, v.msg, (int)v.n);
-		bool ok = hex_n(out, Hash::DIGEST_SIZE) == v.hex;
+		bool ok = to_hex(out, Hash::DIGEST_SIZE) == v.hex;
 		all_ok &= ok;
 	}
 	cout << "  [FIPS 180-4 known answers]            " << (all_ok ? "OK" : "FAIL") << "\n";

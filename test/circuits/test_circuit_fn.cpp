@@ -1,10 +1,11 @@
 // Cross-context portability of the BooleanContext circuit frontend: compile a
 // circuit ONCE (through a RecordCtx) into a context-free Circuit, then run
-// the SAME Circuit on ClearCtx. Exercises both body forms, a nullary
+// the SAME Circuit on Ctx. Exercises both body forms, a nullary
 // circuit, the .constant() sugar, and an fp32 IR-replay body. The 32-bit adder
 // is the size-optimal 31-AND kernel; recording is deterministic. C++20.
 
 #include "emp-tool/emp-tool.h"
+#include "emp-tool/ir/session/clear_session.h"
 #include "emp-tool/ir/context/context.h"
 #include "emp-tool/circuits/typed.h"
 #include "emp-tool/circuits/frontend/circuit_fn.h"
@@ -15,12 +16,13 @@
 #include <type_traits>
 
 using namespace emp;
+using Ctx = ClearSession::ctx_t;
 namespace cf = emp::frontend;
 
 static int bad = 0;
 static void chk(const char* what, bool ok) { if (!ok) { printf("  [FAIL] %s\n", what); ++bad; } }
 
-// Decode a value evaluated on ClearCtx (Wire == uint8_t, 0/1) via its codec.
+// Decode a value evaluated on Ctx (Wire == uint8_t, 0/1) via its codec.
 template <class V> static auto clear_of(const V& v) {
     constexpr int W = V::width();
     typename V::Wire wires[W]; v.pack_wires(wires);
@@ -33,7 +35,7 @@ static uint64_t count_and(const circuit::BooleanProgram& p) {
 }
 
 int main() {
-    ClearCtx cx;
+    Ctx cx;
 
     // 1) compile once: 32-bit add (implicit-context form).
     auto add = [](auto a, auto b) { return a + b; };
@@ -41,10 +43,10 @@ int main() {
     chk("add: dims", c.program().num_inputs == 64 && c.program().outputs.size() == 32);
     chk("add: AND == 31 (size-optimal adder)", count_and(c.program()) == 31);
 
-    // run the SAME compiled circuit on ClearCtx, two input sets.
+    // run the SAME compiled circuit on Ctx, two input sets.
     auto run_add = [&](uint32_t A, uint32_t B) {
-        auto x = UInt_T<ClearCtx, 32>::constant(cx, A);
-        auto y = UInt_T<ClearCtx, 32>::constant(cx, B);
+        auto x = UInt_T<Ctx, 32>::constant(cx, A);
+        auto y = UInt_T<Ctx, 32>::constant(cx, B);
         return (uint32_t)clear_of(cf::run(cx, c, x, y));
     };
     chk("add run 1", run_add(12345678u, 87654321u) == (uint32_t)(12345678u + 87654321u));
@@ -62,8 +64,8 @@ int main() {
     auto cmp = cf::compile<rec::UInt<32>, rec::UInt<32>>(mul_plus1);
     {
         uint32_t A = 123456u, B = 789u;
-        auto x = UInt_T<ClearCtx, 32>::constant(cx, A);
-        auto y = UInt_T<ClearCtx, 32>::constant(cx, B);
+        auto x = UInt_T<Ctx, 32>::constant(cx, A);
+        auto y = UInt_T<Ctx, 32>::constant(cx, B);
         chk("explicit-ctx a*b+1", (uint32_t)clear_of(cf::run(cx, cmp, x, y)) == (uint32_t)(A * B + 1));
     }
 
@@ -79,32 +81,32 @@ int main() {
     auto ck = cf::compile<rec::UInt<32>>(add7);
     {
         uint32_t A = 1000u;
-        auto x = UInt_T<ClearCtx, 32>::constant(cx, A);
+        auto x = UInt_T<Ctx, 32>::constant(cx, A);
         chk("implicit .constant", (uint32_t)clear_of(cf::run(cx, ck, x)) == A + 7u);
     }
 
-    // 5) fp32 IR-replay body — compile once, run on ClearCtx (clear outputs).
+    // 5) fp32 IR-replay body — compile once, run on Ctx (clear outputs).
     auto fadd = [](auto a, auto b) { return a + b; };
     auto cfp = cf::compile<rec::Float<32>, rec::Float<32>>(fadd);
     {
-        auto x = Float_T<ClearCtx, 32>::constant(cx, 1.5f);
-        auto y = Float_T<ClearCtx, 32>::constant(cx, 2.25f);
+        auto x = Float_T<Ctx, 32>::constant(cx, 1.5f);
+        auto y = Float_T<Ctx, 32>::constant(cx, 2.25f);
         chk("fp32 add (compiled replay)", clear_of(cf::run(cx, cfp, x, y)) == 3.75f);
     }
 
     // 6) live run (implicit form) agrees with compiled run.
     {
-        auto x = UInt_T<ClearCtx, 32>::constant(cx, 5u);
-        auto y = UInt_T<ClearCtx, 32>::constant(cx, 9u);
+        auto x = UInt_T<Ctx, 32>::constant(cx, 5u);
+        auto y = UInt_T<Ctx, 32>::constant(cx, 9u);
         chk("live run", (uint32_t)clear_of(cf::run(add, x, y)) == 14u);
     }
 
-    // 7) BitVec_T circuit (bit-vector value): nibble swap, compiled once, run on ClearCtx.
+    // 7) BitVec_T circuit (bit-vector value): nibble swap, compiled once, run on Ctx.
     {
         auto swap = [](auto b) { return b.template slice<4, 8>().concat(b.template slice<0, 4>()); };
         auto cbits = cf::compile<rec::BitVec<8>>(swap);
         std::array<bool, 8> v{}; for (int i = 0; i < 8; ++i) v[i] = (0xB5u >> i) & 1;
-        auto out = cf::run(cx, cbits, BitVec_T<ClearCtx, 8>::constant(cx, v));
+        auto out = cf::run(cx, cbits, BitVec_T<Ctx, 8>::constant(cx, v));
         uint32_t got = 0; for (int i = 0; i < 8; ++i) if (out.w[i] & 1) got |= (1u << i);
         chk("BitVec_T nibble-swap circuit", got == 0x5Bu);   // 0xB5 -> 0x5B
     }
@@ -114,17 +116,17 @@ int main() {
     // bundle. Compile a 128-bit add and check the wire-level result against a
     // limb-wise model (no decode at this width; that's the point).
     {
-        static_assert(emp::WireBundle<UInt_T<ClearCtx, 128>> && !emp::WireValue<UInt_T<ClearCtx, 128>>);
+        static_assert(emp::WireBundle<UInt_T<Ctx, 128>> && !emp::WireValue<UInt_T<Ctx, 128>>);
         auto wadd = cf::compile<rec::UInt<128>, rec::UInt<128>>([](auto a, auto b) { return a + b; });
         auto mk = [&](uint64_t lo, uint64_t hi) {
-            ClearCtx::Wire w[128];
-            for (int i = 0; i < 64; ++i)  w[i]      = (ClearCtx::Wire)((lo >> i) & 1);
-            for (int i = 0; i < 64; ++i)  w[64 + i] = (ClearCtx::Wire)((hi >> i) & 1);
-            return UInt_T<ClearCtx, 128>::from_wires(cx, w);
+            Ctx::Wire w[128];
+            for (int i = 0; i < 64; ++i)  w[i]      = (Ctx::Wire)((lo >> i) & 1);
+            for (int i = 0; i < 64; ++i)  w[64 + i] = (Ctx::Wire)((hi >> i) & 1);
+            return UInt_T<Ctx, 128>::from_wires(cx, w);
         };
         // Carry must propagate across the limb boundary.
         auto r = cf::run(cx, wadd, mk(~0ull, 1ull), mk(1ull, 2ull));   // (2^64-1 + 2^65) + (1 + 2^65)
-        ClearCtx::Wire ow[128]; r.pack_wires(ow);
+        Ctx::Wire ow[128]; r.pack_wires(ow);
         uint64_t lo = 0, hi = 0;
         for (int i = 0; i < 64; ++i) { lo |= (uint64_t)(ow[i] & 1) << i; hi |= (uint64_t)(ow[64 + i] & 1) << i; }
         chk("128-bit add: low limb", lo == 0ull);          // (2^64-1) + 1 = 2^64 -> carry out

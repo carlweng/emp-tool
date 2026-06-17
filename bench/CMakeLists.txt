@@ -11,6 +11,7 @@ endfunction()
 
 add_bench(bench_aes)
 add_bench(bench_block)
+add_bench(bench_halfgate)
 add_bench(bench_ccrh)
 add_bench(bench_f2k)
 add_bench(bench_hash)

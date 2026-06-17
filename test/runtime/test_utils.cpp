@@ -74,7 +74,7 @@ static bool check_bool_to_int_known() {
 static bool check_bool_to_block_random(int trials) {
 	PRG prg;
 	for (int t = 0; t < trials; ++t) {
-		alignas(16) block want;
+		block want;
 		prg.random_block(&want, 1);
 		bool bits[128];
 		uint8_t bytes[16];

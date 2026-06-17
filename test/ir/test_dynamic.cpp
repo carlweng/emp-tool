@@ -24,7 +24,7 @@ static int64_t twos(int64_t v, int w) {
 }
 
 int main() {
-    using Ctx = ClearSession::DirectCtx;
+    using Ctx = ClearSession::ctx_t;
     using RU  = UInt_T<Ctx, runtime_width>;   // runtime-width unsigned
     using RI  = Int_T<Ctx, runtime_width>;    // runtime-width signed
 

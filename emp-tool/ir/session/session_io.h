@@ -28,7 +28,7 @@ template <class S, class V>
 concept SessionIO =
     DirectSession<S> &&
     WireValue<V> &&
-    std::same_as<typename V::context_type, typename S::DirectCtx> &&
+    std::same_as<typename V::context_type, typename S::ctx_t> &&
     requires(S& s, typename V::clear_t x, const V& v, int party) {
         typename S::template reveal_t<V>;
         requires std::same_as<typename S::template reveal_t<V>,
@@ -47,7 +47,7 @@ template <class S, class V>
 concept RuntimeSessionIO =
     DirectSession<S> &&
     RuntimeWidthValue<V> &&
-    std::same_as<typename V::context_type, typename S::DirectCtx> &&
+    std::same_as<typename V::context_type, typename S::ctx_t> &&
     requires(S& s, typename V::clear_t x, const V& v, int party, int width) {
         typename S::template reveal_t<V>;
         requires std::same_as<typename S::template reveal_t<V>,

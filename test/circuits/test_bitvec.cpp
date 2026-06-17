@@ -1,4 +1,4 @@
-// BitVec_T<ClearCtx,N>: the idiomatic fixed-width bit-block (the value crypto
+// BitVec_T<Ctx,N>: the idiomatic fixed-width bit-block (the value crypto
 // blocks like AES/SHA take and return). Read example() first; it shows how a
 // user feeds a clear value as an owner's input, computes with bitwise/shift/
 // slice/concat ops, and reveals. The rest sweeps each operation against the
@@ -18,9 +18,10 @@
 #include <cstdio>
 #include <random>
 using namespace emp;
+using Ctx = ClearSession::ctx_t;
 
-template <int N> using BV  = BitVec_T<ClearCtx, N>;
-using BV128 = BitVec_T<ClearCtx, 128>;
+template <int N> using BV  = BitVec_T<Ctx, N>;
+using BV128 = BitVec_T<Ctx, 128>;
 
 static int g_fail = 0;
 static void check(const char* name, bool ok) {
@@ -51,8 +52,8 @@ template <int N> static uint64_t from_bits(const std::array<bool, N>& b) {
 // party, combine with operators, read windows out, and reveal.
 static void example() {
   ClearSession sess;
-  using Byte = BitVec_T<ClearCtx, 8>;
-  using Word = BitVec_T<ClearCtx, 32>;
+  using Byte = BitVec_T<Ctx, 8>;
+  using Word = BitVec_T<Ctx, 32>;
 
   // Feed two 32-bit values as ALICE's and BOB's inputs (public wires here).
   auto a = sess.input<Word>(ALICE, to_bits<32>(0xCAFEBABE));
@@ -76,7 +77,7 @@ static void example() {
 // ---- bitwise: & | ^ ~ ----------------------------------------------------
 template <int N> static void sweep_bitwise(std::mt19937_64& rng, const char* tag) {
   ClearSession sess;
-  using V = BitVec_T<ClearCtx, N>;
+  using V = BitVec_T<Ctx, N>;
   const uint64_t mask = (N >= 64) ? ~0ull : ((1ull << N) - 1);
   for (int it = 0; it < 1000; ++it) {
     uint64_t ia = rng() & mask, ib = rng() & mask;
@@ -92,7 +93,7 @@ template <int N> static void sweep_bitwise(std::mt19937_64& rng, const char* tag
 // ---- equality: == / != ---------------------------------------------------
 template <int N> static void sweep_equality(std::mt19937_64& rng) {
   ClearSession sess;
-  using V = BitVec_T<ClearCtx, N>;
+  using V = BitVec_T<Ctx, N>;
   const uint64_t mask = (N >= 64) ? ~0ull : ((1ull << N) - 1);
   for (int it = 0; it < 500; ++it) {
     uint64_t v = rng() & mask;
@@ -109,9 +110,9 @@ template <int N> static void sweep_equality(std::mt19937_64& rng) {
 // ---- select (oblivious bitwise mux) --------------------------------------
 template <int N> static void sweep_select(std::mt19937_64& rng) {
   ClearSession sess;
-  ClearCtx& ctx = sess.direct_ctx();
-  using V = BitVec_T<ClearCtx, N>;
-  using B = Bit_T<ClearCtx>;
+  Ctx& ctx = sess.ctx();
+  using V = BitVec_T<Ctx, N>;
+  using B = Bit_T<Ctx>;
   const uint64_t mask = (N >= 64) ? ~0ull : ((1ull << N) - 1);
   for (int it = 0; it < 500; ++it) {
     uint64_t va = rng() & mask, vb = rng() & mask;
@@ -126,7 +127,7 @@ template <int N> static void sweep_select(std::mt19937_64& rng) {
 // ---- public-amount shifts, including >= width ----------------------------
 static void sweep_shifts() {
   ClearSession sess;
-  using V = BitVec_T<ClearCtx, 32>;
+  using V = BitVec_T<Ctx, 32>;
   const uint32_t vs[] = {0u, 1u, 0xFFFFFFFFu, 0x80000000u, 0xCAFEBABEu, 0x00000001u};
   for (uint32_t v : vs)
     for (int s = 0; s <= 33; ++s) {   // 32 and 33 exercise shift >= width
@@ -141,14 +142,14 @@ static void sweep_shifts() {
 // ---- slice / concat ------------------------------------------------------
 static void sweep_slice_concat(std::mt19937_64& rng) {
   ClearSession sess;
-  using V32 = BitVec_T<ClearCtx, 32>;
+  using V32 = BitVec_T<Ctx, 32>;
   for (int it = 0; it < 200; ++it) {
     uint32_t lo = (uint32_t)rng(), hi = (uint32_t)rng();
     auto L = sess.input<V32>(ALICE, to_bits<32>(lo));
     auto H = sess.input<V32>(BOB, to_bits<32>(hi));
 
     // concat: receiver is the low half, argument goes above it.
-    BitVec_T<ClearCtx, 64> c = L.concat(H);
+    BitVec_T<Ctx, 64> c = L.concat(H);
     check("concat width", c.width() == 64);
     uint64_t want = (uint64_t)lo | ((uint64_t)hi << 32);
     check_eq("concat value", from_bits<64>(sess.reveal(c, PUBLIC).value()), want);
@@ -164,27 +165,27 @@ static void sweep_slice_concat(std::mt19937_64& rng) {
 // ---- as_uint round-trip with UInt_T (same wires, zero gates) -------------
 static void sweep_as_uint(std::mt19937_64& rng) {
   ClearSession sess;
-  ClearCtx& ctx = sess.direct_ctx();
-  using V = BitVec_T<ClearCtx, 32>;
+  Ctx& ctx = sess.ctx();
+  using V = BitVec_T<Ctx, 32>;
   for (int it = 0; it < 500; ++it) {
     uint32_t v = (uint32_t)rng();
     auto a = sess.input<V>(ALICE, to_bits<32>(v));
     // BitVec -> UInt keeps the value and lets it enter arithmetic.
-    UInt_T<ClearCtx, 32> u = a.as_uint();
+    UInt_T<Ctx, 32> u = a.as_uint();
     check_eq("as_uint value", sess.reveal<uint32_t>(u, PUBLIC).value(), v);
-    check_eq("as_uint +1", sess.reveal<uint32_t>(u + UInt_T<ClearCtx, 32>::constant(ctx, 1), PUBLIC).value(), v + 1u);
+    check_eq("as_uint +1", sess.reveal<uint32_t>(u + UInt_T<Ctx, 32>::constant(ctx, 1), PUBLIC).value(), v + 1u);
   }
 }
 
 // ---- operator[] yields a Bit_T at each position --------------------------
 static void sweep_index(std::mt19937_64& rng) {
   ClearSession sess;
-  using V = BitVec_T<ClearCtx, 32>;
+  using V = BitVec_T<Ctx, 32>;
   for (int it = 0; it < 200; ++it) {
     uint32_t v = (uint32_t)rng();
     auto a = sess.input<V>(ALICE, to_bits<32>(v));
     for (int i = 0; i < 32; ++i) {
-      Bit_T<ClearCtx> bit = a[i];   // a Bit_T reference to position i
+      Bit_T<Ctx> bit = a[i];   // a Bit_T reference to position i
       check("index bit", sess.reveal(bit, PUBLIC).value() == (bool)((v >> i) & 1));
     }
   }
@@ -194,7 +195,7 @@ static void sweep_index(std::mt19937_64& rng) {
 // The codec is a pure static value-level transform (no I/O boundary): it maps
 // clear_t <-> wire bits, so it is exercised directly, not through the session.
 static void sweep_codec() {
-  using V = BitVec_T<ClearCtx, 8>;
+  using V = BitVec_T<Ctx, 8>;
   for (int v = 0; v < 256; ++v) {
     auto clear = to_bits<8>((uint64_t)v);
     auto enc = V::encode(clear);

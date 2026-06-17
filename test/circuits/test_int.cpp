@@ -1,4 +1,4 @@
-// Int_T<ClearCtx,N> — a two's-complement signed integer. Read example() first;
+// Int_T<Ctx,N> — a two's-complement signed integer. Read example() first;
 // the rest verifies each operator against host int32_t / int64_t (i.e. the real
 // two's-complement hardware behavior). All arithmetic wraps mod 2^N, right shift
 // is ARITHMETIC (sign-filling), and division/remainder truncate toward zero with
@@ -12,10 +12,11 @@
 #include <cstdio>
 #include <random>
 using namespace emp;
+using Ctx = ClearSession::ctx_t;
 
-using Int32   = Int_T<ClearCtx, 32>;
-using UInt32  = UInt_T<ClearCtx, 32>;
-using IntDyn  = Int_T<ClearCtx, 0>;   // runtime-width form (in-circuit only)
+using Int32   = Int_T<Ctx, 32>;
+using UInt32  = UInt_T<Ctx, 32>;
+using IntDyn  = Int_T<Ctx, 0>;   // runtime-width form (in-circuit only)
 
 // ---- local check helpers (no global backend, no raw .w in the examples) ----
 
@@ -187,7 +188,7 @@ static void width_changes() {
   }
 }
 
-// ---- runtime-width Int_T<ClearCtx,0> ---------------------------------------
+// ---- runtime-width Int_T<Ctx,0> ---------------------------------------
 // Runtime-width values are for in-circuit computation, not the session I/O
 // boundary: they are made with ::constant(ctx, width, value) and read with the
 // low-level rd_dyn() peek (which sign-extends the top bit). width ctor,
@@ -195,7 +196,7 @@ static void width_changes() {
 
 static void runtime_width_section() {
   ClearSession sess;
-  ClearCtx& ctx = sess.direct_ctx();
+  Ctx& ctx = sess.ctx();
   const int W = 24;
 
   // ::constant feeds a value sign-extended into a runtime-width wire vector.

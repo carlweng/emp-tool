@@ -24,7 +24,6 @@
 
 using namespace emp;
 using namespace std;
-using clk = chrono::high_resolution_clock;
 
 // ---------- example ----------
 
@@ -122,17 +121,17 @@ static bool check_bucket_sequence() {
 
 	bool ok = true;
 	for (int call = 0; call < 8; ++call) {     // keys for gids 2*call, 2*call+1
-		alignas(16) block in[4];
+		block in[4];
 		PRG().random_block(in, 4);
 		block out[4];
 		mit.hash<2, 2>(out, in);
 		for (int k = 0; k < 2; ++k) {
 			uint64_t g = (uint64_t)(2 * call + k);
-			alignas(16) block key = S ^ makeBlock(g >> 3, 0);
+			block key = S ^ makeBlock(g >> 3, 0);
 			AES_KEY ak;
 			AES_set_encrypt_key(key, &ak);
 			for (int j = 0; j < 2; ++j) {
-				alignas(16) block ref = in[k * 2 + j];
+				block ref = in[k * 2 + j];
 				AES_ecb_encrypt_blks<1>(&ref, &ak);
 				ref = ref ^ in[k * 2 + j];
 				ok &= memcmp(&ref, &out[k * 2 + j], sizeof(block)) == 0;

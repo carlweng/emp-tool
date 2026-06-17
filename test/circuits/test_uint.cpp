@@ -1,4 +1,4 @@
-// UInt_T<ClearCtx,N>: a worked example first, then deterministic correctness
+// UInt_T<Ctx,N>: a worked example first, then deterministic correctness
 // sweeps cross-checked against host uint32_t (matching the kernels' wrap/trunc
 // semantics). Inputs are fed and results revealed through a ClearSession — the
 // I/O boundary; the values themselves are pure context-bound circuit values.
@@ -13,9 +13,10 @@
 #include <random>
 
 using namespace emp;
+using Ctx = ClearSession::ctx_t;
 
-using UInt32  = UInt_T<ClearCtx, 32>;
-using DynUInt = UInt_T<ClearCtx, 0>;   // runtime-width form (in-circuit only)
+using UInt32  = UInt_T<Ctx, 32>;
+using DynUInt = UInt_T<Ctx, 0>;   // runtime-width form (in-circuit only)
 
 // ---- check helpers -------------------------------------------------------
 
@@ -200,8 +201,8 @@ static void sweep_views() {
     check_u("extract<4,12>", sess.reveal(a.extract<4, 12>(), PUBLIC).value(), (v >> 4) & 0xfffu);
 
     // concat: lo bits are *this, hi bits are the argument (low-at-index-0).
-    UInt_T<ClearCtx, 16> lo = a.trunc<16>();
-    auto hi = sess.input<UInt_T<ClearCtx, 16>>(BOB, (uint16_t)(v >> 16));
+    UInt_T<Ctx, 16> lo = a.trunc<16>();
+    auto hi = sess.input<UInt_T<Ctx, 16>>(BOB, (uint16_t)(v >> 16));
     check_u("concat", sess.reveal(lo.concat(hi), PUBLIC).value(), (uint64_t)v);
   }
 }
@@ -223,14 +224,14 @@ static void sweep_bitcount_signed() {
   }
 }
 
-// ---- runtime-width form UInt_T<ClearCtx,0> -------------------------------
+// ---- runtime-width form UInt_T<Ctx,0> -------------------------------
 // Runtime-width values are for in-circuit computation, not the session I/O
 // boundary: they are made with ::constant(ctx, width, value) and read with the
 // low-level rd_dyn() peek (or converted to a fixed width and revealed).
 
 static void sweep_dynamic() {
   ClearSession sess;
-  ClearCtx& ctx = sess.direct_ctx();
+  Ctx& ctx = sess.ctx();
 
   // Construct at a chosen runtime width, read back.
   {
@@ -252,7 +253,7 @@ static void sweep_dynamic() {
   // to_fixed<M> reaches the session I/O boundary; to_dynamic goes back.
   {
     DynUInt a = DynUInt::constant(ctx, 32, 0x12345678u);
-    UInt_T<ClearCtx, 32> fixed = a.to_fixed<32>();
+    UInt_T<Ctx, 32> fixed = a.to_fixed<32>();
     check_u("dyn->fixed", sess.reveal(fixed, PUBLIC).value(), 0x12345678u);
     DynUInt back = fixed.to_dynamic();
     check("dyn round-trip width", back.width() == 32);

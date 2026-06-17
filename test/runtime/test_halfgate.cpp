@@ -44,19 +44,7 @@ int main(void) {
 		}
 	}
 	cout << "check\n";
-
-	cout << "Efficiency: ";
-	auto start = clock_start();
-	for(int i = 0; i < 1024*1024*2; ++i) {
-		prg.random_block(data, 2);
-		w0 = halfgates_garble(data[0], data[0]^delta, data[1], data[1]^delta, delta, table, &mi_gen);
-		w1 = w0 ^ delta;
-
-		data1[0] = data[0] ^ delta;
-		data1[1] = data[1] ^ delta;
-		ret = halfgates_eval(data1[0], data1[1], table, &mi_eva);
-	}
-	cout << 1024*1024*128/(time_from(start))*1e6 << " gates/second" << endl;
+	// Throughput measurement lives in ../bench/bench_halfgate.cpp (build-only).
 
 	return 0;
 }

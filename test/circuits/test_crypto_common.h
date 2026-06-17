@@ -6,6 +6,7 @@
 // callable drv(ctx, const Wire* in, Wire* out) that builds typed values from the
 // input wires, runs the kernel, and writes output wires.
 #include "emp-tool/ir/context/context.h"
+#include "emp-tool/ir/session/clear_session.h"
 #include <cstdint>
 #include <span>
 #include <string>
@@ -37,7 +38,7 @@ inline std::string hex_from_bits(const std::vector<uint8_t>& bits) {
 // Run the driver on ClearCtx over concrete input bits; return the output bits.
 template <class Drv>
 inline std::vector<uint8_t> clear_run(Drv drv, const std::vector<uint8_t>& in_bits, int n_out) {
-  emp::ClearCtx ctx;
+  emp::ClearSession::ctx_t ctx;
   std::vector<uint8_t> in(in_bits), out((size_t)n_out, 0);
   drv(ctx, in.data(), out.data());
   for (auto& x : out) x &= 1;
@@ -59,7 +60,7 @@ inline std::vector<uint8_t> record_replay(Drv drv, const std::vector<uint8_t>& i
   emp::circuit::BooleanProgram prog =
       rc.finish(std::span<const uint32_t>(out.data(), (size_t)n_out));
 
-  emp::ClearCtx cx;
+  emp::ClearSession::ctx_t cx;
   std::vector<uint8_t> cin(in_bits);
   std::vector<uint8_t> cow = emp::execute_program(
       cx, prog, std::span<const uint8_t>(cin.data(), cin.size()));
