@@ -38,6 +38,16 @@ inline std::atomic<uint64_t>& test_seed_counter() {
     return ctr;
 }
 
+// Determinism epoch, bumped by reset_test_seed_counter(). A long-lived
+// test-mode PRG (e.g. ECGroup::rand_scalar's thread_local) records the
+// epoch it was seeded at and re-seeds when the epoch changes, so a counter
+// reset rewinds *every* randomness source -- not just fresh PRG()
+// constructions -- keeping them in step across the reset.
+inline std::atomic<uint64_t>& test_seed_epoch() {
+    static std::atomic<uint64_t> ep(0);
+    return ep;
+}
+
 }  // namespace detail
 
 // Programmatic toggle. Affects all subsequent PRG()-default-
@@ -57,10 +67,20 @@ inline uint64_t next_test_seed() {
     return detail::test_seed_counter().fetch_add(1);
 }
 
-// Reset the seed counter to its initial value. Use between trace
-// runs to get reproducible PRG sequences.
+// The current determinism epoch. A test-mode PRG that outlives a single
+// unit of work compares against this to learn when a reset_test_seed_counter()
+// means it must re-seed.
+inline uint64_t current_test_seed_epoch() {
+    return detail::test_seed_epoch().load();
+}
+
+// Reset the seed counter to its initial value and bump the epoch. Use
+// before each independent unit (e.g. each protocol in a trace) to make
+// that unit's randomness -- and thus its wire bytes -- independent of
+// whatever consumed seeds before it.
 inline void reset_test_seed_counter() {
     detail::test_seed_counter().store(0xC0FFEE12345ULL);
+    detail::test_seed_epoch().fetch_add(1);
 }
 
 }  // namespace emp

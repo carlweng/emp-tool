@@ -6,6 +6,7 @@
 #include <openssl/evp.h>
 #include <algorithm>
 #include <cstring>
+#include <optional>
 #include <vector>
 
 namespace emp {
@@ -421,7 +422,15 @@ Scalar ECGroup::rand_scalar() {
 	// draw n_bits-wide random bytes, retry if ≥ order_. P-256's order
 	// is just under 2^256, so the per-iteration reject probability
 	// is ≪ 1.
-	thread_local PRG prg;
+	// Long-lived per-thread PRG, but re-seeded whenever the determinism
+	// epoch advances (reset_test_seed_counter). Without this the stream
+	// would carry across a reset while fresh PRG() constructions restart,
+	// leaving the two randomness sources out of step and making wire bytes
+	// depend on how many scalars were drawn earlier in the process.
+	thread_local std::optional<PRG> prg;
+	thread_local uint64_t prg_epoch = (uint64_t)-1;
+	const uint64_t epoch = current_test_seed_epoch();
+	if (!prg || prg_epoch != epoch) { prg.emplace(); prg_epoch = epoch; }
 	const int n_bits = BN_num_bits(order_.n());
 	const int n_bytes = (n_bits + 7) / 8;
 	const unsigned char top_mask = (n_bits % 8 == 0)
@@ -429,7 +438,7 @@ Scalar ECGroup::rand_scalar() {
 		: (unsigned char)((1u << (n_bits % 8)) - 1);
 	std::vector<unsigned char> buf((size_t)n_bytes);
 	do {
-		prg.random_data_unaligned(buf.data(), n_bytes);
+		prg->random_data_unaligned(buf.data(), n_bytes);
 		buf[0] &= top_mask;
 		if (BN_bin2bn(buf.data(), n_bytes, n.n()) == nullptr)
 			error("ECGroup::rand_scalar: BN_bin2bn");
