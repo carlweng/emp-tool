@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <iosfwd>
+#include <string>
 
 namespace emp {
 
@@ -21,6 +22,11 @@ inline bool   getLSB(const block& x);
 inline constexpr block  makeBlock(uint64_t high, uint64_t low);
 inline block  sigma(block a);                     // [eprint 2019/074]
 inline block  set_bit(const block& a, int i);
+// Lowercase byte-order hex of an arbitrary buffer (no separators). The single
+// renderer for blocks, digests, and raw byte buffers — operator<<(block) below
+// is just to_hex(&blk, sizeof(block)). Use this instead of redefining a setw(2)
+// loop. Named to_hex (not hex) to avoid clashing with the std::hex manipulator.
+std::string to_hex(const void* data, size_t n);
 std::ostream& operator<<(std::ostream& out, const block& blk);
 
 // zero_block, all_one_block, select_mask[2]: defined in block.hpp.

@@ -7,6 +7,7 @@
 #include <cstring>
 #include <iostream>
 #include <iomanip>
+#include <string>
 
 #include "emp-tool/runtime/core/simd_tier.h"   // EMP_HAS_AVX2 / AVX512BW (block.hpp's sse_trans_n128 picks the widest available)
 
@@ -51,16 +52,21 @@ inline block set_bit(const block & a, int i) {
 		return makeBlock(1ULL<<(i-64), 0) | a;
 }
 
+inline std::string to_hex(const void* data, size_t n) {
+	static const char digits[] = "0123456789abcdef";
+	const unsigned char* b = static_cast<const unsigned char*>(data);
+	std::string s(2 * n, '0');
+	for (size_t i = 0; i < n; ++i) {
+		s[2 * i]     = digits[b[i] >> 4];
+		s[2 * i + 1] = digits[b[i] & 0xf];
+	}
+	return s;
+}
+
+// A block renders as its 16 bytes in memory order — matching how reference
+// vectors / digests / the wire-trace dumps are written.
 inline std::ostream& operator<<(std::ostream& out, const block& blk) {
-	const auto saved_flags = out.flags();
-	const auto saved_fill = out.fill();
-	uint64_t* data = (uint64_t*)&blk;
-	out << std::hex << std::setfill('0')
-	    << std::setw(16) << data[1] << ' '
-	    << std::setw(16) << data[0];
-	out.flags(saved_flags);
-	out.fill(saved_fill);
-	return out;
+	return out << to_hex(&blk, sizeof(block));
 }
 
 inline void xorBlocks_arr(block* __restrict__ res, const block* __restrict__ x, const block* __restrict__ y, int64_t nblocks) {
