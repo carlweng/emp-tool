@@ -50,8 +50,8 @@ static void bench(IO *io, int party, const char *tag) {
 
 int main(int argc, char **argv) {
 	int port, party;
-	parse_party_and_port(argv, &party, &port);
-	NetIO *io = new NetIO(party == ALICE ? nullptr : "127.0.0.1", port, true);
-	bench(io, party, "NetIO");
-	delete io;
+	party = parse_party(argv);
+	port = peer_port();
+	auto io = (party == ALICE) ? NetIO::listen(port, true) : NetIO::connect(peer_ip(), port, true);
+	bench(io.get(), party, "NetIO");
 }

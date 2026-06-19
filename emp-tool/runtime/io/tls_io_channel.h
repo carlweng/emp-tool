@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <iostream>
+#include <memory>
 #include <string>
 
 #include "emp-tool/runtime/core/utils.h"   // error()
@@ -148,6 +149,16 @@ class TLSIO : public IOChannel { public:
 		                         : tcp::client_connect(address, port),
 		               cfg);
 		if (!quiet) std::cout << "TLS connected\n";
+	}
+
+	// Named factories owning their result (auto-freed via unique_ptr); listen()
+	// takes no address, connect() requires one — mirrors NetIO::listen/connect.
+	static std::unique_ptr<TLSIO> listen(int port, const TLSConfig &cfg, bool quiet = false) {
+		return std::make_unique<TLSIO>(nullptr, port, cfg, quiet);
+	}
+	static std::unique_ptr<TLSIO> connect(const char *address, int port,
+	                                      const TLSConfig &cfg, bool quiet = false) {
+		return std::make_unique<TLSIO>(address, port, cfg, quiet);
 	}
 
 	// Wrap an already-connected socket fd. The TLS-role bit is

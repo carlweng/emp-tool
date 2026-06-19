@@ -25,9 +25,18 @@ inline void error(const char * s, int line, const char * file) {
 	std::_Exit(1);
 }
 
-inline void parse_party_and_port(const char *const * arg, int * party, int * port) {
-	*party = atoi (arg[1]);
-	*port = atoi (arg[2]);
+// Party is per-process (argv[1]); port and peer IP are session config shared by
+// both parties, read from the environment so a two-machine run sets EMP_PORT /
+// EMP_PEER_IP once per host with no source change. One consequence: two runs on
+// the same host share EMP_PORT, so don't launch them concurrently.
+inline int parse_party(const char *const * arg) { return atoi(arg[1]); }
+inline int peer_port() {
+	const char * e = std::getenv("EMP_PORT");
+	return (e && e[0]) ? atoi(e) : 12345;
+}
+inline const char * peer_ip() {
+	const char * e = std::getenv("EMP_PEER_IP");
+	return (e && e[0]) ? e : "127.0.0.1";
 }
 
 static inline uint32_t bytes_to_bits32(const void *in) {

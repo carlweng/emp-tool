@@ -224,7 +224,8 @@ static void bench(TLSIO *io, int party) {
 
 int main(int argc, char **argv) {
 	int port, party;
-	parse_party_and_port(argv, &party, &port);
+	party = parse_party(argv);
+	port = peer_port();
 
 	// PKI handoff. ALICE (party 1, the TCP listener) builds the whole
 	// CA + ALICE + BOB PKI in memory and writes 5 PEM files; BOB polls
@@ -236,7 +237,7 @@ int main(int argc, char **argv) {
 
 	const TLSConfig cfg = make_cfg(party);
 
-	TLSIO *io = new TLSIO(party == ALICE ? nullptr : "127.0.0.1", port, cfg, true);
-	bench(io, party);
-	delete io;
+	auto io = (party == ALICE) ? TLSIO::listen(port, cfg, true)
+	                           : TLSIO::connect(peer_ip(), port, cfg, true);
+	bench(io.get(), party);
 }

@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <iostream>
+#include <memory>
 #include <string>
 
 #include "emp-tool/runtime/core/utils.h"   // error()
@@ -87,6 +88,17 @@ class NetIO : public IOChannel { public:
 		port_ = port;
 		init_from_sock(is_server ? tcp::server_listen(port) : tcp::client_connect(address, port));
 		if (!quiet) std::cout << "connected\n";
+	}
+
+	// Named factories owning their result (auto-freed via unique_ptr). The role
+	// is explicit in the name and the signature — listen() takes no address;
+	// connect() requires one — replacing the nullptr-means-server sentinel of the
+	// (const char*, int) constructor.
+	static std::unique_ptr<NetIO> listen(int port, bool quiet = false) {
+		return std::make_unique<NetIO>(nullptr, port, quiet);
+	}
+	static std::unique_ptr<NetIO> connect(const char *address, int port, bool quiet = false) {
+		return std::make_unique<NetIO>(address, port, quiet);
 	}
 
 	// Open a second channel to the same peer, on the same role and port. Safe

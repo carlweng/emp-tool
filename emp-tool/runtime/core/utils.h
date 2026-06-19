@@ -24,7 +24,9 @@ using std::chrono::high_resolution_clock;
                                int line = __builtin_LINE(),
                                const char * file = __builtin_FILE());
 
-inline void parse_party_and_port(const char * const * arg, int * party, int * port);
+inline int parse_party(const char * const * arg);   // ALICE=1 / BOB=2, from argv[1]
+inline int peer_port();                              // $EMP_PORT, default 12345
+inline const char * peer_ip();                       // $EMP_PEER_IP, default 127.0.0.1
 
 // Timing related
 inline time_point<high_resolution_clock> clock_start();

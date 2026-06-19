@@ -115,7 +115,7 @@ static void run_send_only_regression(int port, int party, const char *tag) {
 
 	// (a) explicit flush() drains a send-only batch.
 	{
-		IO io(party == ALICE ? nullptr : "127.0.0.1", port + 1, true);
+		IO io(party == ALICE ? nullptr : peer_ip(), port + 1, true);
 		if (party == ALICE) {
 			io.send_data(data, N);
 			io.flush();                // peer's recv depends on this
@@ -135,7 +135,7 @@ static void run_send_only_regression(int port, int party, const char *tag) {
 	// IO — no flush(), no recv. BOB must still see N. ~IO is the only
 	// thing that can move the bytes.
 	{
-		IO *io = new IO(party == ALICE ? nullptr : "127.0.0.1", port + 2, true);
+		IO *io = new IO(party == ALICE ? nullptr : peer_ip(), port + 2, true);
 		if (party == ALICE) {
 			io->send_data(data, N);
 			delete io;                 // must flush; otherwise BOB hits EOF
@@ -156,7 +156,7 @@ static void run_send_only_regression(int port, int party, const char *tag) {
 // port_base+0 = main channel, +1 / +2 = regression channels.
 template <typename IO>
 static void run_suite(int port_base, int party, const char *tag) {
-	IO *io = new IO(party == ALICE ? nullptr : "127.0.0.1", port_base, true);
+	IO *io = new IO(party == ALICE ? nullptr : peer_ip(), port_base, true);
 	run_correctness(io, party, tag);
 	run_send_only_regression<IO>(port_base, party, tag);
 	delete io;
@@ -164,7 +164,8 @@ static void run_suite(int port_base, int party, const char *tag) {
 
 int main(int argc, char **argv) {
 	int port, party;
-	parse_party_and_port(argv, &party, &port);
+	party = parse_party(argv);
+	port = peer_port();
 
 	// Three contiguous ports: main, regression-a, regression-b.
 	run_suite<NetIO>(port, party, "NetIO");

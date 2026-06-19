@@ -267,7 +267,7 @@ static void run_send_only_regression(int port, int party) {
 	const TLSConfig cfg = make_cfg(party);
 
 	{
-		TLSIO io(party == ALICE ? nullptr : "127.0.0.1", port + 1, cfg, true);
+		TLSIO io(party == ALICE ? nullptr : peer_ip(), port + 1, cfg, true);
 		if (party == ALICE) {
 			io.send_data(data, N);
 			io.flush();
@@ -284,7 +284,7 @@ static void run_send_only_regression(int port, int party) {
 	}
 
 	{
-		TLSIO *io = new TLSIO(party == ALICE ? nullptr : "127.0.0.1", port + 2, cfg, true);
+		TLSIO *io = new TLSIO(party == ALICE ? nullptr : peer_ip(), port + 2, cfg, true);
 		if (party == ALICE) {
 			io->send_data(data, N);
 			delete io;                  // must flush + SSL_shutdown
@@ -302,7 +302,8 @@ static void run_send_only_regression(int port, int party) {
 
 int main(int argc, char **argv) {
 	int port, party;
-	parse_party_and_port(argv, &party, &port);
+	party = parse_party(argv);
+	port = peer_port();
 
 	// PKI handoff. ALICE (party 1, the TCP listener) builds the whole
 	// CA + ALICE + BOB PKI in memory and writes 5 PEM files; BOB polls
@@ -314,7 +315,7 @@ int main(int argc, char **argv) {
 
 	const TLSConfig cfg = make_cfg(party);
 
-	TLSIO *io = new TLSIO(party == ALICE ? nullptr : "127.0.0.1", port, cfg, true);
+	TLSIO *io = new TLSIO(party == ALICE ? nullptr : peer_ip(), port, cfg, true);
 	run_correctness(io, party);
 	run_send_only_regression(port, party);
 	delete io;
