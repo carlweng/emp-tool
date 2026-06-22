@@ -114,26 +114,12 @@ class TLSIO : public IOChannel { public:
 	// Byte counts and flush count live on the IOChannel base.
 
 #ifndef NDEBUG
-	// Debug-only concurrency assertion. TLSIO is not thread-safe (the
-	// send_buf coalescing is unlocked, and an SSL* mutates internal
-	// state on every read/write); a debug build aborts if two threads
-	// enter send_data / recv_data / flush on the same instance at once.
+	// Debug-only concurrency assertion (TLSIO is not thread-safe: unlocked
+	// send_buf coalescing, and an SSL* mutates internal state on every
+	// read/write). The shared touch_guard that trips on a concurrent
+	// send_data/recv_data/flush lives in io_channel.h; this is just its
+	// per-instance counter (dropped in release builds).
 	std::atomic<int> _in_use{0};
-	struct touch_guard {
-		std::atomic<int> &f;
-		const char *op;
-		touch_guard(std::atomic<int> &x, const char *o) : f(x), op(o) {
-			if (f.fetch_add(1, std::memory_order_acq_rel) != 0) {
-				std::fprintf(stderr,
-				             "TLSIO race: concurrent %s on the same TLSIO. "
-				             "TLSIO is not thread-safe — only one thread may "
-				             "touch a given TLSIO at a time.\n",
-				             op);
-				std::abort();
-			}
-		}
-		~touch_guard() { f.fetch_sub(1, std::memory_order_release); }
-	};
 #endif
 
 	// (addr == nullptr) → TCP listener; otherwise TCP client. is_tls_server

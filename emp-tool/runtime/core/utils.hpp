@@ -29,7 +29,12 @@ inline void error(const char * s, int line, const char * file) {
 // both parties, read from the environment so a two-machine run sets EMP_PORT /
 // EMP_PEER_IP once per host with no source change. One consequence: two runs on
 // the same host share EMP_PORT, so don't launch them concurrently.
-inline int parse_party(const char *const * arg) { return atoi(arg[1]); }
+inline int parse_party(const char *const * arg) {
+	const int p = arg[1] ? atoi(arg[1]) : 0;
+	if (p != ALICE && p != BOB)
+		error("parse_party: argv[1] (party) must be 1 (ALICE) or 2 (BOB)");
+	return p;
+}
 inline int peer_port() {
 	const char * e = std::getenv("EMP_PORT");
 	return (e && e[0]) ? atoi(e) : 12345;

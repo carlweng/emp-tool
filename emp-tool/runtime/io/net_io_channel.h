@@ -57,26 +57,11 @@ class NetIO : public IOChannel { public:
 	// Byte counts and flush count live on the IOChannel base.
 
 #ifndef NDEBUG
-	// Debug-only concurrency assertion. NetIO is not thread-safe (the
-	// send_buf coalescing is unlocked); a debug build aborts if two
-	// threads enter send_data / recv_data / flush on the same instance
-	// at once. See touch_guard below; release builds drop both members.
+	// Debug-only concurrency assertion (NetIO is not thread-safe: the
+	// send_buf coalescing is unlocked). The shared touch_guard that trips on
+	// a concurrent send_data/recv_data/flush lives in io_channel.h; this is
+	// just its per-instance counter (dropped in release builds).
 	std::atomic<int> _in_use{0};
-	struct touch_guard {
-		std::atomic<int> &f;
-		const char *op;
-		touch_guard(std::atomic<int> &x, const char *o) : f(x), op(o) {
-			if (f.fetch_add(1, std::memory_order_acq_rel) != 0) {
-				fprintf(stderr,
-				        "NetIO race: concurrent %s on the same NetIO. "
-				        "NetIO is not thread-safe — only one thread may "
-				        "touch a given NetIO at a time.\n",
-				        op);
-				std::abort();
-			}
-		}
-		~touch_guard() { f.fetch_sub(1, std::memory_order_release); }
-	};
 #endif
 
 	NetIO(const char *address, int port, bool quiet = false) : quiet(quiet) {
@@ -105,19 +90,20 @@ class NetIO : public IOChannel { public:
 	// to call once this connection is established: server_listen closes its
 	// listening socket after accept (and sets SO_REUSEADDR), so the port is
 	// free to listen on again; the peer calls make_sibling() symmetrically and
-	// the two reconnect. Caller owns the returned NetIO.
-	NetIO *make_sibling() const {
+	// the two reconnect. Ownership is the unique_ptr's.
+	std::unique_ptr<NetIO> make_sibling() const {
 		// Settle before reusing the same port for the duplex sibling. The
 		// primary connection's accept/connect has just completed; its in-flight
 		// handshake/teardown segments can otherwise collide with the sibling on
 		// the same port — the server closes its first listener and re-listens,
 		// and a sibling SYN landing in that gap (or a primary retransmit landing
 		// on the fresh listener) can mis-pair the two channels and deadlock the
-		// protocol (~1/5 of runs; worse at higher RTT). A 0.1 s pause drains
-		// those segments so the sibling pairing is unambiguous. make_sibling is
-		// called once per session, so the cost is negligible.
+		// protocol (a low-probability race, worse at higher RTT). A 0.1 s pause
+		// drains those segments so the sibling pairing is unambiguous;
+		// make_sibling is called once per session, so the cost is negligible.
 		usleep(100000);  // 0.1 s
-		return new NetIO(is_server ? nullptr : addr_.c_str(), port_, /*quiet=*/true);
+		return is_server ? listen(port_, /*quiet=*/true)
+		                 : connect(addr_.c_str(), port_, /*quiet=*/true);
 	}
 
 	// Wrap an already-connected socket fd, for callers that run their

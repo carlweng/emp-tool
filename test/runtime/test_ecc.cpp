@@ -52,31 +52,31 @@ int main() {
 	Scalar ib = G.rand_scalar();
 	Scalar ic = G.rand_scalar();
 	Scalar id = G.rand_scalar();
-	Point * a = new Point();
+	Point a;
 	Point b;
-	*a = G.mul_gen(ia);//g^a
+	a = G.mul_gen(ia);//g^a
 	b = G.mul_gen(ib);//g^a
 	ic = ia.add_mod(ib, G.order(), G.bn_ctx());
 	Point c = G.mul_gen(ic);//g^{a+b}
-	Point d = a->add(b);
+	Point d = a.add(b);
 	int res = (d == c);
 	cout << res<<endl;
 	ok = ok && res;
 
 
-	c = a->mul(ib);//c=a^ib = g^ab
+	c = a.mul(ib);//c=a^ib = g^ab
 	d = b.mul(ia);//c=a^ib = g^ab
 	
 	res = (d == c);
 	cout << res<<endl;
 	ok = ok && res;
 
-	int size = a->size();
-	unsigned char * tmp = new unsigned char[size];
-	a->to_bin(tmp, size);
-	b.from_bin(&G, tmp, size);
+	int size = a.size();
+	std::vector<unsigned char> tmp(size);
+	a.to_bin(tmp.data(), size);
+	b.from_bin(&G, tmp.data(), size);
 
-	res = (*a==b);
+	res = (a==b);
 	cout << res<<endl;
 	ok = ok && res;
 
