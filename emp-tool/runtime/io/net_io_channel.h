@@ -181,7 +181,11 @@ class NetIO : public IOChannel { public:
 		if (async_send_) {
 			// pool preallocated: exactly kAsyncCap bytes, once -- churn-free (glibc kept
 			// ~1.4 GB resident when chunks were new/delete'd across threads).
-			for (size_t i = 0; i < kAsyncCap / kAsyncChunk; ++i) afree_.push_back(new char[kAsyncChunk]);
+			// ASYNC_CAP_MB overrides the queue/pool size (default 256 MiB): the reservoir
+			// bridges compute-only stretches where the NIC would otherwise idle; benchmark
+			// sweeps put the knee at ~2 GiB for the GPT-2-class workloads.
+			const size_t cap_mb = getenv("ASYNC_CAP_MB") ? (size_t)atoll(getenv("ASYNC_CAP_MB")) : 256;
+			for (size_t i = 0; i < (cap_mb << 20) / kAsyncChunk; ++i) afree_.push_back(new char[kAsyncChunk]);
 			sender_ = std::thread([this] { sender_loop_(); });
 		}
 	}
